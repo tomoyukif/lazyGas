@@ -1,0 +1,19 @@
+Package: lazyGeno
+Type: Package
+Title: Genotic analysis pipeline for lazy guys
+Version: 0.0.1
+Date: 2022-12-21
+Authors@R: person("Tomoyuki", "Furuta", 
+           email = "f.tomoyuki@okayama-u.ac.jp",
+           role = c("aut", "cre"),
+           comment = c(ORCID = "0000-0002-0869-6626"))
+Description: Genetic analysis pipeline for lazy guys.
+License: GPL-3 + file LICENSE
+Encoding: UTF-8
+Imports: stats, utils, methods, ggplot2, dplyr, GBScleanR, rtracklayer, rrBLUP, vcfR
+Suggests: knitr, rmarkdown
+VignetteBuilder: knitr
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.2.1
+BugReports: https://github.com/tomoyukif/lazyGeno/issues
+URL: https://github.com/tomoyukif/lazyGeno
