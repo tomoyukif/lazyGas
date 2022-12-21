@@ -1,9 +1,16 @@
-library(ggplot2)
-library(rtracklayer)
-library(vcfR)
-library(dplyr)
-library(GBScleanR)
-library(rrBLUP)
+#' Build a lazyQTL object
+#' 
+#' @param geno Genotype data.frame
+#' @param pheno Phenotype data.frame
+#' @param sampleID_geno Sample ID in genotype data
+#' @param sampleID_pheno Sample ID in phenotype data
+#' @param marker_chr Chromosome ID of markers
+#' @param marker_pos Physical positin of markers
+#' @param geno_fmt Genotype data format
+#' @param geno_levels Factor levels of genotype data
+#' 
+#' @export
+#'
 
 buildLazyQTL <- function(geno,
                          pheno,
@@ -31,7 +38,7 @@ buildLazyQTL <- function(geno,
     message("The following samples have no genotype info: \n",
             paste(nogeno, collapse = " "))
   }
-
+  
   # Validate genotype format
   uniq_geno <- na.omit(unique(as.vector(unlist(geno))))
   if(!all(uniq_geno %in% geno_levels)){
@@ -47,7 +54,7 @@ buildLazyQTL <- function(geno,
          'Set geno_fmt = "haplotype" if your geno indicates haplotype info.',
          call. = FALSE)
   }
-
+  
   # Reorder phenotype data to match it with genotype data
   pheno <- subset(pheno, subset = !sampleID_pheno %in% nogeno)
   geno <- subset(geno, subset = !sampleID_geno %in% nopheno)
@@ -55,7 +62,7 @@ buildLazyQTL <- function(geno,
   sampleID_geno <- sampleID_geno[!sampleID_geno %in% nopheno]
   hitid <- match(sampleID_geno, sampleID_pheno)
   pheno <- pheno[hitid, ]
-
+  
   # Calculate MAF
   if(geno_fmt == "dosage"){
     maf <- apply(geno, 2, function(x){
@@ -65,7 +72,7 @@ buildLazyQTL <- function(geno,
       return(min(tabx)/sum(tabx))
     })
     maf <- unname(maf)
-
+    
   } else {
     maf <- apply(geno, 2, function(x){
       tabx <- table(factor(x, geno_levels))
@@ -73,7 +80,7 @@ buildLazyQTL <- function(geno,
     })
     maf <- unname(maf)
   }
-
+  
   out <- list(geno = geno,
               pheno = pheno,
               pheno_names = colnames(pheno),
@@ -88,6 +95,17 @@ buildLazyQTL <- function(geno,
   return(out)
 }
 
+#' Build a lazyGWAS object
+#'
+#' @param gds A gbsrGenotypeData object
+#' @param pheno Phenotype data.frame
+#' @param sampleID_pheno Sample ID in phenotype data
+#' 
+#' @importFrom GBScleanR getSamID setSamFilter
+#' @importFrom SeqArray seqGetData seqSetFilter seqAlleleFreq
+#' @importFrom rrBLUP A.mat
+#' 
+#' @export
 
 buildLazyGWAS <- function(gds,
                           pheno,
@@ -108,13 +126,13 @@ buildLazyGWAS <- function(gds,
     message("The following samples have no genotype info: \n",
             paste(nogeno, collapse = " "))
   }
-
+  
   # Prepare genotype data
   geno <- seqGetData(gds, "$dosage")
   geno <- geno[, validMar(gds)]
   geno <- -1 * (geno - 1)
   rownames(geno) <- getSamID(gds)
-
+  
   # Reorder phenotype data to match it with genotype data
   pheno <- subset(pheno, subset = !sampleID_pheno %in% nogeno)
   geno <- subset(geno, subset = !sampleID_geno %in% nopheno)
@@ -122,7 +140,7 @@ buildLazyGWAS <- function(gds,
   sampleID_geno <- sampleID_geno[!sampleID_geno %in% nopheno]
   hitid <- match(sampleID_geno, sampleID_pheno)
   pheno <- pheno[hitid, ]
-
+  
   # Calculate a genomic relationship matrix
   message("Calculate the genomic relationship matrix.")
   grm <- A.mat(geno, return.imputed = TRUE, min.MAF = 0, max.missing = 1)
@@ -132,13 +150,13 @@ buildLazyGWAS <- function(gds,
                      t(grm$imputed))
   rownames(grm$A) <- paste0("X", rownames(grm$A))
   colnames(grm$A) <- paste0("X", colnames(grm$A))
-
+  
   # Calculate MAF
   id <- getSamID(gds)
   gds <- setSamFilter(gds, id = id[!id %in% sampleID_geno])
   seqSetFilter(gds, variant.sel = validMar(gds), sample.sel = validSam(gds))
   maf <- seqAlleleFreq(gds, minor = TRUE)
-
+  
   out <- list(geno = geno,
               grm = grm$A,
               pheno = pheno,
@@ -201,10 +219,24 @@ print.lazyGWAS <- function(x){
   print(head(x$maf))
 }
 
+#' Scan QTL
+#' 
+#' @param x input object
+#' 
+#' @export
+#' 
 scanQTL <- function(x, ...){
   UseMethod("scanQTL", x)
 }
 
+#' @rdname scanQTL
+#' @param x A lazyQTL object
+#' @param out_fn Prefix of output file name
+#' @param formula The formula of the regression model
+#' @param makeDF_FUN The function to modify model data for the regression
+#' 
+#' @export
+#'
 scanQTL.lazyQTL <- function(x,
                             out_fn,
                             formula = "",
@@ -213,10 +245,10 @@ scanQTL.lazyQTL <- function(x,
     stop("The input should be the lazyQTL object",
          call. = FALSE)
   }
-
+  
   message("Going to analyse the following phenotypes: \n",
           paste(x$pheno_names, collapse = ", "))
-
+  
   for(i in seq_along(x$pheno_names)){
     p_values <- apply(x$geno, 2, function(g){
       if(length(unique(na.omit(g))) == 1){
@@ -227,19 +259,19 @@ scanQTL.lazyQTL <- function(x,
                      phe = x$pheno[, i],
                      makeDF_FUN = makeDF_FUN,
                      formula = formula)
-
+        
         if(length(na.omit(unique(df$phe))) == 2){
           out <- doGLM(df$df, df$fml)
-
+          
         } else {
           out <- doLM(df$df, df$fml)
         }
-
+        
       } else if(x$geno_fmt == "haplotype"){
         if(is.null(makeDF_FUN)){
           df <- data.frame(phe = x$pheno[, i], group = g)
           fml <- "phe ~ group"
-
+          
         } else {
           df <-  data.frame(phe = x$pheno[, i], makeDF_FUN(g))
           if(ncol(df) > 2){
@@ -251,13 +283,13 @@ scanQTL.lazyQTL <- function(x,
         }
         out <- doKruskal(df, fmt)
       }
-
+      
       return(out)
     })
-
+    
     if(x$geno_fmt == "haplotype"){
       p_values <- data.frame(P.fit = p_values)
-
+      
     } else {
       if(is.list(p_values)){
         p_values <- data.frame(do.call("rbind", p_values))
@@ -265,7 +297,7 @@ scanQTL.lazyQTL <- function(x,
         p_values <- data.frame(t(p_values))
       }
     }
-
+    
     p_values <- data.frame(Chr = x$marker_chr,
                            Pos = x$marker_pos,
                            MAF = x$maf,
@@ -279,19 +311,22 @@ scanQTL.lazyQTL <- function(x,
     gc();gc()
   }
   out <- list(geno = x$geno,
+              pheno = x$pheno,
+              sample_id = x$sample_id,
               pheno_names = x$pheno_names,
               pvalues_fn = paste0(out_fn, x$pheno_names, "_scanQTL.csv"))
   class(out) <- c(class(out), "QTLscan")
+  attributes(out) <- c(attributes(out), geno_fmt = x$geno_fmt)
   invisible(out)
 }
 
 makeDF <- function(g, phe, makeDF_FUN, formula){
   g <- as.numeric(g)
-
+  
   if(is.null(makeDF_FUN)){
     df <- data.frame(add = g)
     fml <- formula("phe ~ add")
-
+    
   } else {
     df <- makeDF_FUN(g)
     if(formula == ""){
@@ -300,23 +335,23 @@ makeDF <- function(g, phe, makeDF_FUN, formula){
     }
     fml <- formula(paste0("phe ~ ", formula))
   }
-
+  
   return(list(df = data.frame(phe = phe, df), fml = fml))
 }
 
 doGLM <- function(df, fml){
   res <- try(glm(formula = fml, data = df, family = binomial))
   if(inherits(res, "try-error")){ return(NA) }
-
+  
   p <- pchisq(res$null.deviance - res$deviance,
               res$df.null - res$df.residual,
               lower.tail = FALSE)
   pervar <- 1 - res$deviance / res$null.deviance
   s <- summary(res)
   coef <- s$coefficients
-
+  
   if(nrow(coef) == 1){ return(NA) }
-
+  
   att <- attributes(res$terms)
   return(makeOut(p, coef, pervar, att$term.labels))
 }
@@ -330,7 +365,7 @@ doLM <- function(df, fml){
   coef <- s$coefficients
   if(is.numeric(f)){
     p <- pf(f[1], f[2], f[3], lower.tail = FALSE)
-
+    
   } else {
     return(NA)
   }
@@ -379,10 +414,28 @@ print.QTLscan <- function(x){
   print(cbind(x$pheno_names, x$pvalues_fn))
 }
 
+
+
+#' Scan GWAS
+#' 
+#' @param x input object
+#' 
+#' @export
+#' 
 scanGWAS <- function(x, ...){
   UseMethod("scanGWAS", x)
 }
 
+#' @rdname scanGWAS
+#' @param x A lazyGWAS object
+#' @param out_fn Prefix of output file name
+#' @param nPC The number of principal components in the regression model
+#' @param n_core The number of threads for parallel computing
+#' 
+#' @importFrom rrBLUP GWAS
+#' 
+#' @export
+#'
 scanGWAS.lazyGWAS <- function(x,
                               out_fn,
                               nPC = 2,
@@ -393,7 +446,7 @@ scanGWAS.lazyGWAS <- function(x,
     colnames(pheno_df)[2] <- x$pheno_names[i]
     gwas <- GWAS(pheno = pheno_df, geno = x$geno,
                  n.PC = nPC, K = x$grm, plot = FALSE, n.core = n_core)
-
+    
     names(gwas)[4] <- "P.fit"
     gwas$P.fit[gwas$P.fit == 0] <- NA
     gwas$FDR <- p.adjust(10^-gwas$P.fit, method = "fdr")
@@ -404,8 +457,10 @@ scanGWAS.lazyGWAS <- function(x,
               row.names = FALSE)
     gc();gc()
   }
-
+  
   out <- list(geno = x$geno,
+              pheno = x$pheno,
+              sample_id = x$sample_id,
               pheno_names = x$pheno_names,
               pvalues_fn = paste0(out_fn, x$pheno_names, "_scanGWAS.csv"))
   class(out) <- c(class(out), "GWASscan")
@@ -429,10 +484,25 @@ print.GWASscan <- function(x){
   print(cbind(x$pheno_names, x$pvalues_fn))
 }
 
+#' Draw a Manhattan plot
+#' 
+#' @param x Input object
+#' 
 plotManhattan <- function(x, ...){
   UseMethod("plotManhattan", x)
 }
 
+#' @rdname 
+#' @param x QTLscan object
+#' @param pehno Phenotype names to be drawn
+#' @param chr Chromosome ID to be drawn
+#' @param start Start position of the range to be drawn
+#' @param end End position of the range to be drawn
+#' @param signif Expression to define the significant markers
+#' @param out_fn Prefix of output file
+#' @param out_fmt Output image format
+#' 
+#' @export
 plotManhattan.QTLscan <- function(x,
                                   pheno = NULL,
                                   chr = NULL,
@@ -460,6 +530,18 @@ plotManhattan.QTLscan <- function(x,
   }
 }
 
+
+#' @rdname 
+#' @param x GWASscan object
+#' @param pehno Phenotype names to be drawn
+#' @param chr Chromosome ID to be drawn
+#' @param start Start position of the range to be drawn
+#' @param end End position of the range to be drawn
+#' @param signif Expression to define the significant markers
+#' @param out_fn Prefix of output file
+#' @param out_fmt Output image format
+#' 
+#' @export
 plotManhattan.GWASscan <- function(x,
                                    pheno = NULL,
                                    chr = NULL,
@@ -487,6 +569,18 @@ plotManhattan.GWASscan <- function(x,
   }
 }
 
+
+#' @rdname 
+#' @param x Chracter string of input file name
+#' @param pehno Phenotype names to be drawn
+#' @param chr Chromosome ID to be drawn
+#' @param start Start position of the range to be drawn
+#' @param end End position of the range to be drawn
+#' @param signif Expression to define the significant markers
+#' @param out_fn Prefix of output file
+#' @param out_fmt Output image format
+#' 
+#' @export
 plotManhattan.character <- function(x,
                                     chr = NULL,
                                     start = NULL,
@@ -499,6 +593,18 @@ plotManhattan.character <- function(x,
   invisible(p)
 }
 
+
+#' @rdname 
+#' @param x data.frame of pvalue data
+#' @param pehno Phenotype names to be drawn
+#' @param chr Chromosome ID to be drawn
+#' @param start Start position of the range to be drawn
+#' @param end End position of the range to be drawn
+#' @param signif Expression to define the significant markers
+#' @param out_fn Prefix of output file
+#' @param out_fmt Output image format
+#' 
+#' @export
 plotManhattan.data.frame <- function(x,
                                      chr = NULL,
                                      start = NULL,
@@ -521,7 +627,7 @@ plotManhattan.data.frame <- function(x,
     signif <- signif[x$Pos <= end]
     x <- subset(x, subset = Pos <= end)
   }
-
+  
   if(!is.logical(signif)){
     if(is.character(signif)){
       signif <- eval(parse(text = signif))
@@ -530,7 +636,7 @@ plotManhattan.data.frame <- function(x,
            call. = FALSE)
     }
   }
-
+  
   signif[is.na(signif)] <- FALSE
   x_signif <- subset(x, subset = signif)
   x <- subset(x, subset = !signif)
@@ -581,54 +687,112 @@ plotManhattan.data.frame <- function(x,
   invisible(p)
 }
 
+#' Call peack blocks
+#' 
+#' @param x input object
+#' 
+#' @export
+#' 
 callPeakBlock <- function(x, ...){
   UseMethod("callPeakBlock", x)
 }
 
+#' @rdname callPeakBlock
+#' 
+#' @param x data.frame of genotype data
+#' @param pvalues data.frame of pvalue data
+#' @param signif expression to define significant markers
+#' @param out_fn prefix of output file name
+#' @param rsquare threshold on squared R values to define peak blocks
+#' 
+#' @export
+#' 
 callPeakBlock.data.frame <- function(x,
                                      pvalues,
                                      signif,
                                      out_fn,
                                      rsquare = 0.6){
   geno <- matrix(as.numeric(as.matrix(x)), nrow(x), ncol(x))
-  callPeakBlock.matrix(geno, pvalues, signif, out_fn, rsquare)
+  signif_x <- callPeakBlock.matrix(geno, pvalues, signif, out_fn, rsquare)
+  invisible(signif_x)
 }
 
+#' @rdname callPeakBlock
+#' 
+#' @param x QTLscan object
+#' @param signif expression to define significant markers
+#' @param out_fn prefix of output file name
+#' @param rsquare threshold on squared R values to define peak blocks
+#' 
+#' @export
+#' 
 callPeakBlock.QTLscan <- function(x,
                                   signif,
                                   out_fn,
                                   rsquare = 0.6){
   geno <- matrix(as.numeric(as.matrix(x$geno)), nrow(geno), ncol(geno))
+  rownames(out_x) <- x$sample_id
   for(i in seq_along(x$pvalues_fn)){
     pvalues <- read.csv(x$pvalues_fn[i])
-    tmp_fn <- paste0(out_fn, x$pheno_names[i], "_peakBlock.csv")
-    callPeakBlock.matrix(geno, pvalues, signif, tmp_fn, rsquare)
+    tmp_fn <- paste0(out_fn, x$pheno_names[i])
+    signif_x <- callPeakBlock.matrix(geno, pvalues, signif, tmp_fn, rsquare)
+    signif_x_list <- c(signif_x_list, list(signif_x))
   }
+  names(signif_x_list) <- x$pheno_names
   out <- list(peakblock_fn = paste0(out_fn, x$pheno_names, "_peakBlock.csv"),
-              pheno_names = x$pheno_names)
+              pheno_names = x$pheno_names,
+              signif_geno = signif_x_list,
+              pheno = x$pheno,)
   class(out) <- c(class(out), "peakCall")
-  attributes(out) <- c(attributes(out), scan = "QTL")
+  attributes(out) <- c(attributes(out), scan = "QTL", geno_fmt = x$geno_fmt)
+  
   invisible(out)
 }
 
+#' @rdname callPeakBlock
+#' 
+#' @param x GWASscan object
+#' @param pvalues data.frame of pvalue data
+#' @param signif expression to define significant markers
+#' @param out_fn prefix of output file name
+#' @param rsquare threshold on squared R values to define peak blocks
+#' 
+#' @export
+#' 
 callPeakBlock.GWASscan <- function(x,
                                    signif,
                                    out_fn,
                                    rsquare = 0.6){
   geno <- t(as.matrix(subset(x$geno, select = -c(MarkerName:Pos))))
   geno <- matrix(as.numeric(geno), nrow(geno), ncol(geno))
+  rownames(out_x) <- x$sample_id
+  signif_x_list <- NULL
   for(i in seq_along(x$pvalues_fn)){
     pvalues <- read.csv(x$pvalues_fn[i])
-    tmp_fn <- paste0(out_fn, x$pheno_names[i], "_peakBlock.csv")
-    callPeakBlock.matrix(geno, pvalues, signif, tmp_fn, rsquare)
+    tmp_fn <- paste0(out_fn, x$pheno_names[i])
+    signif_x <- callPeakBlock.matrix(geno, pvalues, signif, tmp_fn, rsquare)
+    signif_x_list <- c(signif_x_list, list(signif_x))
   }
+  names(signif_x_list) <- x$pheno_names
   out <- list(peakblock_fn = paste0(out_fn, x$pheno_names, "_peakBlock.csv"),
-              pheno_names = x$pheno_names)
+              pheno_names = x$pheno_names,
+              signif_geno = signif_x_list,
+              pheno = x$pheno,)
   class(out) <- c(class(out), "peakCall")
   attributes(out) <- c(attributes(out), scan = "GWAS")
   invisible(out)
 }
 
+#' @rdname callPeakBlock
+#' 
+#' @param x matrix of genotype data
+#' @param pvalues data.frame of pvalue data
+#' @param signif expression to define significant markers
+#' @param out_fn prefix of output file name
+#' @param rsquare threshold on squared R values to define peak blocks
+#' 
+#' @export
+#' 
 callPeakBlock.matrix <- function(x,
                                  pvalues,
                                  signif,
@@ -642,7 +806,7 @@ callPeakBlock.matrix <- function(x,
     stop("The number of markers does not match between geno and pvalues.",
          call. = FALSE)
   }
-
+  
   if(!is.logical(signif)){
     if(is.character(signif)){
       signif <- eval(parse(text = sub("x\\$", "pvalues$", signif)))
@@ -651,72 +815,59 @@ callPeakBlock.matrix <- function(x,
            call. = FALSE)
     }
   }
-
+  
   signif[is.na(signif)] <- FALSE
   pvalues <- subset(pvalues, subset = signif)
-  rownames(pvalues) <- seq_len(nrow(pvalues))
   x <- subset(x, select = signif)
   x <- x + 1
-
-  snpgds_fn <- tempfile(pattern = "lazyPeakcall", fileext = ".snpgds")
-  snpgdsCreateGeno(snpgds_fn,
-                   x,
-                   seq_len(nrow(x)),
-                   rownames(pvalues),
-                   rownames(pvalues),
-                   pvalues$Chr,
-                   pvalues$Pos,
-                   snpfirstdim = FALSE)
-  snpgds <- snpgdsOpen(snpgds_fn)
-
+  out_x <- data.frame(Chr = pvalues$Chr, Pos = pvalues$Pos, t(x))
+  
   colnames(pvalues) <- sub("X.var", "%var", colnames(pvalues))
-
+  
   write.table(t(c("Peak_id", "Peak_chr", "Peak_pos", "Peak_pval", "Dist2peak",
                   colnames(pvalues))),
-              out_fn,
+              paste0(out_fn, "_peakBlock.csv"),
               sep = ",", quote = TRUE, row.names = FALSE, col.names = FALSE)
-
+  
   peak_id <- 0
   while(TRUE){
     if(nrow(pvalues) == 0){
       break
     }
     peak_id <- peak_id + 1
+    variant_index <- seq_len(nrow(pvalues))
     peak_index <- which.max(pvalues$P.fit)
     chr <- pvalues$Chr[peak_index]
     pos <- pvalues$Pos[peak_index]
-
-    target_variants <- rownames(pvalues)[pvalues$Chr == chr]
+    
+    target_variants <- which(pvalues$Chr == chr)
     if(length(target_variants) == 1){
       peak_block <- target_variants
-
+      
     } else {
-      ld <- snpgdsLDMat(snpgds,
-                        snp.id = target_variants,
-                        slide = 0, num.thread = 1, method = "composite")
-      peak_pos <- which(ld$snp.id == rownames(pvalues)[peak_index])
-      peak_ld  <- ld$LD[, peak_pos]^2
+      r <- cor(x[, target_variants], use = "pairwise.complete.obs")
+      peak_pos <- pvalues$Pos[target_variants] == pos
+      peak_ld  <- r[, peak_pos]^2
       ld_block <- peak_ld >= rsquare
       ld_block[is.na(ld_block)] <- FALSE
       peak_block <- target_variants[ld_block]
     }
     peakblock_pvalues <- subset(pvalues,
-                                subset = rownames(pvalues) %in% peak_block)
+                                subset = variant_index %in% peak_block)
     write.table(data.frame(peak_id = peak_id,
                            peak_chr = chr,
                            peak_pos = pos,
                            peak_pval = max(peakblock_pvalues$P.fit),
                            dist2peak = peakblock_pvalues$Pos - pos,
                            peakblock_pvalues),
-                out_fn,
+                paste0(out_fn, "_peakBlock.csv"),
                 sep = ",", quote = TRUE, row.names = FALSE, col.names = FALSE,
                 append = TRUE)
     x <- subset(x, select = !rownames(pvalues) %in% peak_block)
     pvalues <- subset(pvalues, subset = !rownames(pvalues) %in% peak_block)
   }
-  snpgdsClose(snpgds)
-  unlink(snpgds_fn, force = TRUE)
   gc();gc()
+  invisible(out_x)
 }
 
 print.peakCall <- function(x){
@@ -726,10 +877,28 @@ print.peakCall <- function(x){
   print(attributes(x)$scan)
 }
 
+
+#' List up candidate genes
+#' 
+#' @param x input object
+#' 
+#' @export
+#' 
 listCandidate <- function(x, ...){
   UseMethod("listCandidate", x)
 }
 
+#' @rdname 
+#' 
+#' @param x peakCall object
+#' @param annotation_fn path to an annotation information file
+#' @param gff_fn path to a GFF file
+#' @param snpeff_fn path to a snpEff file
+#' @param out_fn prefix of output file name
+#' 
+#' @importFrom vcfR read.vcfR
+#' 
+#' @export
 listCandidate.peakCall <- function(x,
                                    annotation_fn,
                                    gff_fn,
@@ -740,20 +909,20 @@ listCandidate.peakCall <- function(x,
   } else if(attributes(x)$scan == "GWAS"){
     scan <- "GWAS"
   }
-
+  
   if(!is.null(snpeff_fn)){
     snpeff_fn <- read.vcfR(snpeff_fn, checkFile = FALSE, verbose = FALSE)
   }
-
+  
   if(grepl("\\.csv$", basename(annotation_fn))){
     annotation_fn <- read.csv(annotation_fn)
   } else if(grepl("\\.tsv$", basename(annotation_fn))){
     annotation_fn <- read.table(annotation_fn, sep = "\t", header = TRUE)
   }
-
+  
   for(i in seq_along(x$peakblock_fn)){
     peakblock <- read.csv(x$peakblock_fn[i])
-    tmp_fn <- paste0(out_fn, x$pheno_names[i], "_candidateList.csv")
+    tmp_fn <- paste0(out_fn, x$pheno_names[i])
     listCandidate.data.frame(peakblock,
                              annotation_fn,
                              gff_fn,
@@ -766,6 +935,20 @@ listCandidate.peakCall <- function(x,
   invisible(out)
 }
 
+#' @rdname 
+#' 
+#' @param x peakcall data.frame
+#' @param annotation_fn path to an annotation information file
+#' @param gff_fn path to a GFF file
+#' @param snpeff_fn path to a snpEff file
+#' @param out_fn prefix of output file name
+#' @param scan scan type
+#' 
+#' @importFrom vcfR read.vcfR
+#' @importFrom dplyr left_join
+#' @importFrom rtracklayer import.gff
+#' 
+#' @export
 listCandidate.data.frame <- function(x,
                                      annotation_fn,
                                      gff_fn,
@@ -776,7 +959,7 @@ listCandidate.data.frame <- function(x,
   if(nrow(x) != 0){
     gff <- import.gff(gff_fn)
     gff <- gff[gff$type %in% c("transcript", "mRNA")]
-
+    
     if(!is.data.frame(annotation_fn)){
       if(grepl("\\.csv$", basename(annotation_fn))){
         ann <- read.csv(annotation_fn)
@@ -784,26 +967,26 @@ listCandidate.data.frame <- function(x,
         ann <- read.table(annotation_fn, sep = "\t", header = TRUE)
       }
     }
-
+    
     if(!is.null(snpeff_fn)){
       if(inherits(snpeff_fn, "vcfR")){
         snpeff <- snpeff_fn
-
+        
       } else {
         snpeff <- read.vcfR(snpeff_fn, checkFile = FALSE, verbose = FALSE)
       }
-
+      
     } else {
       snpeff <- NULL
     }
-
+    
     for(i_peak in unique(x$Peak_id)){
       i_peakblock <- x[x$Peak_id == i_peak, ]
-
+      
       if(scan == "QTL"){
         tmp <- data.frame(Peak_id = i_peak,
                           getQTLcandidate(gff, i_peakblock, snpeff))
-
+        
       } else if(scan == "GWAS"){
         tmp <- data.frame(Peak_id = i_peak,
                           getGWAScandidate(gff, i_peakblock, snpeff))
@@ -814,9 +997,12 @@ listCandidate.data.frame <- function(x,
       out <- left_join(out, ann, by = c("GeneID", "TxID"))
     }
   }
-  write.csv(out, out_fn, row.names = FALSE)
+  write.csv(out, paste0(out_fn, "_candidateList.csv"), row.names = FALSE)
 }
 
+#' @importFrom GenomicRanges GRanges findOverlaps
+#' @importFrom IRanges IRanges
+#' @importFrom S4Vectors queryHits
 getQTLcandidate <- function(gff, peakblock, snpeff){
   peak_gff <- GRanges(seqnames = peakblock$Peak_chr[1],
                       ranges = IRanges(start = peakblock$Pos[1],
@@ -833,7 +1019,7 @@ getQTLcandidate <- function(gff, peakblock, snpeff){
                     Gene_start = start(hit),
                     GeneID = unlist(hit$Parent),
                     TxID = hit$ID)
-
+  
   if(!is.null(snpeff)){
     snpeff_out <- addSnpEff(snpeff, peakblock, scan = "QTL")
     out <- left_join(out, snpeff_out, by ="TxID")
@@ -866,13 +1052,14 @@ snpeff2df <- function(info, chr, pos, var_chr, var_pos){
   return(ann)
 }
 
+#' @importFrom vcfR getFIX getINFO
 addSnpEff <- function(snpeff, peakblock, scan){
   fix <- getFIX(snpeff)
   chr <- fix[, 1]
   pos <- as.numeric(fix[, 2])
   info <- getINFO(snpeff)
   peak_ann <- NULL
-
+  
   if(scan == "QTL"){
     target_chr <- peakblock$Chr[1] == chr
     target_pos <- pos >= min(peakblock$Pos) & pos <= max(peakblock$Pos)
@@ -890,7 +1077,7 @@ addSnpEff <- function(snpeff, peakblock, scan){
     genewise <- data.frame(TxID = names(genewise),
                            do.call("rbind", genewise))
     colnames(genewise)[-1] <- c("HIGH", "MODERATE", "LOW", "MODIFIER")
-
+    
   } else if(scan == "GWAS"){
     for(i in seq_len(nrow(peakblock))){
       peak_ann <- rbind(peak_ann,
@@ -914,4 +1101,61 @@ addSnpEff <- function(snpeff, peakblock, scan){
     colnames(genewise)[-(1:5)] <- c("HIGH", "MODERATE", "LOW", "MODIFIER")
   }
   return(genewise)
+}
+
+#' Haplotype analysis for peak blocks
+#' 
+#' @param x input object
+haploPLot <- function(x, ...){
+  UseMethod("haploPlot", x)
+}
+
+#' @rdname 
+#' 
+#' @param peakblock peakCall obeject
+#' @param out_fn prefix of output file name
+#' 
+#' 
+#' @export
+haploPlot.peakCall <- function(x, out_fn){
+  for(i in seq_along(x$peakblock_fn)){
+    peakblock <- read.csv(x$peakblock_fn[i])
+    geno <- x$signif_x_list[[x$pheno_names[i]]]
+    
+    if(attributes(x)$scan == "GWAS"){
+      geno <- x$signif_x_list[[x$pheno_names[i]]]
+      geno[, -(1:2)] <- apply(geno[, -(1:2)], 2, function(x){
+        x[x %in% 0:10] <- NA
+        return(x)
+      })
+    }
+    tmp_fn <- paste0(out_fn, x$pheno_names[i])
+    haploPlot.data.frame(peakblock, geno, x$pheno[, i], tmp_fn)
+  }
+  out <- paste0(out_fn, x$pheno_names, "_haploPlot.csv")
+  names(out) <- x$pheno_names
+  invisible(out)  
+}
+
+#' @rdname 
+#' 
+#' @param peakblock peak block data.frame
+#' @param geno genotype data.frame
+#' @param pheno phenotype data.frame
+#' @param out_fn prefix of output file name
+#' 
+#' 
+#' @export
+haploPlot.data.frame <- function(x, geno, pheno, out_fn){
+  haplo <- NULL
+  for(i_peak in unique(x$Peak_id)){
+    i_peakblock <- x[x$Peak_id == i_peak, ]
+    target_geno <- subset(geno, 
+                          subset = geno$Chr %in% i_peakblock$Chr &
+                            geno$Pos %in% i_peakblock$Pos)
+    haplo <- rbind(haplo, data.frame(Peak_ID = i_peak, target_geno))
+    target_geno <- subset(target_geno, select = -(Chr:Pos))
+    target_geno <- target_geno[!duplicated(target_geno), ]
+  }
+  write.csv(haplo, paste0(out_fn,"_haploPattern.csv"), row.names = FALSE)
 }
