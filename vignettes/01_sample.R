@@ -1,6 +1,3 @@
-# Load functions
-source("~/hdd2/softDevel/lazyGeno/R/00_functions.R")
-
 #######################################################
 # Build an object holding genotype and phenotype data #
 #######################################################
@@ -43,10 +40,10 @@ dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
 # the additive effect, dom represents the dominant effect, and e is the residual
 # error term.
 make_df <- function(x){
-    add <- x    # Set x as additive effect
-    dom <- as.numeric(!x %in% c(0, 2))    # Convert x into values indicating dominant effect
-    df <- data.frame(add = add, dom = dom)
-    return(df)
+  add <- x    # Set x as additive effect
+  dom <- as.numeric(!x %in% c(0, 2))    # Convert x into values indicating dominant effect
+  df <- data.frame(add = add, dom = dom)
+  return(df)
 }
 
 # Execute regression analysis
@@ -93,3 +90,37 @@ listCandidate(peakblock,
               gff_fn = gff_fn,
               snpeff_fn = snpeff_fn,
               out_fn = out_fn)
+
+###################################
+# Plot haplotype x phenotype plot #
+###################################
+out_dir <- "~/hdd2/softDevel/lazyGeno/test"
+pvalues_fn <- list.files(out_dir, "scanQTL", full.names = TRUE)
+
+geno_fn <- "~/hdd3/gbs/runs/2022_TP72_TP74_NBWRC46_KoshiWCSL/NippWRC46/gbscleanr_out/NBxWRC46_F2_MCPtaggR_GBScleanR_dosage.csv"
+geno <- read.csv(geno_fn, header = FALSE)
+sampleID_geno <- geno[-(1:2), 1]    # Extract sample id info from the genotype data
+marker_chr <- as.character(geno[1, -1])    # Extract marker position info (chromosome)
+marker_pos <- as.numeric(geno[2, -1])    # Extract marker position info (basepairs)
+geno <- geno[-(1:2), -1]    # Extract genotype info only
+pheno_fn <- "~/hdd2/toriba/toriba_f2/pheno/Furuta-san_WRC46xNB_F2_Toriba211227.csv"
+pheno <- read.csv(pheno_fn)
+sampleID_pheno <- pheno$ID    # Extract sample id info from the phenotype data
+sampleID_pheno <- paste0("sample", sampleID_pheno)    # Modify format if neccessary
+pheno <- pheno[, -1]    # Extract phenotype info
+
+qtlscan <- buildQTLscan(geno = geno,
+                        pvalues_fn = pvalues_fn,
+                        sampleID_geno = sampleID_geno,
+                        sampleID_pheno = sampleID_pheno,
+                        pheno = pheno,
+                        marker_chr = marker_chr,
+                        marker_pos = marker_pos)
+
+signif <- "x$FDR <= 0.05"
+rsquare <- 0.6
+out_fn <- file.path(out_dir, "test_")
+peakblock <- callPeakBlock(qtlscan, signif = signif,
+                           out_fn = out_fn, rsquare = rsquare)
+
+haplo_fn <- haploPlot(peakblock, out_fn = out_fn, out_fmt = "pdf")
