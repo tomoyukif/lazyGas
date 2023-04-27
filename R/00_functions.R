@@ -821,7 +821,7 @@ callPeakBlock.QTLscan <- function(x,
                                   signif,
                                   out_fn,
                                   rsquare = 0.6){
-  geno <- matrix(as.numeric(as.matrix(x$geno)), nrow(geno), ncol(geno))
+  geno <- matrix(as.numeric(as.matrix(x$geno)), nrow(x$geno), ncol(x$geno))
   rownames(geno) <- x$sample_id
   signif_x_list <- NULL
   for(i in seq_along(x$pvalues_fn)){
@@ -996,7 +996,6 @@ listCandidate <- function(x, ...){
 #' @export
 listCandidate.peakCall <- function(x,
                                    annotation_fn,
-                                   gff_fn,
                                    snpeff_fn = NULL,
                                    out_fn){
   if(attributes(x)$scan == "QTL"){
@@ -1020,7 +1019,6 @@ listCandidate.peakCall <- function(x,
     tmp_fn <- paste0(out_fn, x$pheno_names[i])
     listCandidate.data.frame(peakblock,
                              annotation_fn,
-                             gff_fn,
                              snpeff_fn,
                              tmp_fn,
                              scan = scan)
@@ -1042,19 +1040,17 @@ listCandidate.peakCall <- function(x,
 #' @importFrom vcfR read.vcfR
 #' @importFrom dplyr left_join
 #' @importFrom rtracklayer import.gff
+#' @importFrom GenomicRanges GRanges findOverlaps
+#' @importFrom IRanges IRanges
 #'
 #' @export
 listCandidate.data.frame <- function(x,
                                      annotation_fn,
-                                     gff_fn,
                                      snpeff_fn = NULL,
                                      out_fn,
                                      scan = "QTL"){
   out <- NULL
   if(nrow(x) != 0){
-    gff <- import.gff(gff_fn)
-    gff <- gff[gff$type %in% c("transcript", "mRNA")]
-
     if(!is.data.frame(annotation_fn)){
       if(grepl("\\.csv$", basename(annotation_fn))){
         ann <- read.csv(annotation_fn)
@@ -1062,6 +1058,10 @@ listCandidate.data.frame <- function(x,
         ann <- read.table(annotation_fn, sep = "\t", header = TRUE)
       }
     }
+    gff <- GRanges(seqnames = ann$Chr,
+                   IRanges(start = ann$Start,
+                           end = ann$End,
+                           names = ann$TxID))
 
     if(!is.null(snpeff_fn)){
       if(inherits(snpeff_fn, "vcfR")){
