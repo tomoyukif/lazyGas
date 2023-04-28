@@ -986,7 +986,7 @@ listCandidate <- function(x, ...){
 #' @rdname listCandidate
 #'
 #' @param x peakCall object
-#' @param annotation_fn path to an annotation information file
+#' @param annotation_fn path to an annotation information file or a data.frame
 #' @param gff_fn path to a GFF file
 #' @param snpeff_fn path to a snpEff file
 #' @param out_fn prefix of output file name
@@ -1007,11 +1007,12 @@ listCandidate.peakCall <- function(x,
   if(!is.null(snpeff_fn)){
     snpeff_fn <- read.vcfR(snpeff_fn, checkFile = FALSE, verbose = FALSE)
   }
-
-  if(grepl("\\.csv$", basename(annotation_fn))){
-    annotation_fn <- read.csv(annotation_fn)
-  } else if(grepl("\\.tsv$", basename(annotation_fn))){
-    annotation_fn <- read.table(annotation_fn, sep = "\t", header = TRUE)
+  if(is.character(annotation_fn)){
+    if(grepl("\\.csv$", basename(annotation_fn))){
+      annotation_fn <- read.csv(annotation_fn)
+    } else if(grepl("\\.tsv$", basename(annotation_fn))){
+      annotation_fn <- read.table(annotation_fn, sep = "\t", header = TRUE)
+    }
   }
 
   for(i in seq_along(x$peakblock_fn)){
@@ -1051,7 +1052,7 @@ listCandidate.data.frame <- function(x,
                                      scan = "QTL"){
   out <- NULL
   if(nrow(x) != 0){
-    if(!is.data.frame(annotation_fn)){
+    if(is.character(annotation_fn)){
       if(grepl("\\.csv$", basename(annotation_fn))){
         ann <- read.csv(annotation_fn)
       } else if(grepl("\\.tsv$", basename(annotation_fn))){
@@ -1062,6 +1063,7 @@ listCandidate.data.frame <- function(x,
                    IRanges(start = ann$Start,
                            end = ann$End,
                            names = ann$TxID))
+    mcols(gff) <- DataFrame(Parent = ann$GeneID)
 
     if(!is.null(snpeff_fn)){
       if(inherits(snpeff_fn, "vcfR")){
@@ -1098,6 +1100,7 @@ listCandidate.data.frame <- function(x,
 #' @importFrom GenomicRanges GRanges findOverlaps
 #' @importFrom IRanges IRanges
 #' @importFrom S4Vectors queryHits
+#' @importFrom GenomeInfoDb seqnames
 getQTLcandidate <- function(gff, peakblock, snpeff){
   peak_gff <- GRanges(seqnames = peakblock$Peak_chr[1],
                       ranges = IRanges(start = peakblock$Pos[1],
@@ -1112,8 +1115,8 @@ getQTLcandidate <- function(gff, peakblock, snpeff){
                     Dist2peak = hit$fromPeak,
                     Gene_chr = as.character(seqnames(hit)),
                     Gene_start = start(hit),
-                    GeneID = unlist(hit$Parent),
-                    TxID = hit$ID)
+                    GeneID = hit$Parent,
+                    TxID = names(hit))
 
   if(!is.null(snpeff)){
     snpeff_out <- addSnpEff(snpeff, peakblock, scan = "QTL")
@@ -1166,7 +1169,7 @@ addSnpEff <- function(snpeff, peakblock, scan){
                                              var_pos = target_pos[i])))
     }
     colnames(peak_ann) <- c("type", "impact", "GeneId", "TxID")
-    genewise <- tapply(peak_ann$impact, peak_ann$TxId, function(x){
+    genewise <- tapply(peak_ann$impact, peak_ann$TxID, function(x){
       as.vector(table(factor(x, c("HIGH", "MODERATE", "LOW", "MODIFIER"))))
     })
     genewise <- data.frame(TxID = names(genewise),

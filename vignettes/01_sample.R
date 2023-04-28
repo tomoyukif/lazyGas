@@ -81,13 +81,13 @@ system2("java", paste0(args, vcf_fn, " > ", out_fn))
 ###########################
 # List up candidate genes #
 ###########################
-annotation_fn <- "~/hdd3/genomeData/rice/misc/riceCombinedGeneAnnotation.tsv"
-gff_fn <- "~/hdd3/genomeData/rice/misc/riceCombinedGeneAnnotation.gff"
+load("~/hdd3/genomeData/rice/cultivar_sativa/nb_combined/nbCombined_genetable.Rdata")
 snpeff_fn <- "~/hdd3/gbs/runs/2022_TP72_TP74_NBWRC46_KoshiWCSL/NippWRC46/gbscleanr_out/NBxWRC46_F2_MCPtaggR_GBScleanR.snpEff.vcf"
 out_fn <- file.path(out_dir, "test_")
+ann <- subset(ann, select = c(GeneID, rep_TxID, chr:end))
+names(ann) <- c("GeneID", "TxID", "Chr", "Start", "End")
 listCandidate(peakblock,
-              annotation_fn = annotation_fn,
-              gff_fn = gff_fn,
+              annotation_fn = ann,
               snpeff_fn = snpeff_fn,
               out_fn = out_fn)
 
