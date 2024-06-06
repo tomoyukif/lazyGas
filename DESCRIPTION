@@ -1,8 +1,8 @@
 Package: lazyGas
 Type: Package
-Title: Genotic analysis pipeline for lazy guys
-Version: 0.0.2
-Date: 2024-06-04
+Title: Lazies' genetic association study (lazyGas): genetic association study pipeline for lazy guys
+Version: 0.1.1
+Date: 2024-06-06
 Authors@R: person("Tomoyuki", "Furuta", 
            email = "f.tomoyuki@okayama-u.ac.jp",
            role = c("aut", "cre"),
@@ -10,8 +10,7 @@ Authors@R: person("Tomoyuki", "Furuta",
 Description: Genetic analysis pipeline for lazy guys.
 License: GPL-3 + file LICENSE
 Encoding: UTF-8
-LinkingTo: Rcpp
-Imports: stats, utils, methods, ggplot2, Rcpp (>= 1.0.6), GBScleanR
+Imports: stats, utils, methods, ggplot2, GBScleanR, gdsfmt
 SystemRequirements: GNU make, C++11
 Suggests: knitr, rmarkdown
 VignetteBuilder: knitr
