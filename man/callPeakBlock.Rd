@@ -2,30 +2,14 @@
 % Please edit documentation in R/00_functions.R
 \name{callPeakBlock}
 \alias{callPeakBlock}
-\alias{callPeakBlock.data.frame}
-\alias{callPeakBlock.QTLscan}
-\alias{callPeakBlock.GWASscan}
-\alias{callPeakBlock.matrix}
 \title{Call peack blocks}
 \usage{
-callPeakBlock(x, ...)
-
-\method{callPeakBlock}{data.frame}(x, pvalues, signif, out_fn, rsquare = 0.6)
-
-\method{callPeakBlock}{QTLscan}(x, signif, out_fn, rsquare = 0.6)
-
-\method{callPeakBlock}{GWASscan}(x, signif, out_fn, rsquare = 0.6)
-
-\method{callPeakBlock}{matrix}(x, pvalues, signif, out_fn, rsquare = 0.6)
+callPeakBlock(object, signif = 0.05, threshold = 0.8, ...)
 }
 \arguments{
-\item{x}{matrix of genotype data}
-
-\item{pvalues}{data.frame of pvalue data}
+\item{object}{QTLscan object}
 
 \item{signif}{expression to define significant markers}
-
-\item{out_fn}{prefix of output file name}
 
 \item{rsquare}{threshold on squared R values to define peak blocks}
 }

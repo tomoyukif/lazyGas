@@ -2,27 +2,25 @@
 % Please edit documentation in R/00_functions.R
 \name{haploPlot}
 \alias{haploPlot}
-\alias{haploPlot.peakCall}
-\alias{haploPlot.data.frame}
-\title{Haplotype analysis for peak blocks}
+\alias{haploPlot,LazyGas-method}
+\title{Generate Haplotype Plots}
 \usage{
-haploPlot(x, ...)
+haploPlot(object, pheno, recalc, ...)
 
-\method{haploPlot}{peakCall}(x, out_fn, out_fmt)
-
-\method{haploPlot}{data.frame}(x, geno, pheno, out_fn, out_fmt)
+\S4method{haploPlot}{LazyGas}(object, pheno, recalc)
 }
 \arguments{
-\item{x}{input object}
+\item{object}{A LazyGas object.}
 
-\item{out_fn}{prefix of output file name}
+\item{pheno}{The phenotype to plot.}
 
-\item{geno}{genotype data.frame}
+\item{recalc}{Logical. If TRUE, use recalculated scan data.}
 
-\item{pheno}{phenotype data.frame}
-
-\item{peakblock}{peak block data.frame}
+\item{...}{Additional arguments.}
+}
+\value{
+A list of ggplot objects representing the haplotype plots.
 }
 \description{
-Haplotype analysis for peak blocks
+This function generates haplotype plots for the specified phenotype.
 }

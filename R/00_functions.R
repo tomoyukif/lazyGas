@@ -1,747 +1,1121 @@
-#' Build a lazyQTL object
-#'
-#' @param geno Genotype data.frame
-#' @param pheno Phenotype data.frame
-#' @param sampleID_geno Sample ID in genotype data
-#' @param sampleID_pheno Sample ID in phenotype data
-#' @param marker_chr Chromosome ID of markers
-#' @param marker_pos Physical positin of markers
-#' @param geno_fmt Genotype data format
-#' @param geno_levels Factor levels of genotype data
-#'
-#' @export
-#'
+################################################################################
+# Utility functions to handle a GDS file
+## Create a GDS node
+#' @importFrom gdsfmt exist.gdsn addfolder.gdsn index.gdsn add.gdsn
+.create_gdsn <- function(root_node,
+                         target_node,
+                         new_node,
+                         val = NULL,
+                         storage = "string32",
+                         valdim = dim(val),
+                         replace = TRUE,
+                         attr = NULL,
+                         is_folder = FALSE){
 
-buildLazyQTL <- function(geno,
-                         pheno,
-                         sampleID_geno = NULL,
-                         sampleID_pheno = NULL,
-                         marker_chr,
-                         marker_pos,
-                         geno_fmt = "dosage",
-                         geno_levels = 0:2){
-  # Validation of genotype and phenotype data
-  if(is.null(sampleID_pheno)){
-    sampleID_pheno <- pheno[, grepl("ID|id", colnames(pheno))]
-    pheno <- subset(pheno, select = !grepl("ID|id", colnames(pheno)))
-  }
-  if(is.null(sampleID_geno)){
-    sampleID_geno <- rownames(geno)
-  }
-  nopheno <- sampleID_geno[!sampleID_geno %in% sampleID_pheno]
-  nogeno <- sampleID_pheno[!sampleID_pheno %in% sampleID_geno]
-  if(length(nopheno) > 0){
-    message("The following samples have no phenotype info: \n",
-            paste(nopheno, collapse = " "))
-  }
-  if(length(nogeno) > 0){
-    message("The following samples have no genotype info: \n",
-            paste(nogeno, collapse = " "))
-  }
+  # Check if the target node exists in the root node
+  check <- exist.gdsn(node = root_node, path = target_node)
+  if(!check){ stop(target_node, " does not exist!") }
 
-  # Validate genotype format
-  uniq_geno <- na.omit(unique(as.vector(unlist(geno))))
-  if(!all(uniq_geno %in% geno_levels)){
-    stop("The input geno contains the following levels: \n",
-         paste(sort(uniq_geno), collapse = " "),
-         "\n But you specified geno_levels as: \n",
-         paste(sort(geno_levels), collapse = " "),
-         call. = FALSE)
-  }
-  if(any(is.na(suppressWarnings(as.numeric(uniq_geno))))){
-    stop("The input geno contains the level(s) that cannot be coerced",
-         "into numeric value(s). \n",
-         'Set geno_fmt = "haplotype" if your geno indicates haplotype info.',
-         call. = FALSE)
-  }
+  # Get the index of the target node
+  target_node_index <- index.gdsn(node = root_node, path = target_node)
 
-  # Reorder phenotype data to match it with genotype data
-  pheno <- subset(pheno, subset = !sampleID_pheno %in% nogeno)
-  geno <- subset(geno, subset = !sampleID_geno %in% nopheno)
-  colnames(geno) <- NULL
-  sampleID_geno <- sampleID_geno[!sampleID_geno %in% nopheno]
-  hitid <- match(sampleID_geno, sampleID_pheno)
-  pheno <- pheno[hitid, ]
-
-  # Calculate MAF
-  if(geno_fmt == "dosage"){
-    maf <- apply(geno, 2, function(x){
-      tabx <- table(factor(x, geno_levels))
-      tabx <- c(sum(tabx * rev(geno_levels)),
-                sum(tabx * geno_levels))
-      return(min(tabx)/sum(tabx))
-    })
-    maf <- unname(maf)
-
+  # Create a folder node if specified
+  if(is_folder){
+    new_node_index <- addfolder.gdsn(node = target_node_index,
+                                     name = new_node,
+                                     replace = TRUE)
   } else {
-    maf <- apply(geno, 2, function(x){
-      tabx <- table(factor(x, geno_levels))
-      return(min(tabx)/sum(tabx))
-    })
-    maf <- unname(maf)
+    # Create a new node with the specified value, storage type, and dimensions
+    new_node_index <- add.gdsn(node = target_node_index, name = new_node,
+                               val = val, storage = storage, valdim = valdim,
+                               replace = replace)
+    # Assign attributes to the new node if provided
+    .putAttrGdsn(node = new_node_index, attr = attr)
+    # Compress the new node
+    .compressNodes(node = new_node_index)
   }
+  invisible(new_node_index)
+}
 
-  out <- list(geno = geno,
-              pheno = pheno,
-              pheno_names = colnames(pheno),
-              sample_id = sampleID_geno,
-              marker_chr = marker_chr,
-              marker_pos = marker_pos,
-              maf = maf,
-              geno_fmt = geno_fmt,
-              geno_levels = geno_levels)
-  class(out) <- c(class(out), "lazyQTL")
-  gc();gc()
+# Assign attributes to a GDS node
+#' @importFrom gdsfmt put.attr.gdsn
+.putAttrGdsn <- function(node, attr){
+  # Check if attributes are provided
+  if(!is.null(attr)){
+    # Loop through each attribute and assign it to the node
+    for(i in seq_along(attr)){
+      put.attr.gdsn(node = node,
+                    name = names(attr)[i], val = attr[[i]])
+    }
+  }
+}
+
+# Compress GDS nodes
+#' @importFrom gdsfmt index.gdsn compression.gdsn readmode.gdsn
+.compressNodes <- function(node){
+  # Loop through each node
+  for(i in seq_along(node)){
+    # Compress the node using ZIP_RA compression
+    compression.gdsn(node = node, compress = "ZIP_RA")
+    # Set the node to read mode
+    readmode.gdsn(node = node)
+  }
+}
+
+## Retrieve data from a GDS node
+#' @importFrom gdsfmt index.gdsn read.gdsn readex.gdsn
+.get_data <- function(object, node, start = NULL, count, sel = NULL){
+  # Check if selection criteria (sel) is provided
+  if(is.null(sel)){
+    # If selection criteria is not provided
+    if(is.null(start)){
+      # If start is not provided, read the entire node
+      out <- read.gdsn(node = index.gdsn(node = object$root, path = node))
+    } else {
+      # If start is provided, read the node from the specified start position and count
+      out <- read.gdsn(node = index.gdsn(node = object$root, path = node),
+                       start = start,
+                       count = count)
+    }
+  } else {
+    # If selection criteria is provided, read the node with the selection criteria
+    out <- readex.gdsn(node = index.gdsn(node = object$root, path = node), sel = sel)
+  }
+  # Return the retrieved data
   return(out)
 }
 
-#' Build a lazyGWAS object
-#'
-#' @param gds A gbsrGenotypeData object
-#' @param pheno Phenotype data.frame
-#' @param sampleID_pheno Sample ID in phenotype data
-#'
-#' @importFrom GBScleanR getSamID setSamFilter
-#' @importFrom SeqArray seqGetData seqSetFilter seqAlleleFreq
-#' @importFrom rrBLUP A.mat
-#'
-#' @export
-buildLazyGWAS <- function(gds,
-                          pheno,
-                          sampleID_pheno = NULL){
-  # Validation of genotype and phenotype data
-  if(is.null(sampleID_pheno)){
-    sampleID_pheno <- pheno[, grepl("ID|id", colnames(pheno))]
-    pheno <- subset(pheno, select = !grepl("ID|id", colnames(pheno)))
+# Retrieve a scan result for a phenotype
+#' @importFrom gdsfmt get.attr.gdsn objdesp.gdsn read.gdsn readex.gdsn index.gdsn
+.get_scan <- function(object, pheno_name, sel = NULL){
+  # Construct the scan node path for the specified phenotype
+  scan_node <- paste0("lazygas/scan/", pheno_name)
+
+  # Get the attribute names from the scan node
+  col_names <- get.attr.gdsn(node = index.gdsn(node = object$root, path = scan_node))
+  col_names <- col_names$colnames
+
+  # Check if selection criteria (sel) is provided
+  if(is.null(sel)){
+    # If selection criteria is not provided, read the entire scan node
+    out <- data.frame(getMarID(object = object),
+                      getChromosome(object = object),
+                      getPosition(object = object),
+                      read.gdsn(node = index.gdsn(node = object$root, path = scan_node)))
+    # Set the column names for the output data frame
+    colnames(out) <- c("VariantID", "Chr", "Pos", col_names)
+  } else {
+    # If selection criteria is provided, read the scan node with the selection criteria
+    dim <- objdesp.gdsn(node = index.gdsn(node = object$root, path = scan_node))
+    sel <- list(rep(TRUE, dim$dim[1]), col_names %in% sel)
+    out <- data.frame(getMarID(object = object),
+                      getChromosome(object = object),
+                      getPosition(object = object),
+                      readex.gdsn(node = index.gdsn(node = object$root, path = scan_node), sel = sel))
+    # Set the column names for the output data frame based on the selection criteria
+    colnames(out) <- c("VariantID", "Chr", "Pos", col_names[sel[[2]]])
   }
-  sampleID_geno <- getSamID(gds)
-  nopheno <- sampleID_geno[!sampleID_geno %in% sampleID_pheno]
-  nogeno <- sampleID_pheno[!sampleID_pheno %in% sampleID_geno]
-  if(length(nopheno) > 0){
-    message("The following samples have no phenotype info: \n",
-            paste(nopheno, collapse = " "))
-  }
-  if(length(nogeno) > 0){
-    message("The following samples have no genotype info: \n",
-            paste(nogeno, collapse = " "))
-  }
 
-  # Prepare genotype data
-  geno <- seqGetData(gds, "$dosage")
-  geno <- geno[, validMar(gds)]
-  geno <- -1 * (geno - 1)
-  rownames(geno) <- getSamID(gds)
-
-  # Reorder phenotype data to match it with genotype data
-  pheno <- subset(pheno, subset = !sampleID_pheno %in% nogeno)
-  geno <- subset(geno, subset = !sampleID_geno %in% nopheno)
-  colnames(geno) <- NULL
-  sampleID_geno <- sampleID_geno[!sampleID_geno %in% nopheno]
-  hitid <- match(sampleID_geno, sampleID_pheno)
-  pheno <- pheno[hitid, ]
-
-  # Calculate a genomic relationship matrix
-  message("Calculate the genomic relationship matrix.")
-  grm <- A.mat(geno, return.imputed = TRUE, min.MAF = 0, max.missing = 1)
-  geno <- data.frame(MarkerName = getMarID(gds),
-                     Chr = getChromosome(gds),
-                     Pos = getPosition(gds),
-                     t(grm$imputed))
-  rownames(grm$A) <- paste0("X", rownames(grm$A))
-  colnames(grm$A) <- paste0("X", colnames(grm$A))
-
-  # Calculate MAF
-  id <- getSamID(gds)
-  gds <- setSamFilter(gds, id = id[!id %in% sampleID_geno])
-  seqSetFilter(gds, variant.sel = validMar(gds), sample.sel = validSam(gds))
-  maf <- seqAlleleFreq(gds, minor = TRUE)
-
-  out <- list(geno = geno,
-              grm = grm$A,
-              pheno = pheno,
-              pheno_names = colnames(pheno),
-              sample_id = sampleID_geno,
-              maf = maf)
-  class(out) <- c(class(out), "lazyGWAS")
-  gc();gc()
+  # Return the retrieved scan data
   return(out)
 }
 
+
+# Retrieve a peakcall result for a phenotype
+#' @importFrom dplyr right_join left_join
 #'
+.get_peakcall <- function(object, pheno_name, recalc = FALSE){
+  # Determine the paths for peaks and blocks based on whether recalculation is required
+  if(recalc){
+    peaks_gdsn <- "lazygas/recalc/peaks"
+    blocks_gdsn <- "lazygas/recalc/blocks"
+
+  } else {
+    peaks_gdsn <- "lazygas/peakcall/peaks"
+    blocks_gdsn <- "lazygas/peakcall/blocks"
+  }
+
+  # Get the attribute names from the peaks node
+  col_names <- get.attr.gdsn(node = index.gdsn(node = object$root, path = peaks_gdsn))
+  col_names <- col_names$col_names
+
+  # Retrieve the peaks data for the specified phenotype
+  peaks <- .get_data(object = object, node = paste0(peaks_gdsn, "/", pheno_name))
+  if(length(peaks) == 0){
+    return(NULL)
+  }
+
+  # Ensure the peaks data is in a data frame format
+  if(!is.matrix(peaks)){
+    peaks <- matrix(peaks, nrow = 1)
+    peaks <- data.frame(peaks)
+  } else {
+    if(recalc){
+      peaks <- data.frame(peaks)
+    } else {
+      peaks <- data.frame(t(peaks))
+    }
+  }
+  names(peaks) <- col_names
+
+  # Get the attribute names from the blocks node
+  col_names <- get.attr.gdsn(node = index.gdsn(node = object$root, path = blocks_gdsn))
+  col_names <- col_names$col_names
+
+  # Retrieve the blocks data for the specified phenotype
+  blocks <- .get_data(object = object, node = paste0(blocks_gdsn, "/", pheno_name))
+  if(!is.matrix(blocks)){
+    blocks <- matrix(blocks, nrow = 1)
+    blocks <- data.frame(blocks)
+  } else {
+    if(recalc){
+      blocks <- data.frame(blocks)
+    } else {
+      blocks <- data.frame(t(blocks))
+    }
+  }
+  names(blocks) <- col_names
+
+  # Add VariantID to peaks data
+  peaks$VariantID <- peaks$peakVariantID
+
+  # Retrieve the scan results for the specified phenotype
+  pvalues <- .get_scan(object = object, pheno_name = pheno_name, sel = c("FDR", "negLog10P"))
+
+  if(recalc){
+    # For recalculated data, join peaks and pvalues data
+    pvalues <- subset(pvalues, select = VariantID:Pos)
+    peaks_join <- left_join(x = peaks, y = pvalues, "VariantID")
+    names(peaks_join)[-(1:3)] <- paste0("peak_", names(peaks_join)[-(1:3)])
+    peaks_join <- subset(peaks_join, select = -VariantID)
+
+    # Join blocks and pvalues data
+    blocks_join <- left_join(x = blocks, y = pvalues, by = "VariantID")
+    hit <- match(peaks_join$peakVariantID, blocks_join$VariantID)
+    peaks_join$peak_negLog10P <- blocks_join$negLog10P[hit]
+
+    # Right join peaks and blocks data
+    out <- right_join(x = peaks_join, y = blocks_join, by = "peakID")
+  } else {
+    # For non-recalculated data, join peaks and pvalues data
+    peaks_join <- left_join(x = peaks, y = pvalues, "VariantID")
+    names(peaks_join)[-(1:3)] <- paste0("peak_", names(peaks_join)[-(1:3)])
+    peaks_join <- subset(peaks_join, select = -c(VariantID, peak_FDR))
+
+    # Join blocks and pvalues data
+    blocks_join <- left_join(x = blocks, y = pvalues, by = "VariantID")
+
+    # Right join peaks and blocks data
+    out <- right_join(x = peaks_join, y = blocks_join, by = "peakID")
+  }
+
+  # Return the final joined data
+  return(out)
+}
+
+
+################################################################################
+# Define the LazyGas class object
+#' Class `LazyGas`
+#'
+#' The `LazyGas` class is the main class of [lazyGas] and
+#' user work with this class object.
+#'
+#' @details
+#' The `LazyGas` class is an extention of `GbsrGenotypeData` in the
+#' [GBScleanR] package.
+#'
+#' @importClassesFrom GBScleanR GbsrGenotypeData
+#' @aliases  LazyGas-class LazyGas
+#' @slot lazydata A [list] object.
+#'
+#' @examples
+#' # `buildLazyGas()` initialize the `LazyGas` object.
+#'
+#' # Load a GDS file and instantiate a `LazyGas` object.
+#' gds_fn <- system.file("extdata", "sample.gds", package = "GBScleanR")
+#' lgas <- buildLazyGas(gds_fn)
+#'
+#' # Close connection to the GDS file.
+#' closeGDS(lgas)
+#'
+#' @exportClass LazyGas
+#' @importFrom methods setClass slot
+#' @import GBScleanR
+#'
+setClass(Class = "LazyGas",
+         contains = "GbsrGenotypeData",
+         slots = c(lazydata = "list"))
+
+################################################################################
+# Inherited methods
+#' @importMethodsFrom GBScleanR closeGDS
+setMethod("closeGDS",
+          "LazyGas",
+          function(object, verbose){
+            closefn.gds(gdsfile = object)
+            if(verbose){
+              message('The connection to the GDS file was closed.')
+            }
+          }
+)
+
+################################################################################
+# Functions to be exported
+
+#' Build a LazyGas object
+#'
+#' @param gds_fn A path to a GDS file
+#' @param load_filter A logical value to indicate whether apply filering stored in the input GDS file to samples and markers.
+#'
+#' @importFrom GBScleanR loadGDS countGenotype
+#' @importFrom gdsfmt  exist.gdsn
 #'
 #' @export
 #'
-print.lazyQTL <- function(x){
-  message("Genotype")
-  if(nrow(x$geno) >= 5){
-    r_i <- seq_len(5)
+buildLazyGas <- function(gds_fn = "", load_filter = TRUE, overwrite = FALSE){
+  # Load the GDS file and apply the load filter if specified
+  out <- loadGDS(x = gds_fn, load_filter = load_filter)
+
+  # Count the genotypes in the GDS object
+  out <- countGenotype(object = out)
+
+  # Check if the "lazygas" node already exists in the GDS file
+  if(exist.gdsn(node = out$root, path = "lazygas")){
+    if(overwrite){
+      # If overwrite is TRUE, create (or replace) the "lazygas" folder node
+      .create_gdsn(root_node = out$root, target_node = "",
+                   new_node = "lazygas", is_folder = TRUE)
+    } else {
+      # If overwrite is FALSE, notify the user that LazyGas data already exists
+      message("Some LazyGas data has already been recorded in the input GDS file.",
+              "\nCreate a LazyGas object with the recorded LazyGas data.")
+    }
   } else {
-    r_i <- seq_len(nrow(x$geno))
+    # If the "lazygas" node does not exist, create it
+    .create_gdsn(root_node = out$root, target_node = "",
+                 new_node = "lazygas", is_folder = TRUE)
   }
-  if(ncol(x$geno) >= 5){
-    c_i <- seq_len(5)
-  } else {
-    c_i <- seq_len(ncol(x$geno))
-  }
-  print(x$geno[r_i, c_i])
-  message("Phenotype")
-  print(head(x$pheno))
-  message("Sample ID")
-  print(head(x$sample_id))
-  message("Marker position")
-  print(rbind(head(x$marker_chr), head(x$marker_pos)))
-  message("Minor allele frequency")
-  print(head(x$maf))
-  message("Genotype format")
-  print(head(x$geno_fmt))
-  message("Genotype levels")
-  print(head(x$geno_levels))
+
+  # Create a new LazyGas object and return it
+  out <- new(Class = "LazyGas", out)
+  return(out)
 }
 
+
+#' Assign phenotype data to a LazyGas object
+#'
+#' @param object A LazyGas object
+#' @param pheno A data.frame of phenotype data that must contain a sample id
+#' column named `id` or `ID`
+#'
+#' @importMethodsFrom GBScleanR getSamID
 #'
 #' @export
 #'
-print.lazyGWAS <- function(x){
-  message("Genotype")
-  if(nrow(x$geno) >= 7){
-    r_i <- seq(3, 7)
-  } else {
-    r_i <- seq_len(nrow(x$geno))
-  }
-  if(ncol(x$geno) >= 7){
-    c_i <- seq(3, 7)
-  } else {
-    c_i <- seq_len(ncol(x$geno))
-  }
-  print(x$geno[r_i, c_i])
-  message("Phenotype")
-  print(head(x$pheno))
-  message("Sample ID")
-  print(head(x$sample_id))
-  message("Marker position")
-  print(rbind(head(x$geno[, 1]), head(x$geno[, 2])))
-  message("Minor allele frequency")
-  print(head(x$maf))
+setGeneric("assignPheno", function(object, pheno, rename = NULL, ...)
+  standardGeneric("assignPheno"))
+
+setMethod("assignPheno",
+          "LazyGas",
+          function(object, pheno, rename){
+            # Get index for either 'ID' or 'id' column
+            sampleID_pheno_index <- grep("^ID$|^id$", colnames(pheno))
+
+            # Extract phenotype names
+            pheno_names <- colnames(pheno)[-sampleID_pheno_index]
+
+            # Check if the sample ID column exists and is valid
+            if(length(sampleID_pheno_index) != 1){
+              stop("The input `pheno` data.frame has an invalid structure.",
+                   "\n It must contain a sample id column named `id` or `ID`.")
+            }
+
+            # Extract sample IDs from the phenotype data
+            sampleID_pheno <- pheno[, sampleID_pheno_index]
+
+            # Extract sample IDs from the GDS object
+            sampleID_geno <- getSamID(object = object)
+
+            # Identify samples with missing phenotype or genotype data
+            nopheno <- sampleID_geno[!sampleID_geno %in% sampleID_pheno]
+            nogeno <- sampleID_pheno[!sampleID_pheno %in% sampleID_geno]
+
+            # Report samples with missing phenotype or genotype data
+            if(length(nopheno) > 0){
+              message("The following samples have no phenotype info: \n",
+                      paste(nopheno, collapse = " "))
+            }
+            if(length(nogeno) > 0){
+              message("The following samples have no genotype info: \n",
+                      paste(nogeno, collapse = " "))
+            }
+
+            # Reorder phenotype data to match genotype data
+            pheno <- subset(pheno, subset = !sampleID_pheno %in% nogeno)
+            sampleID_pheno <- sampleID_pheno[!sampleID_pheno %in% nogeno]
+            id_match <- match(sampleID_geno, sampleID_pheno)
+            pheno <- pheno[id_match, -sampleID_pheno_index]
+
+            # Convert to data frame if pheno is a vector
+            if(is.vector(pheno)){
+              pheno <- data.frame(pheno)
+              colnames(pheno) <- pheno_names
+            }
+
+            # Rename phenotypes
+            if(!is.null(rename)){
+              colnames(pheno) <- rename
+            }
+
+            # Identify phenotypes with less than 3 observations
+            invalid_pheno <- sapply(lapply(pheno, is.na), sum)
+            invalid_pheno <- invalid_pheno > nrow(pheno) - 3
+
+            if(sum(invalid_pheno) > 0){
+              message("The following phenotype(s) have less than 3 observations: \n",
+                      paste(pheno_names[invalid_pheno], collapse = " "))
+              message("These phenotype(s) were omitted.")
+              pheno <- subset(pheno, select = !invalid_pheno)
+            }
+
+            # Check phenotype type
+            pheno_type <- .checkPhenoType(pheno = pheno)
+
+            # Add phenotype data to the GDS object
+            object@lazydata$pheno <- pheno
+            object@lazydata$pheno_type <- pheno_type
+            object@lazydata$pheno_names <- colnames(pheno)
+
+            return(object)
+          }
+)
+
+# Function to check the phenotype type
+.checkPhenoType <- function(pheno) {
+  # Determine the unique levels for each phenotype
+  pheno_levels <- lapply(pheno, unique)
+
+  # Remove any NA values from the list of phenotype levels
+  pheno_levels <- lapply(pheno_levels, na.omit)
+
+  # Count the number of unique levels for each phenotype
+  n_levels <- sapply(pheno_levels, length)
+
+  # Determine if the phenotype is binary (i.e., has exactly 2 unique levels)
+  binary <- n_levels == 2
+
+  # Perform the Shapiro-Wilk test for normality on each phenotype
+  pheno_normality <- lapply(pheno, shapiro.test)
+
+  # Extract the p-value from each Shapiro-Wilk test result
+  pheno_normality <- sapply(pheno_normality, function(x) x[[2]])
+
+  # Set the normality test result to NA for binary phenotypes
+  pheno_normality[binary] <- NA
+
+  # Create a data frame to store the binary status and normality p-values
+  out <- data.frame(binary = binary, normality = pheno_normality)
+
+  # Return the resulting data frame
+  return(out)
 }
 
+#' Get Phenotype Data from LazyGas Object
+#'
+#' @param object An object of class \code{LazyGas}.
+#' @return A list containing phenotype data from the \code{LazyGas} object.
+#' @export
+setGeneric("getPheno", function(object, ...)
+  standardGeneric("getPheno"))
+
+#' @rdname getPheno
+setMethod("getPheno",
+          "LazyGas",
+          function(object){
+            return(object@lazydata[grepl("pheno", names(object@lazydata))])
+          }
+)
+
+#' Assign phenotype data to the samples in the LazyGas object
+#'
+#' @param object A LazyGas object
+#' @param pheno A data.frame of phenotype data that must contain a sample id
+#' column named `id` or `ID`
+#'
+#' @importFrom cowplot plot_grid
+#'
+#' @export
+#'
+setGeneric("plotPheno", function(object,
+                                 pheno = 1,
+                                 xlab = "phenotype",
+                                 axis_title_size = 14,
+                                 axis_text_size = 12,
+                                 fill = "skyblue",
+                                 color = "darkblue",
+                                 ...)
+  standardGeneric("plotPheno"))
+
+setMethod("plotPheno",
+          "LazyGas",
+          function(object,
+                   pheno,
+                   xlab,
+                   axis_title_size,
+                   axis_text_size,
+                   fill,
+                   color){
+            # Check if pheno is not NULL and process accordingly
+            if(!is.null(pheno)){
+              if(is.numeric(pheno)){
+                # If pheno is numeric, use it directly as an index
+                phe_index <- pheno
+              } else if(is.logical(pheno)){
+                # If pheno is logical, find the indices where it is TRUE
+                phe_index <- which(pheno)
+              } else if(is.character(pheno)){
+                # If pheno is a character, find the matching phenotype names in the object
+                phe_index <- which(object@lazydata$pheno_names %in% pheno)
+              }
+
+              # If multiple phenotypes are selected, use the first one and notify the user
+              if(length(phe_index) > 1){
+                message("Multiple phenotypes were selected.",
+                        "\nUse the first phenotype.")
+              }
+            } else {
+              # If pheno is NULL, use the first phenotype and notify the user
+              message("Use the first phenotype.")
+              phe_index <- 1
+            }
+
+            # Create a data frame with the selected phenotype values
+            df <- data.frame(value = object@lazydata$pheno[, phe_index])
+
+            # Create a histogram plot of the phenotype values
+            p1 <- ggplot(df, aes(x = value)) +
+              geom_histogram(fill = fill, color = color) +
+              ylab('Count') +
+              theme(axis.title.y = element_text(size = axis_title_size),
+                    axis.text.y = element_text(size = axis_text_size),
+                    axis.text.x = element_blank(),
+                    axis.ticks.x = element_blank(),
+                    axis.title.x = element_blank())
+
+            # Create a boxplot of the phenotype values
+            p2 <- ggplot(df, aes(x = value)) +
+              geom_boxplot(fill = fill, color = color) +
+              xlab(xlab) +
+              theme(axis.title.x = element_text(size = axis_title_size),
+                    axis.text.x = element_text(size = axis_text_size),
+                    axis.text.y = element_blank(),
+                    axis.ticks.y = element_blank(),
+                    panel.grid = element_blank())
+
+            # Combine the histogram and boxplot into a single plot
+            p <- plot_grid(p1, p2, ncol = 1,
+                           rel_heights = c(3, 1),
+                           align = 'v', axis = 'lr')
+
+            # Return the combined plot
+            return(p)
+          }
+)
+
+#'
+#' @importFrom methods show
+#' @importFrom GBScleanR nsam nmar
+#'
+setMethod("show",
+          "LazyGas",
+          function(object){
+            # Display the number of samples
+            message("Number of samples")
+            print(nsam(object = object))
+
+            # Display the number of markers
+            message("Number of markers")
+            print(nmar(object = object))
+
+            # Display phenotype information
+            message("Phenotype")
+            if(is.null(object@lazydata$pheno_names)){
+              # If phenotype names are not assigned, print a message
+              print("Not assigned")
+            } else {
+              # Print the assigned phenotype names
+              print(object@lazydata$pheno_names)
+
+              # Display binary phenotype information
+              message("Binary phenotype")
+              if(any(object@lazydata$pheno_type$binary)){
+                # If there are binary phenotypes, print their names
+                print(object@lazydata$pheno_names[object@lazydata$pheno_type$binary])
+              } else {
+                # If no binary phenotypes are assigned, print a message
+                print("Not assigned")
+              }
+
+              # Display non-normally distributing phenotype information
+              message("Non-normally distributing phenotype")
+              check <- object@lazydata$pheno_type$normality <= 0.05
+              check[is.na(check)] <- FALSE
+              if(any(check)){
+                # If there are non-normally distributing phenotypes, print their names
+                print(object@lazydata$pheno_names[check])
+              } else {
+                # If no non-normally distributing phenotypes are assigned, print a message
+                print("Not assigned")
+              }
+            }
+          }
+)
+
+
+################################################################################
 #' Scan QTL
 #'
-#' @param x input object
-#'
-#' @export
-#'
-scanQTL <- function(x, ...){
-  UseMethod("scanQTL", x)
-}
-
-#' @rdname scanQTL
-#' @param x A lazyQTL object
+#' @param object A LazyGas object
 #' @param out_fn Prefix of output file name
 #' @param formula The formula of the regression model
 #' @param makeDF_FUN The function to modify model data for the regression
 #'
+#' @importFrom gdsfmt apply.gdsn objdesp.gdsn
+#'
 #' @export
 #'
-scanQTL.lazyQTL <- function(x,
-                            out_fn,
-                            formula = "",
-                            makeDF_FUN = NULL){
-  if(!inherits(x, "lazyQTL")){
-    stop("The input should be the lazyQTL object",
-         call. = FALSE)
-  }
+setGeneric("scanAssoc", function(object,
+                                 formula,
+                                 makeDF_FUN = NULL,
+                                 geno_format = c("genotype", "dosage", "haplotype"),
+                                 kruskal = NULL,
+                                 ...)
+  standardGeneric("scanAssoc"))
 
-  message("Going to analyse the following phenotypes: \n",
-          paste(x$pheno_names, collapse = ", "))
+## Define the scanAssoc method for the LazyGas class
+setMethod("scanAssoc",
+          "LazyGas",
+          function(object,
+                   formula,
+                   makeDF_FUN = NULL,
+                   geno_format = c("genotype", "dosage", "haplotype"),
+                   kruskal = NULL){
 
-  for(i in seq_along(x$pheno_names)){
-    p_values <- apply(x$geno, 2, function(g){
-      if(length(unique(na.omit(g))) == 1){
-        return(rep(NA, 6))
-      }
-      if(x$geno_fmt == "dosage"){
-        df <- makeDF(g = g,
-                     phe = x$pheno[, i],
-                     makeDF_FUN = makeDF_FUN,
-                     formula = formula)
+            # Notify the user of the phenotypes being analyzed
+            message("Going to analyze the following phenotypes: \n",
+                    paste(object@lazydata$pheno_names, collapse = ", "))
 
-        if(length(na.omit(unique(df$phe))) == 2){
-          out <- doGLM(df$df, df$fml)
+            # Add a folder to store scan results in the GDS object
+            .create_scan_folder(object)
 
-        } else {
-          out <- doLM(df$df, df$fml)
-        }
+            # Loop through each phenotype name and perform analysis
+            for(i in seq_along(object@lazydata$pheno_names)){
+              i_pheno_names <- object@lazydata$pheno_names[i]
+              dokruskal <- i_pheno_names %in% kruskal  # Determine if Kruskal-Wallis test is needed
 
-      } else if(x$geno_fmt == "haplotype"){
-        if(is.null(makeDF_FUN)){
-          df <- data.frame(phe = x$pheno[, i], group = g)
-          fml <- "phe ~ group"
+              # Notify the user of the phenotype being processed
+              message("Processing: \n",
+                      paste(i_pheno_names, collapse = ", "))
 
-        } else {
-          df <-  data.frame(phe = x$pheno[, i], makeDF_FUN(g))
-          if(ncol(df) > 2){
-            stop("Haplotype association test accepts only one ",
-                 "explanatory variable.\n",
-                 "Please revise the makeDF_FUN.",
-                 call. = FALSE)
+              # Retrieve the phenotype data from the GDS object
+              i_pheno <- getPheno(object = object)$pheno[, i_pheno_names]
+
+              # Perform regression analysis and store results
+              .perform_regression(object = object,
+                                  i_pheno = i_pheno,
+                                  geno_format = geno_format,
+                                  makeDF_FUN = makeDF_FUN,
+                                  formula = formula,
+                                  dokruskal = dokruskal,
+                                  i_pheno_names = i_pheno_names)
+            }
+
+            # Add additional information to the root node in the GDS object
+            .store_additional_info(object = object,
+                                   kruskal = kruskal,
+                                   formula = formula,
+                                   makeDF_FUN = makeDF_FUN,
+                                   geno_format = geno_format)
           }
-        }
-        out <- doKruskal(df, fmt)
-      }
+)
 
-      return(out)
-    })
-
-    if(x$geno_fmt == "haplotype"){
-      p_values <- data.frame(P.fit = p_values)
-
-    } else {
-      if(is.list(p_values)){
-        p_values <- data.frame(do.call("rbind", p_values))
-      } else {
-        p_values <- data.frame(t(p_values))
-      }
-    }
-
-    p_values <- data.frame(Chr = x$marker_chr,
-                           Pos = x$marker_pos,
-                           MAF = x$maf,
-                           p_values)
-    colnames(p_values)[ncol(p_values)] <- "%var"
-    p_values$FDR <- p.adjust(p_values$P.fit, "fdr")
-    p_values$P.fit <- -log10(p_values$P.fit)
-    write.csv(p_values,
-              paste0(out_fn, x$pheno_names[i], "_scanQTL.csv"),
-              row.names = FALSE)
-    gc();gc()
-  }
-  out <- list(geno = x$geno,
-              pheno = x$pheno,
-              sample_id = x$sample_id,
-              pheno_names = x$pheno_names,
-              pvalues_fn = paste0(out_fn, x$pheno_names, "_scanQTL.csv"))
-  class(out) <- c(class(out), "QTLscan")
-  attributes(out) <- c(attributes(out), geno_fmt = x$geno_fmt)
-  invisible(out)
+## Sub-function to create the scan folder in the GDS object
+.create_scan_folder <- function(object) {
+  .create_gdsn(root_node = object$root, target_node = "lazygas",
+               new_node = "scan", is_folder = TRUE)
 }
 
-makeDF <- function(g, phe, makeDF_FUN, formula){
-  g <- as.numeric(g)
-
-  if(is.null(makeDF_FUN)){
-    df <- data.frame(add = g)
-    fml <- formula("phe ~ add")
+.standardize <- function(val, binary){
+  if(binary){
+    return(val)
 
   } else {
-    df <- makeDF_FUN(g)
-    if(formula == ""){
-      stop("Provide formula if you specified makeDF_FUN",
-           call. = FALSE)
-    }
-    fml <- formula(paste0("phe ~ ", formula))
+    return((val - mean(val, na.rm = TRUE)) / sd(val, na.rm = TRUE))
   }
-
-  return(list(df = data.frame(phe = phe, df), fml = fml))
 }
 
-doGLM <- function(df, fml){
-  res <- try(glm(formula = fml, data = df, family = binomial))
+## Sub-function to perform regression analysis and store results
+#' @importFrom gdsfmt apply.gdsn
+.perform_regression <- function(object,
+                                i_pheno,
+                                geno_format,
+                                makeDF_FUN,
+                                formula,
+                                dokruskal,
+                                i_pheno_names) {
+  geno_format <- match.arg(arg = geno_format, c("genotype", "dosage", "haplotype"))
+
+  margin <- switch(geno_format,
+                   "genotype" = 2,
+                   "dosage" = 2,
+                   "haplotype" = 3)
+
+  path <- switch(geno_format,
+                 "genotype" = "genotype/data",
+                 "dosage" = "annotation/format/EDS/data",
+                 "haplotype" = "annotation/format/HAP/data")
+
+  # Get the index of the target node in the GDS object
+  target_node_index <- index.gdsn(node = object, path = path)
+
+  # Set the selection criteria based on the genotype format
+  selection <- .set_selection_criteria_for_scan(object = object,
+                                                geno_format = geno_format,
+                                                target_node_index = target_node_index)
+  binary <- object@lazydata$pheno_type$binary[i]
+  i_pheno <- .standardize(val = i_pheno, binary = binary)
+
+  if(geno_format == "haplotype"){
+    na_val <- 0
+
+  } else {
+    if(exist.gdsn(node = object$root, path = "annotation/format/HAP/data")){
+      hap_node <- index.gdsn(node = object,
+                             path = "annotation/format/HAP/data")
+      obj_desp <- objdesp.gdsn(node = hap_node)
+      na_val <- obj_desp$dim[1]
+
+    } else {
+      na_val <- 2
+    }
+  }
+
+  # Perform regression analysis on genotype data
+  p_values <- apply.gdsn(node = target_node_index,
+                         margin = margin,
+                         as.is = "list",
+                         selection = selection,
+                         FUN = .regression,
+                         pheno = i_pheno,
+                         binary = binary,
+                         na_val = na_val,
+                         geno_format = geno_format,
+                         makeDF_FUN = makeDF_FUN,
+                         formula = formula,
+                         dokruskal = dokruskal)
+
+  # Fill NA values
+  p_values <- .fill.na(p_values = p_values)
+
+  # Combine results into a single data frame
+  p_values <- do.call("rbind", p_values)
+
+  # Calculate FDR and -log10(p-values)
+  p_values <- cbind(p_values,
+                    FDR = p.adjust(p = p_values[, "P.model"], method = "fdr"),
+                    negLog10P = -log10(p_values[, "P.model"]))
+
+  # Add results to the scan node in the GDS object
+  .create_gdsn(root_node = object$root,
+               target_node = "lazygas/scan",
+               new_node = i_pheno_names,
+               val = p_values,
+               storage = "float",
+               valdim = dim(p_values),
+               attr = list(colnames = colnames(p_values)))
+}
+
+## Sub-function to set selection criteria based on the genotype format
+.set_selection_criteria_for_scan <- function(object, geno_format, target_node_index) {
+  if(geno_format == "haplotype"){
+    obj_desp <- objdesp.gdsn(node = target_node_index)
+    selection <- list(rep(TRUE, obj_desp$dim[1]),
+                      validSam(object = object),
+                      validMar(object = object))
+  } else {
+    selection <- list(validSam(object = object),
+                      validMar(object = object))
+  }
+  return(selection)
+}
+
+## Sub-function to store additional information in the GDS object
+.store_additional_info <- function(object,
+                                   kruskal,
+                                   formula,
+                                   makeDF_FUN,
+                                   geno_format) {
+  .create_gdsn(root_node = object$root,
+               target_node = "lazygas/scan",
+               new_node = "kruskal",
+               val = kruskal,
+               storage = "string32",
+               valdim = dim(kruskal))
+
+  .create_gdsn(root_node = object$root,
+               target_node = "lazygas/scan",
+               new_node = "formula",
+               val = formula,
+               storage = "string32",
+               valdim = dim(formula))
+
+  .create_gdsn(root_node = object$root,
+               target_node = "lazygas/scan",
+               new_node = "makeDF_FUN",
+               val = deparse(makeDF_FUN),
+               storage = "string32",
+               valdim = dim(deparse(makeDF_FUN)))
+
+  .create_gdsn(root_node = object$root,
+               target_node = "lazygas/scan",
+               new_node = "geno_format",
+               val = geno_format,
+               storage = "string32",
+               valdim = dim(geno_format))
+}
+
+## Perform regression analysis on genotype data
+.regression <- function(g,
+                        pheno,
+                        binary,
+                        na_val,
+                        geno_format,
+                        makeDF_FUN,
+                        formula,
+                        dokruskal){
+  if(geno_format == "haplotype"){
+    g[g == na_val] <- NA
+
+  } else {
+    g[g > na_val] <- NA
+  }
+
+  # Check if the genotype data has only one unique value after removing NAs
+  if(length(unique(na.omit(as.vector(g)))) == 1){
+    return(NA)  # Return NA if there is no variability in the genotype data
+  }
+
+  if(dokruskal){
+    # If Kruskal-Wallis test is required
+    df <- data.frame(phe = pheno, group = g)  # Create a data frame with phenotype and genotype data
+    out <- .doKruskal(df)  # Perform Kruskal-Wallis test
+
+  } else {
+    # If GLM is required
+    df <- .makeDF(g = g,
+                  phe = pheno,
+                  makeDF_FUN = makeDF_FUN,
+                  formula = formula)  # Create a data frame for GLM
+
+    # Set the family for GLM based on whether the phenotype is binary or continuous
+    if(binary){
+      family <- "binomial"
+
+    } else {
+      family <- "gaussian"
+    }
+    out <- .doGLM(df = df, family = family)  # Perform GLM
+  }
+
+  return(out)  # Return the result of the regression analysis
+}
+
+## Create a data frame for regression analysis
+.makeDF <- function(g, phe, makeDF_FUN, formula){
+  if(is.null(makeDF_FUN)){
+    # If no custom function is provided, convert genotype data to numeric and create a simple data frame
+    g <- as.numeric(g)
+    df <- data.frame(add = g)  # Create a data frame with the genotype data
+    fml <- formula("phe ~ add")  # Define the formula for regression
+
+  } else {
+    # If a custom function is provided, use it to create the data frame
+    df <- makeDF_FUN(g)  # Apply the custom function to the genotype data
+    if(formula == ""){
+      stop("Provide formula if you specified makeDF_FUN",
+           call. = FALSE)  # Ensure that a formula is provided if a custom function is used
+    }
+    fml <- formula(paste0("phe ~ ", formula))  # Define the formula for regression based on the provided string
+  }
+
+  return(list(df = data.frame(phe = phe, df), fml = fml))  # Return the data frame and formula as a list
+}
+
+## Perform Generalized Linear Model (GLM) analysis
+#' @importFrom parameters p_value
+.doGLM <- function(df, family, null_df = NULL, model = FALSE){
+  # Try to fit the GLM to the data
+  res <- try(glm(formula = df$fml, data = df$df, family = family))
+
+  # If there is an error in fitting the model, return NA
   if(inherits(res, "try-error")){ return(NA) }
 
-  p <- pchisq(res$null.deviance - res$deviance,
-              res$df.null - res$df.residual,
-              lower.tail = FALSE)
+  # If the model parameter is TRUE, return the fitted model object
+  if(model){
+    return(res)
+  }
+
+  # Calculate p-value based on the model's deviance
+  if(is.null(null_df)){
+    # If no null model is provided, calculate p-value using the null and residual deviance of the model
+    p <- pchisq(res$null.deviance - res$deviance,
+                res$df.null - res$df.residual,
+                lower.tail = FALSE)
+
+  } else {
+    # If a null model is provided, fit the null model and calculate p-value
+    null_res <- try(glm(formula = null_df$fml,
+                        data = null_df$df,
+                        family = family))
+    p <- pchisq(null_res$deviance - res$deviance,
+                null_res$df.residual - res$df.residual,
+                lower.tail = FALSE)
+  }
+
+  # Calculate the proportion of variance explained by the model
   pervar <- 1 - res$deviance / res$null.deviance
   s <- summary(res)
   coef <- s$coefficients
 
+  # If there is only one row in the coefficients, return NA
   if(nrow(coef) == 1){ return(NA) }
 
+  # Get the terms of the model
   att <- attributes(res$terms)
-  return(makeOut(p, coef, pervar, att$term.labels))
+
+  # Create the output with the p-value, coefficients, proportion of variance, and term labels
+  return(.makeOut(p, coef, pervar, att$term.labels))
 }
 
-doLM <- function(df, fml){
-  res <- try(lm(formula = fml, data = df))
+## Perform Kruskal-Wallis test
+.doKruskal <- function(df){
+  # Try to perform the Kruskal-Wallis test using the formula and data provided
+  res <- try(kruskal.test(formula = "phe ~ group", data = df$df))
+
+  # If there is an error in performing the test, return NA
   if(inherits(res, "try-error")){ return(NA) }
-  s <- summary(res)
-  f <- s$fstatistic
-  pervar <- s$r.squared
-  coef <- s$coefficients
-  if(is.numeric(f)){
-    p <- pf(f[1], f[2], f[3], lower.tail = FALSE)
 
-  } else {
-    return(NA)
-  }
-  att <- attributes(res$terms)
-  return(makeOut(p, coef, pervar, att$term.labels))
+  # Return the p-value of the test
+  return(c(P.model = res$p.value))
 }
 
-doKruskal <- function(df, fml){
-  res <- try(kruskal.test(formula = formula(fml), data = df))
-  if(inherits(res, "try-error")){ return(NA) }
-  return(res$p.value)
-}
-
-makeOut <- function(p, coef, pervar, terms){
-  labs <- c("P.fit", paste("P", terms, sep= "."),
+## Create output for regression results
+.makeOut <- function(p, coef, pervar, terms){
+  # Define the labels for the output
+  labs <- c("P.model", paste("P", terms, sep = "."),
             paste("Coef", terms, sep = "."),
-            "%var")
+            "PVE")
+
+  # Initialize the output vector with NA values
   out <- rep(NA, length(labs))
+
+  # Assign the p-value to the first position in the output
   out[1] <- p
+
+  # Get the row names of the coefficients
   coef_row <- rownames(coef)
+
+  # Loop through each term to populate p-values and coefficients in the output
   for(j in seq_along(terms)){
     if(terms[j] %in% coef_row){
-      out[1 + j] <- coef[terms[j], 4]
-      out[1 + j + length(terms)] <- coef[terms[j], 1]
+      out[1 + j] <- coef[terms[j], 4]  # p-value for the term
+      out[1 + j + length(terms)] <- coef[terms[j], 1]  # coefficient for the term
     }
   }
-  out[2 + length(terms)*2] <- pervar
+
+  # Assign the proportion of variance explained to the output
+  out[2 + length(terms) * 2] <- pervar
+
+  # Assign names to the output
   names(out) <- labs
-  return(out)
+
+  return(out)  # Return the output vector
 }
 
-#'
-#' @export
-#'
-print.QTLscan <- function(x){
-  message("Genotype")
-  if(nrow(x$geno) >= 5){
-    r_i <- seq_len(5)
-  } else {
-    r_i <- seq_len(nrow(x$geno))
-  }
-  if(ncol(x$geno) >= 5){
-    c_i <- seq_len(5)
-  } else {
-    c_i <- seq_len(ncol(x$geno))
-  }
-  print(x$geno[r_i, c_i])
-  message("File names storing regression results")
-  print(cbind(x$pheno_names, x$pvalues_fn))
-}
+## Fill NA values in a list of p-values
+.fill.na <- function(p_values){
+  # Determine the length of each element in the list
+  v_len <- sapply(X = p_values, FUN = function(x){
+    if(all(is.na(x))){
+      return(NA)  # Return NA if all elements in the list are NA
 
-#' Build QTLscan object
-#' @param geno Genotype data.frame
-#' @param pheno Phenotype data.frame
-#' @param pvalues_fn pvalues file names
-#' @param sampleID_geno Sample ID in genotype data
-#' @param sampleID_pheno Sample ID in phenotype data
-#' @param marker_chr Chromosome ID of markers
-#' @param marker_pos Physical positin of markers
-#' @param geno_fmt Genotype data format
-#' @param geno_levels Factor levels of genotype data
-#'
-#' @export
-#'
-buildQTLscan <- function(geno,
-                         pheno,
-                         pvalues_fn,
-                         sampleID_geno = NULL,
-                         sampleID_pheno = NULL,
-                         marker_chr,
-                         marker_pos,
-                         geno_fmt = "dosage",
-                         geno_levels = 0:2){
-  obj <- buildLazyQTL(geno,
-                      pheno,
-                      sampleID_geno,
-                      sampleID_pheno,
-                      marker_chr,
-                      marker_pos,
-                      geno_fmt,
-                      geno_levels)
-
-  if(length(obj$pheno_names) != length(pvalues_fn)){
-    stop("The number of phenotype in pheno",
-         " does not match with the number of phenotype_fn.",
-         call. = FALSE)
-  }
-
-  pvalues_fn <- sapply(obj$pheno_names, function(x){
-    return(grep(x, pvalues_fn, value = TRUE))
+    } else {
+      return(length(x))  # Return the length of the element if it is not all NA
+    }
   })
-  out <- list(geno = obj$geno,
-              pheno = obj$pheno,
-              sample_id = obj$sample_id,
-              pheno_names = obj$pheno_names,
-              pvalues_fn = unname(pvalues_fn))
 
-  class(out) <- c(class(out), "QTLscan")
-  attributes(out) <- c(attributes(out), geno_fmt = obj$geno_fmt)
-  invisible(out)
+  # Replace NA elements in the list with a vector of NA values of appropriate length
+  p_values[is.na(v_len)] <- list(rep(NA, v_len[!is.na(v_len)][1]))
+
+  return(p_values)  # Return the modified list
 }
 
-#' Scan GWAS
-#'
-#' @param x input object
-#'
-#' @export
-#'
-scanGWAS <- function(x, ...){
-  UseMethod("scanGWAS", x)
-}
-
-#' @rdname scanGWAS
-#' @param x A lazyGWAS object
-#' @param out_fn Prefix of output file name
-#' @param nPC The number of principal components in the regression model
-#' @param n_core The number of threads for parallel computing
-#'
-#' @importFrom rrBLUP GWAS
-#'
-#' @export
-#'
-scanGWAS.lazyGWAS <- function(x,
-                              out_fn,
-                              nPC = 2,
-                              n_core = 1){
-  for(i in seq_along(x$pheno_names)){
-    pheno_df <- data.frame(id = paste0("X", x$sample_id),
-                           pheno = x$pheno[, i])
-    colnames(pheno_df)[2] <- x$pheno_names[i]
-    gwas <- GWAS(pheno = pheno_df, geno = x$geno,
-                 n.PC = nPC, K = x$grm, plot = FALSE, n.core = n_core)
-
-    names(gwas)[4] <- "P.fit"
-    gwas$P.fit[gwas$P.fit == 0] <- NA
-    gwas$FDR <- p.adjust(10^-gwas$P.fit, method = "fdr")
-    gwas$MAF <- x$maf
-    gwas <- subset(gwas, select = c(Chr, Pos, MAF, P.fit, FDR))
-    write.csv(gwas,
-              paste0(out_fn, x$pheno_names[i], "_scanGWAS.csv"),
-              row.names = FALSE)
-    gc();gc()
-  }
-
-  out <- list(geno = x$geno,
-              pheno = x$pheno,
-              sample_id = x$sample_id,
-              pheno_names = x$pheno_names,
-              pvalues_fn = paste0(out_fn, x$pheno_names, "_scanGWAS.csv"))
-  class(out) <- c(class(out), "GWASscan")
-  invisible(out)
-}
-
-#'
-#' @export
-#'
-print.GWASscan <- function(x){
-  message("Genotype")
-  if(nrow(x$geno) >= 7){
-    r_i <- seq(3, 7)
-  } else {
-    r_i <- seq_len(nrow(x$geno))
-  }
-  if(ncol(x$geno) >= 7){
-    c_i <- seq(3, 7)
-  } else {
-    c_i <- seq_len(ncol(x$geno))
-  }
-  print(x$geno[r_i, c_i])
-  message("File names storing regression results")
-  print(cbind(x$pheno_names, x$pvalues_fn))
-}
-
-#' Build a lazyGWAS object
-#'
-#' @param gds A gbsrGenotypeData object
-#' @param pheno Phenotype data.frame
-#' @param pvalues_fn pvalues file names
-#' @param sampleID_pheno Sample ID in phenotype data
-#'
-#' @export
-buildGWASscan <- function(gds,
-                          pheno,
-                          pvalues_fn,
-                          sampleID_pheno = NULL){
-  obj <- buildLazyGWAS(gds, pheno, sampleID_pheno)
-
-  if(length(obj$pheno_names) != length(pvalues_fn)){
-    stop("The number of phenotype in pheno",
-         " does not match with the number of phenotype_fn.",
-         call. = FALSE)
-  }
-
-  out <- list(geno = obj$geno,
-              pheno = obj$pheno,
-              sample_id = obj$sample_id,
-              pheno_names = obj$pheno_names,
-              pvalues_fn = pvalues_fn)
-  class(out) <- c(class(out), "GWASscan")
-  invisible(out)
-}
-
+################################################################################
 #' Draw a Manhattan plot
 #'
-#' @param x Input object
-#'
-plotManhattan <- function(x, ...){
-  UseMethod("plotManhattan", x)
-}
-
-#' @rdname plotManhattan
-#' @param x QTLscan object
+#' @param object QTLscan object
 #' @param pehno Phenotype names to be drawn
 #' @param chr Chromosome ID to be drawn
 #' @param start Start position of the range to be drawn
 #' @param end End position of the range to be drawn
 #' @param signif Expression to define the significant markers
 #' @param out_fn Prefix of output file
-#' @param out_fmt Output image format
 #'
-#' @export
-plotManhattan.QTLscan <- function(x,
-                                  pheno = NULL,
-                                  chr = NULL,
-                                  start = NULL,
-                                  end = NULL,
-                                  signif = NULL,
-                                  out_fn = "",
-                                  out_fmt = "pdf"){
-  if(!is.null(pheno)){
-    if(is.numeric(pheno)){
-      phe_index <- pheno
-    } else if(is.logical(pheno)){
-      phe_index <- which(pheno)
-    } else if(is.character(pheno)){
-      phe_index <- which(x$pheno_names %in% pheno)
-    }
-  } else {
-    phe_index <- seq_along(x$pvalues_fn)
-  }
-  for(i in phe_index){
-    pvalues <- read.csv(x$pvalues_fn[i])
-    tmp_fn <- paste0(out_fn, x$pheno_names[i], "_plotManhattan.", out_fmt)
-    p <- plotManhattan.data.frame(pvalues, chr, start, end, signif, tmp_fn, out_fmt)
-    print(p)
-  }
-}
-
-
-#' @rdname plotManhattan
-#' @param x GWASscan object
-#' @param pehno Phenotype names to be drawn
-#' @param chr Chromosome ID to be drawn
-#' @param start Start position of the range to be drawn
-#' @param end End position of the range to be drawn
-#' @param signif Expression to define the significant markers
-#' @param out_fn Prefix of output file
-#' @param out_fmt Output image format
-#'
-#' @export
-plotManhattan.GWASscan <- function(x,
-                                   pheno = NULL,
-                                   chr = NULL,
-                                   start = NULL,
-                                   end = NULL,
-                                   signif = NULL,
-                                   out_fn = "",
-                                   out_fmt = "pdf"){
-  if(!is.null(pheno)){
-    if(is.numeric(pheno)){
-      phe_index <- pheno
-    } else if(is.logical(pheno)){
-      phe_index <- which(pheno)
-    } else if(is.character(pheno)){
-      phe_index <- which(x$pheno_names %in% pheno)
-    }
-  } else {
-    phe_index <- seq_along(x$pvalues_fn)
-  }
-  for(i in phe_index){
-    pvalues <- read.csv(x$pvalues_fn[i])
-    tmp_fn <- paste0(out_fn, x$pheno_names[i], "_plotManhattan.", out_fmt)
-    p <- plotManhattan.data.frame(pvalues, chr, start, end, signif, tmp_fn, out_fmt)
-    invisible(p)
-  }
-}
-
-
-#' @rdname plotManhattan
-#' @param x Chracter string of input file name
-#' @param pehno Phenotype names to be drawn
-#' @param chr Chromosome ID to be drawn
-#' @param start Start position of the range to be drawn
-#' @param end End position of the range to be drawn
-#' @param signif Expression to define the significant markers
-#' @param out_fn Prefix of output file
-#' @param out_fmt Output image format
-#'
-#' @export
-plotManhattan.character <- function(x,
-                                    chr = NULL,
-                                    start = NULL,
-                                    end = NULL,
-                                    signif = NULL,
-                                    out_fn = "",
-                                    out_fmt = "pdf"){
-  pvalues <- read.csv(x)
-  p <- plotManhattan.data.frame(pvalues, chr, start, end, signif, out_fn, out_fmt)
-  invisible(p)
-}
-
-
-#' @rdname plotManhattan
-#' @param x data.frame of pvalue data
-#' @param pehno Phenotype names to be drawn
-#' @param chr Chromosome ID to be drawn
-#' @param start Start position of the range to be drawn
-#' @param end End position of the range to be drawn
-#' @param signif Expression to define the significant markers
-#' @param out_fn Prefix of output file
-#' @param out_fmt Output image format
-#'
+#' @importFrom gdsfmt ls.gdsn
 #' @import ggplot2
-#'
 #' @export
-plotManhattan.data.frame <- function(x,
+#'
+setGeneric("plotManhattan", function(object,
+                                     pheno = NULL,
                                      chr = NULL,
                                      start = NULL,
                                      end = NULL,
-                                     signif = NULL,
+                                     signif = "FDR<0.05",
                                      out_fn = "",
-                                     out_fmt = "pdf"){
-  if(is.null(signif)){
-    signif <- rep(TRUE, nrow(x))
+                                     ...)
+  standardGeneric("plotManhattan"))
+
+setMethod("plotManhattan",
+          "LazyGas",
+          function(object,
+                   pheno = NULL,
+                   chr = NULL,
+                   start = NULL,
+                   end = NULL,
+                   signif = "FDR<0.05"){
+            # Check if scan data exists in the GDS object
+            .check_scan_data_exists(object = object)
+
+            # Determine the phenotype index based on user input
+            pheno_name <- .determine_phenotype_name(object = object, pheno = pheno)
+
+            # List the scan nodes in the GDS object
+            scan_node <- ls.gdsn(node = index.gdsn(node = object, path = "lazygas/scan"))
+
+            # Retrieve the scan data for the specified phenotype
+            pvalues <- .get_scan(object = object, pheno_name = pheno_name, sel = c("FDR", "negLog10P"))
+
+            # Generate the Manhattan plot
+            p <- .mhplot_draw(pvalues, chr, start, end, signif)
+
+            return(p)  # Return the plot
+          }
+)
+
+## Function to check if scan data exists in the GDS object
+.check_scan_data_exists <- function(object) {
+  if(!exist.gdsn(node = object$root, path = "lazygas/scan")){
+    stop("No scan data in the input LazyQTL object.\n",
+         "Run scanAssoc() to scan associations.")
   }
+}
+
+## Function to determine the phenotype index based on user input
+.determine_phenotype_name <- function(object, pheno) {
+  if(!is.null(pheno)){
+    if(is.numeric(pheno)){
+      phe_index <- pheno
+
+    } else if(is.logical(pheno)){
+      phe_index <- which(pheno)
+
+    } else if(is.character(pheno)){
+      phe_index <- which(getPheno(object = object)$pheno_names %in% pheno)
+    }
+
+    # Notify the user if multiple phenotypes are selected and use the first one
+    if(length(phe_index) != 1){
+      message("Multiple (or no) phenotypes were selected.",
+              "\nUse the first phenotype.")
+      phe_index <- 1
+    }
+  } else {
+    # If no phenotype is specified, use the first one and notify the user
+    message("Use the first phenotype.")
+    phe_index <- 1
+  }
+  return(getPheno(object = object)$pheno_names[phe_index])
+}
+
+## Draw Manhattan plot
+#' @import ggplot2
+## Draw Manhattan plot
+.mhplot_draw <- function(x,
+                         chr = NULL,
+                         start = NULL,
+                         end = NULL,
+                         signif = NULL){
+  # Filter data by chromosome, start, and end positions
+  x <- .filter_data(x, chr, start, end)
+
+  # Evaluate significant points
+  signif <- .evaluate_signif(x, signif)
+  x_signif <- subset(x, subset = signif)
+  x <- subset(x, subset = !signif)
+
+  # Create ggplot object
+  p <- .create_ggplot(x, x_signif)
+
+  # Return the plot
+  return(p)
+}
+
+## Function to filter data by chromosome, start, and end positions
+.filter_data <- function(x, chr, start, end) {
   if(!is.null(chr)){
-    signif <- signif[x$Chr == chr]
     x <- subset(x, subset = Chr == chr)
   }
   if(!is.null(start)){
-    signif <- signif[x$Pos >= start]
     x <- subset(x, subset = Pos >= start)
   }
   if(!is.null(end)){
-    signif <- signif[x$Pos <= end]
     x <- subset(x, subset = Pos <= end)
   }
+  return(x)
+}
 
+## Function to evaluate significant points
+.evaluate_signif <- function(x, signif) {
+  if(is.null(signif)){
+    signif <- rep(TRUE, nrow(x))
+  }
   if(!is.logical(signif)){
     if(is.character(signif)){
-      signif <- eval(parse(text = signif))
+      signif <- eval(parse(text = paste0("x$", signif)))
     } else {
-      stop("signif should be a string or a vector of logical values.",
-           call. = FALSE)
+      stop("signif should be a string or a vector of logical values.", call. = FALSE)
     }
   }
-
   signif[is.na(signif)] <- FALSE
-  x_signif <- subset(x, subset = signif)
-  x <- subset(x, subset = !signif)
+  return(signif)
+}
+
+## Function to create ggplot object
+.create_ggplot <- function(x, x_signif) {
   p <- ggplot() +
     geom_point(data = x,
-               mapping = aes(x = Pos, y = P.fit),
+               mapping = aes(x = Pos, y = negLog10P),
                color = "darkgray",
                size = 1,
                shape = 20)
+
   if(nrow(x_signif) != 0){
     p <- p + geom_point(data = x_signif,
-                        mapping = aes(x = Pos, y = P.fit),
+                        mapping = aes(x = Pos, y = negLog10P),
                         color = "magenta", size = 1, shape = 18)
   }
+
   p <- p + facet_wrap(~ Chr,
                       nrow = 1,
                       scales = "free_x",
@@ -765,557 +1139,1305 @@ plotManhattan.data.frame <- function(x,
           panel.grid.minor.x = element_blank(),
           strip.placement = "outside",
           strip.background = element_rect(fill = "white", colour = "white"))
-  if(out_fmt == "pdf"){
-    pdf(out_fn)
-    print(p)
-    dev.off()
-  } else if(out_fmt == "png"){
-    png(out_fn, res = 300, width = 480*4, height = 480*4)
-    print(p)
-    dev.off()
-  }
-  gc();gc()
-  invisible(p)
+
+  return(p)
 }
 
+################################################################################
 #' Call peack blocks
 #'
-#' @param x input object
-#'
-#' @export
-#'
-callPeakBlock <- function(x, ...){
-  UseMethod("callPeakBlock", x)
-}
-
-#' @rdname callPeakBlock
-#'
-#' @param x data.frame of genotype data
-#' @param pvalues data.frame of pvalue data
+#' @param object QTLscan object
 #' @param signif expression to define significant markers
-#' @param out_fn prefix of output file name
 #' @param rsquare threshold on squared R values to define peak blocks
 #'
 #' @export
 #'
-callPeakBlock.data.frame <- function(x,
-                                     pvalues,
-                                     signif,
-                                     out_fn,
-                                     rsquare = 0.6){
-  geno <- matrix(as.numeric(as.matrix(x)), nrow(x), ncol(x))
-  signif_x <- callPeakBlock.matrix(geno, pvalues, signif, out_fn, rsquare)
-  invisible(signif_x)
+setGeneric("callPeakBlock", function(object,
+                                     signif = 0.05,
+                                     threshold = 0.8,
+                                     ...)
+  standardGeneric("callPeakBlock"))
+
+## Define the callPeakBlock method for the LazyGas class
+setMethod("callPeakBlock",
+          "LazyGas",
+          function(object,
+                   signif,
+                   threshold){
+            # Check if scan data exists in the GDS object
+            .check_scan_data_exists(object = object)
+
+            # Create the necessary folders in the GDS object
+            .create_peakcall_folders(object = object)
+
+            # Perform peak calling for each phenotype
+            .perform_peak_calling(object = object,
+                                  signif = signif,
+                                  threshold = threshold)
+          }
+)
+
+## Function to create the necessary folders in the GDS object
+.create_peakcall_folders <- function(object) {
+  peakcall_gdsn <- .create_gdsn(root_node = object$root,
+                                target_node = "lazygas",
+                                new_node = "peakcall",
+                                is_folder = TRUE)
+  peaks_gdsn <- .create_gdsn(root_node = object$root,
+                             target_node = "lazygas/peakcall",
+                             new_node = "peaks",
+                             is_folder = TRUE)
+  blocks_gdsn <- .create_gdsn(root_node = object$root,
+                              target_node = "lazygas/peakcall",
+                              new_node = "blocks",
+                              is_folder = TRUE)
+
+  put.attr.gdsn(node = peaks_gdsn,
+                name = "col_names",
+                val = c("peakID", "peakVariantID"))
+  put.attr.gdsn(node = blocks_gdsn,
+                name = "col_names",
+                val = c("peakID", "VariantID", "dist2peak", "LD2peak"))
 }
 
-#' @rdname callPeakBlock
-#'
-#' @param x QTLscan object
-#' @param signif expression to define significant markers
-#' @param out_fn prefix of output file name
-#' @param rsquare threshold on squared R values to define peak blocks
-#'
-#' @export
-#'
-callPeakBlock.QTLscan <- function(x,
-                                  signif,
-                                  out_fn,
-                                  rsquare = 0.6){
-  geno <- matrix(as.numeric(as.matrix(x$geno)), nrow(x$geno), ncol(x$geno))
-  rownames(geno) <- x$sample_id
-  signif_x_list <- NULL
-  for(i in seq_along(x$pvalues_fn)){
-    pvalues <- read.csv(x$pvalues_fn[i])
-    tmp_fn <- paste0(out_fn, x$pheno_names[i])
-    signif_x <- callPeakBlock.matrix(geno, pvalues, signif, tmp_fn, rsquare)
-    signif_x_list <- c(signif_x_list, list(signif_x))
+## Function to perform peak calling for each phenotype
+.perform_peak_calling <- function(object, signif, threshold) {
+  for(i in seq_along(object@lazydata$pheno_names)){
+    message("Peak calling for the following phenotype: ", object@lazydata$pheno_names[i])
+    .peakcaller(object = object,
+                signif = signif,
+                threshold = threshold,
+                pheno_name = object@lazydata$pheno_names[i])
   }
-  names(signif_x_list) <- x$pheno_names
-  out <- list(peakblock_fn = paste0(out_fn, x$pheno_names, "_peakBlock.csv"),
-              pheno_names = x$pheno_names,
-              signif_geno = signif_x_list,
-              pheno = x$pheno)
-  class(out) <- c(class(out), "peakCall")
-  attributes(out) <- c(attributes(out), scan = "QTL", geno_fmt = x$geno_fmt)
-
-  invisible(out)
 }
 
-#' @rdname callPeakBlock
-#'
-#' @param x GWASscan object
-#' @param pvalues data.frame of pvalue data
-#' @param signif expression to define significant markers
-#' @param out_fn prefix of output file name
-#' @param rsquare threshold on squared R values to define peak blocks
-#'
-#' @export
-#'
-callPeakBlock.GWASscan <- function(x,
-                                   signif,
-                                   out_fn,
-                                   rsquare = 0.6){
-  geno <- t(as.matrix(subset(x$geno, select = -c(MarkerName:Pos))))
-  geno <- matrix(as.numeric(geno), nrow(geno), ncol(geno))
-  geno <- geno + 1
-  rownames(geno) <- x$sample_id
-  signif_x_list <- NULL
-  for(i in seq_along(x$pvalues_fn)){
-    pvalues <- read.csv(x$pvalues_fn[i])
-    tmp_fn <- paste0(out_fn, x$pheno_names[i])
-    signif_x <- callPeakBlock.matrix(geno, pvalues, signif, tmp_fn, rsquare)
-    signif_x_list <- c(signif_x_list, list(signif_x))
+
+
+## Main peakcaller function
+.peakcaller <- function(object, signif, threshold, pheno_name){
+  pvalues <- .get_and_filter_pvalues(object = object,
+                                     pheno_name = pheno_name,
+                                     signif = signif)
+
+  if(nrow(pvalues) == 0){
+    .handle_no_significant_peaks(object = object,
+                                 pheno_name = pheno_name)
+    return()
   }
-  names(signif_x_list) <- x$pheno_names
-  out <- list(peakblock_fn = paste0(out_fn, x$pheno_names, "_peakBlock.csv"),
-              pheno_names = x$pheno_names,
-              signif_geno = signif_x_list,
-              pheno = x$pheno)
-  class(out) <- c(class(out), "peakCall")
-  attributes(out) <- c(attributes(out), scan = "GWAS")
-  invisible(out)
+
+  variables <- .initialize_variables(object = object)
+
+  .call_peaks(object = object,
+              pvalues = pvalues,
+              variables = variables,
+              pheno_name = pheno_name,
+              threshold = threshold)
 }
 
-#' @rdname callPeakBlock
-#'
-#' @param x matrix of genotype data
-#' @param pvalues data.frame of pvalue data
-#' @param signif expression to define significant markers
-#' @param out_fn prefix of output file name
-#' @param rsquare threshold on squared R values to define peak blocks
-#'
-#' @export
-#'
-callPeakBlock.matrix <- function(x,
-                                 pvalues,
-                                 signif,
-                                 out_fn,
-                                 rsquare = 0.6){
-  if(!is.numeric(x)){
-    stop("The input x should be the numeric matrix.",
-         call. = FALSE)
-  }
-  if(nrow(pvalues) != ncol(x)){
-    stop("The number of markers does not match between geno and pvalues.",
-         call. = FALSE)
-  }
+## Function to get and filter significant p-values
+.get_and_filter_pvalues <- function(object, pheno_name, signif) {
+  pvalues <- .get_scan(object = object, pheno_name = pheno_name, sel = c("FDR", "negLog10P"))
 
-  if(!is.logical(signif)){
-    if(is.character(signif)){
-      signif <- eval(parse(text = sub("x\\$", "pvalues$", signif)))
-    } else {
-      stop("signif should be a string or a vector of logical values.",
-           call. = FALSE)
-    }
-  }
-
+  signif <- pvalues$FDR <= signif
   signif[is.na(signif)] <- FALSE
   pvalues <- subset(pvalues, subset = signif)
-  x <- subset(x, select = signif)
-  out_x <- data.frame(Chr = pvalues$Chr, Pos = pvalues$Pos, t(x))
 
-  colnames(pvalues) <- sub("X.var", "%var", colnames(pvalues))
+  return(pvalues)
+}
 
-  write.table(t(c("Peak_id", "Peak_chr", "Peak_pos", "Peak_pval", "Dist2peak",
-                  colnames(pvalues))),
-              paste0(out_fn, "_peakBlock.csv"),
-              sep = ",", quote = TRUE, row.names = FALSE, col.names = FALSE)
+## Function to handle the case where no significant peaks are found
+.handle_no_significant_peaks <- function(object, pheno_name) {
+  peaks_gdsn <- add.gdsn(node = index.gdsn(node = object$root,
+                                           path = "lazygas/peakcall/peaks"),
+                         name = pheno_name, storage = "uint32",
+                         compress = "ZIP_RA", replace = TRUE)
+  blocks_gdsn <- add.gdsn(node = index.gdsn(node = object$root,
+                                            path = "lazygas/peakcall/blocks"),
+                          name = pheno_name, storage = "double",
+                          compress = "ZIP_RA", replace = TRUE)
+}
 
+## Function to initialize variables
+.initialize_variables <- function(object) {
+  list(
+    n_sample = nsam(object = object),
+    snp_id = getMarID(object = object),
+    chr = getChromosome(object = object),
+    pos = getPosition(object = object)
+  )
+}
+
+## Function to process peaks in a loop
+.call_peaks <- function(object, pvalues, variables, pheno_name, threshold) {
   peak_id <- 0
-  while(TRUE){
-    if(nrow(pvalues) == 0){
-      break
-    }
+
+  # Get the genotype format from the object
+  geno_format <- .get_geno_format(object = object)
+
+  # Loop until there are no more p-values to process
+  while (nrow(pvalues) > 0) {
     peak_id <- peak_id + 1
-    variant_index <- seq_len(nrow(pvalues))
-    peak_index <- which.max(pvalues$P.fit)
-    chr <- pvalues$Chr[peak_index]
-    pos <- pvalues$Pos[peak_index]
+    message("Calling peak: ", peak_id)
 
-    target_variants <- which(pvalues$Chr == chr)
-    if(length(target_variants) == 1){
-      peak_block <- target_variants
+    # Identify the peak information
+    peak_info <- .identify_peak(pvalues = pvalues,
+                                variables = variables)
 
+    # Set the selection criteria based on the genotype format
+    selection <- .set_selection_criteria_for_peakcall(object = object,
+                                                      geno_format = geno_format,
+                                                      chr = peak_info$chr)
+
+    # Retrieve genotype data based on the selection criteria
+    geno <- .retrieve_geno(object = object,
+                           selection = selection,
+                           geno_format = geno_format)
+
+    # Calculate linkage disequilibrium (LD) for the identified peak
+    peak_ld <- .calculate_ld(geno = as.matrix(geno),
+                             peak_variant_idx = peak_info$peak_index_in_chr,
+                             is_categorical = selection$is_categorical)
+
+    # Identify the peak block based on the LD values
+    peak_block <- .identify_peak_block(peak_ld = peak_ld,
+                                       variables = variables,
+                                       peak_info = peak_info,
+                                       threshold = threshold,
+                                       geno_format = geno_format)
+
+    # Save the peak data into the GDS object
+    .save_peak_data(object = object,
+                    pheno_name = pheno_name,
+                    peak_info = peak_info,
+                    peak_block = peak_block,
+                    peak_id = peak_id,
+                    peak_ld = peak_ld)
+
+    # Update pvalues by removing the variants that are in the peak block
+    pvalues <- subset(pvalues, subset = !VariantID %in% peak_block$ids)
+  }
+
+  # Finalize GDS nodes by setting them to read mode
+  .finalize_gdsn_peakcall(object = object, pheno_name = pheno_name)
+}
+
+## Function to identify the peak
+.identify_peak <- function(pvalues, variables, peak_index = NULL) {
+  if(is.null(peak_index)){
+    peak_index <- which.max(pvalues$negLog10P)  # Find the index of the maximum p-value
+  }
+  peak_variantID <- pvalues$VariantID[peak_index]  # Get the variant ID of the peak
+  peak_chr <- variables$chr[variables$snp_id == peak_variantID]  # Get the chromosome of the peak
+
+  chr_with_peak <- which(variables$chr == peak_chr)
+  id_in_chr <- variables$snp_id[chr_with_peak]
+  peak_index_in_chr <- which(id_in_chr == peak_variantID)
+
+  list(
+    index = peak_index,
+    variantID = peak_variantID,
+    chr = peak_chr,
+    chr_with_peak = chr_with_peak,
+    id_in_chr = id_in_chr,
+    peak_index_in_chr = peak_index_in_chr
+  )
+}
+
+## Get Genotype Format
+.get_geno_format <- function(object) {
+  geno_format <- .get_data(object = object, node = "lazygas/scan/geno_format")
+  return(geno_format)
+}
+
+# Function to set the selection criteria based on the genotype format
+.set_selection_criteria_for_peakcall <- function(object, geno_format, chr) {
+  if (geno_format == "haplotype") {
+    # Get the dimensions of the haplotype data
+    obj_desp <- objdesp.gdsn(node = index.gdsn(node = object, path = "annotation/format/HAP/data"))
+
+    # Identify valid chromosomes
+    valid_chr <- getChromosome(object = object, valid = FALSE) %in% chr
+
+    # Set selection criteria for haplotype data
+    selection <- list(rep(TRUE, obj_desp$dim[1]),
+                      validSam(object = object),
+                      validMar(object = object) & valid_chr)
+    node <- "annotation/format/HAP/data"
+    is_categorical <- TRUE
+
+  } else {
+    # Identify valid chromosomes
+    valid_chr <- getChromosome(object = object, valid = FALSE) %in% chr
+
+    # Set selection criteria for genotype or dosage data
+    selection <- list(validSam(object = object),
+                      validMar(object = object) & valid_chr)
+    node <- ifelse(geno_format == "dosage", "annotation/format/EDS/data", "genotype/data")
+    is_categorical <- FALSE
+  }
+  return(list(node = node, selection = selection, is_categorical = is_categorical))
+}
+
+#' @importFrom gdsfmt exist.gdsn index.gdsn objdesp.gdsn
+.retrieve_geno <- function(object, selection, geno_format, collapse = TRUE){
+  out <- .get_data(object = object,
+                   node = selection$node,
+                   sel = selection$selection)
+  if(geno_format == "haplotype"){
+    if(collapse){
+      out <- apply(X = out, MARGIN = 3, FUN = c)
+    }
+    out[out == 0] <- NA
+
+  } else {
+    if(exist.gdsn(node = object$root, path = "annotation/format/HAP/data")){
+      hap_node <- index.gdsn(node = object,
+                             path = "annotation/format/HAP/data")
+      obj_desp <- objdesp.gdsn(node = hap_node)
+      n_max <- obj_desp$dim[1]
     } else {
-      r <- cor(x[, target_variants], use = "pairwise.complete.obs")
-      peak_pos <- pvalues$Pos[target_variants] == pos
-      peak_ld  <- r[, peak_pos]^2
-      ld_block <- peak_ld >= rsquare
-      ld_block[is.na(ld_block)] <- FALSE
-      peak_block <- target_variants[ld_block]
+      n_max <- 2
     }
-    peakblock_pvalues <- subset(pvalues,
-                                subset = variant_index %in% peak_block)
-    write.table(data.frame(peak_id = peak_id,
-                           peak_chr = chr,
-                           peak_pos = pos,
-                           peak_pval = max(peakblock_pvalues$P.fit),
-                           dist2peak = peakblock_pvalues$Pos - pos,
-                           peakblock_pvalues),
-                paste0(out_fn, "_peakBlock.csv"),
-                sep = ",", quote = TRUE, row.names = FALSE, col.names = FALSE,
-                append = TRUE)
-    x <- subset(x, select = !variant_index %in% peak_block)
-    pvalues <- subset(pvalues, subset = !variant_index %in% peak_block)
-  }
-  gc();gc()
-  invisible(out_x)
-}
-
-#'
-#' @export
-#'
-print.peakCall <- function(x){
-  message("Peakcall file names")
-  print(cbind(x$pheno_names, x$peakblock_fn))
-  message("Scan type")
-  print(attributes(x)$scan)
-}
-
-
-#' List up candidate genes
-#'
-#' @param x input object
-#'
-#' @export
-#'
-listCandidate <- function(x, ...){
-  UseMethod("listCandidate", x)
-}
-
-#' @rdname listCandidate
-#'
-#' @param x peakCall object
-#' @param annotation_fn path to an annotation information file or a data.frame
-#' @param gff_fn path to a GFF file
-#' @param snpeff_fn path to a snpEff file
-#' @param out_fn prefix of output file name
-#'
-#' @importFrom vcfR read.vcfR
-#'
-#' @export
-listCandidate.peakCall <- function(x,
-                                   annotation_fn,
-                                   snpeff_fn = NULL,
-                                   out_fn){
-  if(attributes(x)$scan == "QTL"){
-    scan <- "QTL"
-  } else if(attributes(x)$scan == "GWAS"){
-    scan <- "GWAS"
-  }
-
-  if(!is.null(snpeff_fn)){
-    snpeff_fn <- read.vcfR(snpeff_fn, checkFile = FALSE, verbose = FALSE)
-  }
-  if(is.character(annotation_fn)){
-    if(grepl("\\.csv$", basename(annotation_fn))){
-      annotation_fn <- read.csv(annotation_fn)
-    } else if(grepl("\\.tsv$", basename(annotation_fn))){
-      annotation_fn <- read.table(annotation_fn, sep = "\t", header = TRUE)
-    }
-  }
-
-  for(i in seq_along(x$peakblock_fn)){
-    peakblock <- read.csv(x$peakblock_fn[i])
-    tmp_fn <- paste0(out_fn, x$pheno_names[i])
-    listCandidate.data.frame(peakblock,
-                             annotation_fn,
-                             snpeff_fn,
-                             tmp_fn,
-                             scan = scan)
-  }
-  out <- paste0(out_fn, x$pheno_names, "_candidateList.csv")
-  names(out) <- x$pheno_names
-  invisible(out)
-}
-
-#' @rdname listCandidate
-#'
-#' @param x peakcall data.frame
-#' @param annotation_fn path to an annotation information file
-#' @param gff_fn path to a GFF file
-#' @param snpeff_fn path to a snpEff file
-#' @param out_fn prefix of output file name
-#' @param scan scan type
-#'
-#' @importFrom vcfR read.vcfR
-#' @importFrom dplyr left_join
-#' @importFrom rtracklayer import.gff
-#' @importFrom GenomicRanges GRanges findOverlaps
-#' @importFrom IRanges IRanges
-#'
-#' @export
-listCandidate.data.frame <- function(x,
-                                     annotation_fn,
-                                     snpeff_fn = NULL,
-                                     out_fn,
-                                     scan = "QTL"){
-  out <- NULL
-  if(nrow(x) != 0){
-    if(is.character(annotation_fn)){
-      if(grepl("\\.csv$", basename(annotation_fn))){
-        ann <- read.csv(annotation_fn)
-      } else if(grepl("\\.tsv$", basename(annotation_fn))){
-        ann <- read.table(annotation_fn, sep = "\t", header = TRUE)
-      }
-    }
-    gff <- GRanges(seqnames = ann$Chr,
-                   IRanges(start = ann$Start,
-                           end = ann$End,
-                           names = ann$TxID))
-    mcols(gff) <- DataFrame(Parent = ann$GeneID)
-
-    if(!is.null(snpeff_fn)){
-      if(inherits(snpeff_fn, "vcfR")){
-        snpeff <- snpeff_fn
-
-      } else {
-        snpeff <- read.vcfR(snpeff_fn, checkFile = FALSE, verbose = FALSE)
-      }
-
-    } else {
-      snpeff <- NULL
-    }
-
-    for(i_peak in unique(x$Peak_id)){
-      i_peakblock <- x[x$Peak_id == i_peak, ]
-
-      if(scan == "QTL"){
-        tmp <- data.frame(Peak_id = i_peak,
-                          getQTLcandidate(gff, i_peakblock, snpeff))
-
-      } else if(scan == "GWAS"){
-        tmp <- data.frame(Peak_id = i_peak,
-                          getGWAScandidate(gff, i_peakblock, snpeff))
-      }
-      out <- rbind(out, tmp)
-    }
-    if(!is.null(out)){
-      out <- left_join(out, ann, by = c("GeneID", "TxID"))
-    }
-  }
-  write.csv(out, paste0(out_fn, "_candidateList.csv"), row.names = FALSE)
-}
-
-#' @importFrom GenomicRanges GRanges findOverlaps
-#' @importFrom IRanges IRanges
-#' @importFrom S4Vectors queryHits
-#' @importFrom GenomeInfoDb seqnames
-getQTLcandidate <- function(gff, peakblock, snpeff){
-  peak_gff <- GRanges(seqnames = peakblock$Peak_chr[1],
-                      ranges = IRanges(start = peakblock$Pos[1],
-                                       end = tail(peakblock$Pos, 1)))
-  hit <- gff[queryHits(findOverlaps(gff, peak_gff))]
-  hit <- hit[order(start(hit))]
-  hit$fromPeak <- start(hit) - peakblock$Peak_pos[1]
-  nearest_p <- sapply(start(hit), function(x){
-    return(peakblock$P.fit[which.min(abs(peakblock$Pos - x))])
-  })
-  out <- data.frame(P.fit = nearest_p,
-                    Dist2peak = hit$fromPeak,
-                    Gene_chr = as.character(seqnames(hit)),
-                    Gene_start = start(hit),
-                    GeneID = hit$Parent,
-                    TxID = names(hit))
-
-  if(!is.null(snpeff)){
-    snpeff_out <- addSnpEff(snpeff, peakblock, scan = "QTL")
-    out <- left_join(out, snpeff_out, by ="TxID")
+    out[out > n_max] <- NA
   }
   return(out)
 }
 
-getGWAScandidate <- function(gff, peakblock, snpeff){
-  snpeff_out <- addSnpEff(snpeff, peakblock, scan = "GWAS")
-  hit <- gff[match(snpeff_out$TxID, gff$ID)]
-  hit$fromPeak <- start(hit) - peakblock$Peak_pos[1]
-  out <- left_join(data.frame(Dist2peak = hit$fromPeak,
-                              Gene_chr = as.character(seqnames(hit)),
-                              Gene_start = start(hit),
-                              GeneID = unlist(hit$Parent),
-                              TxID = hit$ID),
-                   snpeff_out, by = "TxID")
-  return(out)
-}
+#' @import parallel
+.calculate_ld <- function(geno, peak_variant_idx, is_categorical) {
+  n <- ncol(geno)
+  peak_ld <- numeric(n)
 
-snpeff2df <- function(info, chr, pos, var_chr, var_pos){
-  hit <- info[which(chr == var_chr & pos == var_pos)]
-  if(length(hit) == 0){ return(NA) }
-  hit <- sub(";LOF.*", "", hit)
-  ann <- suppressWarnings(strsplit(sub(".*ANN=", "", hit), ",")[[1]])
-  ann[grepl("\\|$", ann)] <- paste(ann[grepl("\\|$", ann)], " ")
-  ann <- do.call("rbind", strsplit(ann, "\\|"))
-  ann <- subset(ann, subset = ann[, 2] != "intergenic_region",
-                select = c(2:4, 7))
-  return(ann)
-}
+  if (is_categorical) {
+    geno_col <- as.integer(geno[, peak_variant_idx])
+    levels <- sort(unique(geno_col))
+    num_levels <- length(levels)
 
-#' @importFrom vcfR getFIX getINFO
-addSnpEff <- function(snpeff, peakblock, scan){
-  fix <- getFIX(snpeff)
-  chr <- fix[, 1]
-  pos <- as.numeric(fix[, 2])
-  info <- getINFO(snpeff)
-  peak_ann <- NULL
-
-  if(scan == "QTL"){
-    target_chr <- peakblock$Chr[1] == chr
-    target_pos <- pos >= min(peakblock$Pos) & pos <= max(peakblock$Pos)
-    target_pos <- pos[target_chr & target_pos]
-    for(i in seq_along(target_pos)){
-      peak_ann <- rbind(peak_ann,
-                        data.frame(snpeff2df(info, chr, pos,
-                                             var_chr = peakblock$Chr[1],
-                                             var_pos = target_pos[i])))
+    # Parallel processing setup
+    cores <- detectCores()
+    if(cores > 1){
+      cores <- cores - 1
     }
-    colnames(peak_ann) <- c("type", "impact", "GeneId", "TxID")
-    genewise <- tapply(peak_ann$impact, peak_ann$TxID, function(x){
-      as.vector(table(factor(x, c("HIGH", "MODERATE", "LOW", "MODIFIER"))))
-    })
-    genewise <- data.frame(TxID = names(genewise),
-                           do.call("rbind", genewise))
-    colnames(genewise)[-1] <- c("HIGH", "MODERATE", "LOW", "MODIFIER")
+    chi_sq_values <- mclapply(X = 1:n, mc.cores = cores, mc.preschedule = TRUE,
+                              FUN = function(j) {
+                                geno_col_j <- as.integer(geno[, j])
+                                cont_table <- matrix(0, num_levels, num_levels)
 
-  } else if(scan == "GWAS"){
-    for(i in seq_len(nrow(peakblock))){
-      peak_ann <- rbind(peak_ann,
-                        data.frame(peakblock$P.fit[i], peakblock$MAF[i],
-                                   snpeff2df(info, chr, pos,
-                                             var_chr = peakblock$Chr[i],
-                                             var_pos = peakblock$Pos[i])))
-    }
-    colnames(peak_ann) <- c("P.fit", "MAF", "Type",
-                            "Impact", "GeneId", "TxID")
-    impacts <- c("HIGH", "MODERATE", "LOW", "MODIFIER")
-    genewise <- tapply(seq_along(peak_ann$Impact), peak_ann$TxID, function(i){
-      data.frame(Max_Pval = max(peak_ann$P.fit[i]),
-                 Min_Pval = min(peak_ann$P.fit[i]),
-                 Maf_Max = peak_ann$MAF[i][which.max(peak_ann$P.fit[i])],
-                 Maf_Min = peak_ann$MAF[i][which.min(peak_ann$P.fit[i])],
-                 t(as.vector(table(factor(peak_ann$Impact[i], impacts)))))
-    })
-    genewise <- data.frame(TxID = names(genewise),
-                           do.call("rbind", genewise))
-    colnames(genewise)[-(1:5)] <- c("HIGH", "MODERATE", "LOW", "MODIFIER")
+                                for (k in seq_len(nrow(geno))) {
+                                  row_idx <- match(geno_col[k], levels)
+                                  col_idx <- match(geno_col_j[k], levels)
+                                  cont_table[row_idx, col_idx] <- cont_table[row_idx, col_idx] + 1
+                                }
+
+                                chi_sq <- 0
+                                row_sums <- rowSums(cont_table)
+                                col_sums <- colSums(cont_table)
+                                total_sum <- sum(cont_table)
+
+                                for (r in seq_len(num_levels)) {
+                                  for (c in seq_len(num_levels)) {
+                                    expected <- (row_sums[r] * col_sums[c]) / total_sum
+                                    chi_sq <- chi_sq + ((cont_table[r, c] - expected) ^ 2) / expected
+                                  }
+                                }
+                                return(chi_sq / nrow(geno))
+                              })
+    peak_ld <- unlist(chi_sq_values)
+
+  } else {
+    # Parallel processing setup
+    corr_values <- cor(geno[, peak_variant_idx], geno, use = "pairwise.complete.obs") ^ 2
+    peak_ld <- corr_values
   }
-  return(genewise)
+
+  return(peak_ld)
 }
 
-#' Haplotype analysis for peak blocks
-#'
-#' @param x input object
-haploPlot <- function(x, ...){
-  UseMethod("haploPlot", x)
+# Function to identify peak block
+.identify_peak_block <- function(peak_ld, variables, peak_info, threshold, geno_format) {
+  if(geno_format == "haplotype"){
+    ld_block <- peak_ld >= max(peak_ld, na.rm = TRUE) * threshold
+
+  } else {
+    ld_block <- peak_ld >= threshold
+  }
+  peak_block <- na.omit(peak_info$id_in_chr[ld_block])
+  ld_to_peak <- na.omit(peak_ld[ld_block])
+  pos <- variables$pos[variables$snp_id %in% peak_info$id_in_chr]
+  dist2peak <- na.omit(pos[ld_block] - pos[peak_info$peak_index_in_chr])
+
+  return(list(ids = peak_block, ld = ld_to_peak, dist = dist2peak))
 }
 
-#' @rdname haploPlot
+# Function to save the peak data into the GDS object
+#' @importFrom gdsfmt append.gdsn
+.save_peak_data <- function(object, pheno_name, peak_info, peak_block, peak_id, peak_ld, node = "peakcall") {
+  # If this is the first peak, create new nodes for peaks and blocks
+  if (peak_id == 1) {
+    # Create a new node for storing peak information
+    add.gdsn(node = index.gdsn(node = object$root,
+                               path = paste0("lazygas/", node, "/peaks")),
+             name = pheno_name, storage = "uint32", compress = "ZIP_RA", replace = TRUE,
+             val = rbind(peak_id, peak_info$variantID))
+
+    # Create a new node for storing block information
+    add.gdsn(node = index.gdsn(node = object$root,
+                               path = paste0("lazygas/", node, "/blocks")),
+             name = pheno_name, storage = "double", compress = "ZIP_RA", replace = TRUE,
+             val = rbind(peak_id, peak_block$ids, peak_block$dist, peak_block$ld))
+
+  } else {
+    # Append the peak information to the existing node
+    peaks_gdsn <- index.gdsn(node = object$root,
+                             path = paste0("lazygas/", node, "/peaks/", pheno_name))
+    append.gdsn(node = peaks_gdsn, val = rbind(peak_id, peak_info$variantID))
+
+    # Append the block information to the existing node
+    blocks_gdsn <- index.gdsn(node = object$root,
+                              path = paste0("lazygas/", node, "/blocks/", pheno_name))
+    append.gdsn(node = blocks_gdsn,
+                val = rbind(peak_id, peak_block$ids, peak_block$dist, peak_block$ld))
+  }
+}
+
+## Sub-function to finalize GDS nodes
+.finalize_gdsn_peakcall <- function(object, pheno_name) {
+  readmode.gdsn(node = index.gdsn(node = object$root,
+                                  path = paste0("lazygas/peakcall/peaks/", pheno_name)))
+  readmode.gdsn(node = index.gdsn(node = object$root,
+                                  path = paste0("lazygas/peakcall/blocks/", pheno_name)))
+}
+
+
+################################################################################
+#' Plots the peaks for the specified phenotype and chromosome region.
 #'
-#' @param peakblock peakCall obeject
-#' @param out_fn prefix of output file name
+#' @param object A LazyGas object.
+#' @param pheno The phenotype(s) to plot. Can be NULL, numeric, logical, or character.
+#' @param chr The chromosome to plot. Can be NULL.
+#' @param start The start position on the chromosome. Can be NULL.
+#' @param end The end position on the chromosome. Can be NULL.
+#' @param recalc Logical. If TRUE, use recalculated scan data.
+#' @param ... Additional arguments.
 #'
+#' @return Generates plots for the specified peaks.
 #'
 #' @export
-haploPlot.peakCall <- function(x, out_fn, out_fmt){
-  for(i in seq_along(x$peakblock_fn)){
-    peakblock <- read.csv(x$peakblock_fn[i])
-    geno <- x$signif_geno[[x$pheno_names[i]]]
+#'
+setGeneric("plotPeaks", function(object,
+                                 pheno = NULL,
+                                 chr = NULL,
+                                 start = NULL,
+                                 end = NULL,
+                                 recalc = TRUE,
+                                 ...)
+  standardGeneric("plotPeaks"))
 
-    if(attributes(x)$scan == "GWAS"){
-      geno <- x$signif_geno[[x$pheno_names[i]]]
-      geno[, -(1:2)] <- apply(geno[, -(1:2)], 2, function(x){
-        x[x %in% 0:10] <- NA
-        return(x)
-      })
-      scan <- "GWAS"
+## Define the plotPeaks method for the LazyGas class
+#'
+#' @method plotPeaks LazyGas
+#'
+setMethod("plotPeaks",
+          "LazyGas",
+          function(object,
+                   pheno = NULL,
+                   chr = NULL,
+                   start = NULL,
+                   end = NULL,
+                   recalc = TRUE){
+            .check_peakcall_data(object = object)
+            path <- .determine_path(object = object, recalc = recalc)
+            pheno_name <- .determine_phenotype_name(object = object,
+                                                    pheno = pheno)
+            chr_pos_limits <- .get_chromosome_data(object = object)
 
-    } else if(attributes(x)$scan == "QTL"){
-      scan <- "QTL"
-    }
-    tmp_fn <- paste0(out_fn, x$pheno_names[i])
-    haploPlot.data.frame(peakblock, geno, x$pheno[, i], tmp_fn, out_fmt, scan)
+            p <- .generate_peak_plots(object = object,
+                                      pheno_name = pheno_name,
+                                      path = path,
+                                      chr_pos_limits = chr_pos_limits,
+                                      chr = chr,
+                                      start = start,
+                                      end = end)
+            return(p)
+          }
+)
+
+# Check if peakcall data exists
+.check_peakcall_data <- function(object) {
+  if (!exist.gdsn(node = object$root, path = "lazygas/peakcall")) {
+    stop("No peakcall data in the input LazyQTL object.\n",
+         "Run callPeakBlock() to call peaks.")
   }
-  out <- paste0(out_fn, x$pheno_names, "_haploPattern.csv")
-  names(out) <- x$pheno_names
-  invisible(out)
 }
 
-#' @rdname haploPlot
-#'
-#' @param peakblock peak block data.frame
-#' @param geno genotype data.frame
-#' @param pheno phenotype data.frame
-#' @param out_fn prefix of output file name
-#' @param scan scan type
-#'
+# Determine the path based on recalc parameter
+.determine_path <- function(object, recalc) {
+  if (recalc) {
+    if (!exist.gdsn(node = object$root, path = "lazygas/recalc")) {
+      stop("recalc = TRUE was specified but, \n",
+           "no recalculated scan data in the input LazyQTL object.\n",
+           "Run recalcAssoc() to recalculate associations.")
+    }
+    return("lazygas/recalc")
+
+  } else {
+    return("lazygas/peakcall")
+  }
+}
+
+# Get chromosome and position data
+.get_chromosome_data <- function(object) {
+  chr_data <- getChromosome(object = object)
+  pos_data <- getPosition(object = object)
+  chr_min <- tapply(pos_data, chr_data, min)
+  chr_max <- tapply(pos_data, chr_data, max)
+  return(list(chr_min = chr_min, chr_max = chr_max))
+}
+
+# Generate peak plots
+.generate_peak_plots <- function(object,
+                                 pheno_name,
+                                 path,
+                                 chr_pos_limits,
+                                 chr,
+                                 start,
+                                 end) {
+  scan_node <- ls.gdsn(node = index.gdsn(node = object,
+                                         path = paste0(path, "/peaks")))
+  peakcall <- .get_peakcall(object = object,
+                            pheno_name = pheno_name,
+                            recalc = grepl(pattern = "recalc", x = path))
+
+  if (is.null(peakcall)) {
+    peakcall <- data.frame(peakVariantID = numeric(), FDR = numeric(),
+                           VariantID = numeric(), Chr = numeric(),
+                           Pos = numeric(), negLog10P = numeric(),
+                           peakID = numeric())
+    start <- NULL
+    end <- NULL
+    chr <- NULL
+  }
+
+  # Generate the peak plot
+  p <- .peak_draw(peakcall = peakcall,
+                  chr = chr,
+                  start = start,
+                  end = end,
+                  chr_min = chr_pos_limits$chr_min,
+                  chr_max = chr_pos_limits$chr_max)
+  return(p)
+}
+
+# Draw Peak Plot
 #' @import ggplot2
 #'
-#' @export
-haploPlot.data.frame <- function(x, geno, pheno, out_fn, out_fmt, scan){
-  haplo <- NULL
+.peak_draw <- function(peakcall, chr, start, end, chr_min, chr_max, peak = NULL){
+  # Mark peaks in peakcall
+  peakcall$is_peak <- peakcall$peakVariantID == peakcall$VariantID
 
-  if(out_fmt == "pdf"){
-    pdf(paste0(out_fn,"_haploPattern.pdf"))
+  # Create dummy data for chromosome boundaries
+  dummy <- rbind(data.frame(Chr = names(chr_min),
+                            Pos = chr_min,
+                            negLog10P = 0),
+                 data.frame(Chr = names(chr_max),
+                            Pos = chr_max,
+                            negLog10P = 0))
 
-  } else if(out_fmt == "png"){
-    png(paste0(out_fn,"_haploPattern.png"),
-        res = 300, width = 480*4, height = 480*4)
+  # Subset peakcall and dummy data based on the specified chromosome
+  if(!is.null(chr)){
+    peakcall <- subset(peakcall, subset = Chr == chr)
+    dummy <- subset(dummy, subset = Chr == chr)
   }
 
-  for(i_peak in unique(x$Peak_id)){
-    i_peakblock <- x[x$Peak_id == i_peak, ]
-    target_geno <- subset(geno,
-                          subset = geno$Chr %in% i_peakblock$Chr &
-                            geno$Pos %in% i_peakblock$Pos)
-    haplo <- rbind(haplo, data.frame(Peak_ID = i_peak, target_geno))
-    peak_geno <- target_geno$Pos == i_peakblock$Peak_pos
-    target_geno <- subset(target_geno, select = -(Chr:Pos))
-    peak_geno <- peak_geno[!duplicated(target_geno)]
-    i_peakblock <- subset(i_peakblock, subset = !duplicated(target_geno))
-    target_geno <- subset(target_geno, subset = !duplicated(target_geno))
+  # Subset peakcall and dummy data based on the specified start position
+  if(!is.null(start)){
+    peakcall <- subset(peakcall, subset = Pos >= start)
+    dummy <- subset(dummy, subset = Pos >= start)
+  }
 
-    if(nrow(target_geno) >= 2){
-      target_geno <- apply(target_geno, 2, function(x){
-        if(sum(is.na(x))/length(x) > 0.8){
-          return(x)
-        }
-        tmp_gt <- target_geno
-        while(any(is.na(x))){
-          hit <- apply(tmp_gt, 2, function(y){
-            sum(x == y, na.rm = TRUE)
-          })
-          hit_gt <- tmp_gt[, which.max(hit)]
-          x[is.na(x)] <- hit_gt[is.na(x)]
-          tmp_gt <- tmp_gt[, -which.max(hit)]
-        }
-        return(x)
-      })
-    }
+  # Subset peakcall and dummy data based on the specified end position
+  if(!is.null(end)){
+    peakcall <- subset(peakcall, subset = Pos <= end)
+    dummy <- subset(dummy, subset = Pos <= end)
+  }
 
-    if(scan == "GWAS"){
-      hap <- target_geno[i_peakblock$Peak_pval - i_peakblock$P.fit < 1, ]
-      hap <- unique(hap)
-      hap <- apply(hap, 2, paste, collapse = "")
+  # Set peak ID for dummy data
+  dummy$peakID <- peakcall$peakID[1]
+
+  # Subset significant peaks
+  signif_peak <- subset(peakcall, subset = FDR <= 0.05 & peakVariantID == VariantID)
+
+  # Create ggplot object
+  p <- ggplot() +
+    geom_line(data = peakcall,
+              mapping = aes(x = Pos, y = negLog10P, color = peakID, group = peakID),
+              linewidth = 1) +
+    geom_point(data = signif_peak,
+               mapping = aes(x = Pos, y = negLog10P),
+               color = "magenta",
+               size = 2,
+               shape = 20) +
+    geom_point(data = dummy,
+               mapping = aes(x = Pos, y = negLog10P),
+               size = 0) +
+    facet_wrap(~ Chr, nrow = 1, scales = "free_x", strip.position = "bottom") +
+    ylab("-log10(P)") +
+    xlab("Chromosome") +
+    scale_x_continuous(breaks = NULL) +
+    scale_y_continuous(expand = expansion(mult = c(0, 0.1))) +
+    theme(axis.text.x = element_blank(),
+          axis.text.y = element_text(size = 14),
+          axis.title.y = element_text(size = 15),
+          axis.title.x = element_text(size = 15),
+          strip.text.x = element_text(size = 12),
+          plot.title = element_text(hjust = 0.5, size = 20),
+          legend.position = "none",
+          axis.line.x.bottom = element_line(colour = "black"),
+          panel.spacing.x = unit(0.2, "lines"),
+          panel.border = element_blank(),
+          panel.background = element_rect(fill = "gray90"),
+          panel.grid.major.x = element_blank(),
+          panel.grid.minor.x = element_blank(),
+          strip.placement = "outside",
+          strip.background = element_rect(fill = "white", colour = "white"))
+  return(p)
+}
+
+################################################################################
+#' Generate Haplotype Plots
+#'
+#' This function generates haplotype plots for the specified phenotype.
+#'
+#' @param object A LazyGas object.
+#' @param pheno The phenotype to plot.
+#' @param recalc Logical. If TRUE, use recalculated scan data.
+#' @param ... Additional arguments.
+#'
+#' @return A list of ggplot objects representing the haplotype plots.
+#' @export
+setGeneric("haploPlot", function(object,
+                                 pheno,
+                                 recalc,
+                                 ...)
+  standardGeneric("haploPlot"))
+
+#' @rdname haploPlot
+#' @method haploPlot LazyGas
+#'
+setMethod("haploPlot",
+          "LazyGas",
+          function(object, pheno, recalc){
+            # Check if peakcall data exists
+            .check_peakcall_data(object = object)
+
+            # Determine the path based on recalc parameter
+            path <- .determine_path(object = object, recalc = recalc)
+
+            # Determine phenotype index based on input
+            pheno_name <- .determine_phenotype_name(object = object,
+                                                    pheno = pheno)
+
+            # Get the list of scan nodes
+            scan_node <- ls.gdsn(node = index.gdsn(node = object,
+                                                   path = paste0(path, "/peaks")))
+
+            # Get the peak call data for the specified phenotype
+            peakcall <- .get_peakcall(object = object,
+                                      pheno_name = pheno_name,
+                                      recalc = grepl(pattern = "recalc", x = path))
+
+            # Generate the haplotype plot
+            out <- .draw_haplo_plot(object = object,
+                                    peakcall = peakcall,
+                                    pheno_name = pheno_name)
+
+            return(out)
+          }
+)
+
+## Draw Haplotype Plot
+#' @importMethodsFrom GBScleanR getMarID getHaplotype getGenotype
+#' @import ggplot2
+#'
+.draw_haplo_plot <- function(object, peakcall, pheno_name){
+  # Check if there are any peaks
+  if(is.null(peakcall)){
+    message("No peak")
+    return(NULL)
+  }
+
+  haplo <- NULL
+  var_id <- getMarID(object = object)
+
+  # Get the genotype format from the object
+  geno_format <- .get_geno_format(object = object)
+
+  peak_info <- .get_peak_info(peakcall = peakcall)
+
+  out <- NULL
+  # Loop through each unique peak ID
+  for(i_peak in seq_along(peak_info$peak_height)){
+    valid <- var_id %in% peak_info$peak_id[i_peak]
+
+    # Get the haplotype or genotype data based on the format
+    if(geno_format == "haplotype"){
+      hap <- getHaplotype(object = object)[, , valid]
+      hap <- apply(X = hap, MARGIN = 2, FUN = paste, collapse= "|")
 
     } else {
-      hap <- unlist(target_geno[peak_geno, ])
+      hap <- getGenotype(object = object, node = "dosage")[, valid]
     }
-    df <- data.frame(pheno = pheno,
-                     hap = factor(hap, sort(unique(hap))))
 
+    # Get phenotype data
+    pheno <- getPheno(object = object)
+    df <- data.frame(y = pheno$pheno[, pheno_name], x = hap)
+
+    # Generate the plot
     p <- ggplot(df) +
-      geom_boxplot(aes(x = hap, y = pheno)) +
+      geom_boxplot(aes(x = x, y = y)) +
       labs(title = paste("Peak @",
-                         paste(i_peakblock$Peak_chr[1],
-                               i_peakblock$Peak_pos[1],
-                               sep = "_"))) +
-      xlab("Haplotype group")
-    print(p)
+                         paste(peak_info$peak_chr[i_peak],
+                               peak_info$peak_pos[i_peak],
+                               sep = "_"),
+                         ", -log10P = ",
+                         signif(x = peak_info$peak_height[i_peak],
+                                digits = 3))) +
+      xlab("Haplotypes") +
+      ylab(pheno_name)
+
+    out <- c(out, list(p))
   }
-  dev.off()
-  pheno <- t(pheno)
-  colnames(pheno) <- colnames(geno)[-(1:2)]
-  if(!is.null(haplo)){
-    haplo <- rbind(data.frame(Peak_ID = NA, Chr = NA, Pos = NA, pheno), haplo)
+  return(out)
+}
+
+.get_peak_info <- function(peakcall = peakcall){
+  peak_height <- tapply(X = peakcall$peak_negLog10P,
+                        INDEX = peakcall$peakID,
+                        FUN = function(x){x[1]})
+  peak_id <- tapply(X = peakcall$peakVariantID,
+                    INDEX = peakcall$peakID,
+                    FUN = function(x){x[1]})
+  peak_chr <- tapply(X = peakcall$peak_Chr,
+                     INDEX = peakcall$peakID,
+                     FUN = function(x){x[1]})
+  peak_pos <- tapply(X = peakcall$peak_Pos,
+                     INDEX = peakcall$peakID,
+                     FUN = function(x){x[1]})
+  out <- data.frame(peak_height = peak_height,
+                    peak_id = peak_id,
+                    peak_chr = peak_chr,
+                    peak_pos = peak_pos)
+  return(out)
+}
+
+################################################################################
+#' Retrieve LazyGas Data
+#'
+#' This function retrieves data from the LazyGas object based on the specified dataset and phenotype.
+#'
+#' @param object A LazyGas object.
+#' @param dataset The dataset to retrieve. One of "scan", "peakcall", or "recalc".
+#' @param pheno The phenotype to retrieve.
+#' @param ... Additional arguments.
+#'
+#' @return The requested data from the LazyGas object.
+#' @export
+#'
+setGeneric("lazyData", function(object,
+                                dataset = c("scan", "peakcall", "recalc"),
+                                pheno,
+                                ...)
+  standardGeneric("lazyData"))
+
+#'
+#' @rdname lazyData
+#' @method lazyData LazyGas
+#' @export
+#'
+setMethod("lazyData",
+          "LazyGas",
+          function(object, dataset, pheno){
+            # Match the dataset argument to one of the allowed choices
+            dataset <- match.arg(arg = dataset,
+                                 choices = c("scan", "peakcall", "recalc"))
+
+            # Determine phenotype index based on input
+            pheno_name <- .determine_phenotype_name(object = object,
+                                                    pheno = pheno)
+
+            # List the scan nodes in the specified dataset
+            scan_node <- ls.gdsn(node = index.gdsn(node = object,
+                                                   path = paste0("lazygas/",
+                                                                 dataset)))
+
+            # Retrieve the data based on the dataset type
+            if(dataset == "scan"){
+              out <- .get_scan(object = object,
+                               pheno_name = pheno_name)
+            } else {
+              out <- .get_peakcall(object = object,
+                                   pheno_name = pheno_name,
+                                   recalc = (dataset == "recalc"))
+            }
+
+            return(out)
+          }
+)
+
+################################################################################
+#' Recalculate Associations
+#'
+#' Recalculate associations using the LazyGas object and specified r-square threshold.
+#'
+#' @param object A LazyGas object.
+#'
+#' @return None. The function modifies the LazyGas object in place.
+#' @export
+#'
+setGeneric("recalcAssoc", function(object,
+                                   signif = 0.05,
+                                   threshold = 0.6,
+                                   ...)
+  standardGeneric("recalcAssoc"))
+
+#'
+#' @rdname recalcAssoc
+#' @method recalcAssoc LazyGas
+#' @export
+#'
+setMethod("recalcAssoc",
+          "LazyGas",
+          function(object, signif, threshold){
+            if(!exist.gdsn(node = object$root, path = "lazygas/peakcall")){
+              stop("No peakcall data in the input LazyGas object.\n",
+                   "Run callPeakBlock() to scan associations.")
+            }
+
+            kruskal <- .get_data(object = object, node = "lazygas/scan/kruskal")
+
+            ## Function to create the necessary folders in the GDS object
+            .create_recalc_folders(object = object)
+
+            pheno <- getPheno(object = object)
+
+            for(i in seq_along(pheno$pheno_names)){
+              pheno_name <- pheno$pheno_names[i]
+              dokruskal <- pheno_name %in% kruskal
+
+              if(dokruskal){
+                message("Skip recalculation for non-parametric data: ", pheno_name)
+                .create_gdsn(root_node = object$root,
+                             target_node = "lazygas/recalc/peaks",
+                             new_node = pheno_name,
+                             storage = "uint32",
+                             replace = TRUE)
+                .create_gdsn(root_node = object$root,
+                             target_node = "lazygas/recalc/blocks",
+                             new_node = pheno_name,
+                             storage = "double",
+                             replace = TRUE)
+
+              } else {
+                .peakrecalculator(object = object,
+                                  threshold = threshold,
+                                  signif = signif,
+                                  pheno = pheno,
+                                  pheno_name = pheno_name,
+                                  binary = pheno$pheno_type$binary[i])
+              }
+
+              .finalize_gdsn_recalc(object = object, pheno_name = pheno_name)
+            }
+          }
+)
+
+.create_recalc_folders <- function(object) {
+  peakcall_gdsn <- .create_gdsn(root_node = object$root,
+                                target_node = "lazygas",
+                                new_node = "recalc",
+                                is_folder = TRUE)
+  peaks_gdsn <- .create_gdsn(root_node = object$root,
+                             target_node = "lazygas/recalc",
+                             new_node = "peaks",
+                             is_folder = TRUE)
+  blocks_gdsn <- .create_gdsn(root_node = object$root,
+                              target_node = "lazygas/recalc",
+                              new_node = "blocks",
+                              is_folder = TRUE)
+
+  put.attr.gdsn(node = peaks_gdsn, name = "col_names",
+                val = c("peakID", "peakVariantID"))
+  put.attr.gdsn(node = blocks_gdsn, name = "col_names",
+                val = c("peakID", "VariantID", "dist2peak", "LD2peak",
+                        "P.model", "P.add", "P.dom", "Coef.add",
+                        "Coef.dom", "PVE", "FDR", "negLog10P"))
+}
+
+## Sub-function to finalize GDS nodes
+.finalize_gdsn_recalc <- function(object, pheno_name) {
+  readmode.gdsn(node = index.gdsn(node = object$root,
+                                  path = paste0("lazygas/recalc/peaks/", pheno_name)))
+  readmode.gdsn(node = index.gdsn(node = object$root,
+                                  path = paste0("lazygas/recalc/blocks/", pheno_name)))
+}
+
+# Recalculate peaks for a given phenotype.
+#' @importFrom dplyr setequal
+.peakrecalculator <- function(object, signif, threshold, pheno, pheno_name, binary){
+  message("Processing: ", pheno_name)
+
+  peakcall <- .get_peakcall(object = object, pheno_name = pheno_name)
+
+  if(is.null(peakcall)){
+    .create_gdsn(root_node = object$root,
+                 target_node = "lazygas/recalc/peaks",
+                 new_node = pheno_name,
+                 storage = "uint32",
+                 replace = TRUE)
+    .create_gdsn(root_node = object$root,
+                 target_node = "lazygas/recalc/blocks",
+                 new_node = pheno_name,
+                 storage = "double",
+                 replace = TRUE)
+
+  } else {
+    peak_obj <- .make_peakobj(object = object,
+                              threshold = threshold,
+                              signif = signif,
+                              pheno = pheno,
+                              pheno_name = pheno_name,
+                              peakcall = peakcall,
+                              binary = binary)
+    message("Recalculating associations...")
+    count <- 0
+    while(TRUE){
+      count <- count + 1
+      message("Round ", count)
+
+      cov_scan <- lapply(X = peak_obj$peak_variant_id,
+                         FUN = .composite,
+                         peak_obj = peak_obj)
+
+      peak_grp <- .group_peaks(cov_scan = cov_scan,
+                               peak_variant_id = peak_obj$peak_variant_id)
+
+      new_peaks <- .get_newpeaks(object = object, peak_grp = peak_grp, peak_obj = peak_obj)
+
+      if(setequal(new_peaks, peak_obj$peak_variant_id)){
+        break
+
+      } else {
+        peak_obj <- .remake_peakobj(object = object,
+                                    peak_obj = peak_obj,
+                                    peak_variant_id = new_peaks)
+      }
+
+      peak_block <- lapply(X = peak_obj$peak_variant_id,
+                           FUN = .recallPeak,
+                           peak_obj = peak_obj,
+                           object = object,
+                           peakcall = peakcall,
+                           values = FALSE)
+      names(peak_block) <- peak_obj$peak_variant_id
+      peak_obj$peak_block <- peak_block
+    }
+
+    new_peak_blocks <- lapply(X = seq_along(peak_obj$peak_variant_id),
+                              FUN = .make_newblocks,
+                              object = object,
+                              peak_obj = peak_obj)
+
+    peak_order <- sapply(new_peak_blocks, function(x) {max(x$peakNegLog10P)})
+    new_peak_blocks <- new_peak_blocks[order(peak_order, decreasing = TRUE)]
+    new_peak_blocks <- lapply(seq_along(new_peak_blocks), function(k){
+      new_peak_blocks[[k]]$peakID <- k
+      return(new_peak_blocks[[k]])
+    })
+    new_peak_blocks <- do.call("rbind", new_peak_blocks)
+    out1 <- unique(subset(new_peak_blocks,
+                          select = c(peakID, peakVariantID)))
+    out2 <- unique(subset(new_peak_blocks,
+                          select = c(peakID, VariantID,
+                                     Dist2peak, LD2peak,
+                                     P.model:negLog10P)))
+
+
+    .create_gdsn(root_node = object$root,
+                 target_node = "lazygas/recalc/peaks",
+                 new_node = pheno_name,
+                 val = as.matrix(out1),
+                 storage = "uint32",
+                 replace = TRUE)
+    .create_gdsn(root_node = object$root,
+                 target_node = "lazygas/recalc/blocks",
+                 new_node = pheno_name,
+                 val = as.matrix(out2),
+                 storage = "double",
+                 replace = TRUE)
   }
-  write.csv(haplo, paste0(out_fn,"_haploPattern.csv"), row.names = FALSE)
+}
+
+# Create a peak object for recalculating associations.
+.make_peakobj <- function(object, threshold, signif, pheno, pheno_name, peakcall, binary){
+  peak_variant_id <- unique(peakcall$peakVariantID)
+
+  geno_format <- .get_geno_format(object = object)
+
+  selection <- .set_selection_criteria_for_recalc(object = object,
+                                                  geno_format = geno_format,
+                                                  peak_variant_id = peak_variant_id)
+
+  geno <- .retrieve_geno(object = object,
+                         selection = selection,
+                         geno_format = geno_format,
+                         collapse = FALSE)
+
+  if(geno_format == "haplotype"){
+    if(length(dim(geno)) == 3){
+      geno[, , order(peak_variant_id)] <- geno
+    }
+
+  } else {
+    geno[, order(peak_variant_id)] <- geno
+  }
+
+  out <- list(
+    geno = geno,
+    geno_format = geno_format,
+    pheno = .standardize(val = pheno$pheno[, pheno_name], binary = binary),
+    threshold = threshold,
+    signif = signif,
+    makeDF_FUN = eval(parse(text = .get_data(object,
+                                             node = "lazygas/scan/makeDF_FUN"))),
+    formula = .get_data(object, node = "lazygas/scan/formula"),
+    peakcall = peakcall,
+    peak_variant_id = peak_variant_id,
+    peak_block = tapply(peakcall$VariantID, peakcall$peakVariantID, c),
+    snp_id = selection$snp_id,
+    n_sample = nsam(object = object),
+    binary = binary
+  )
+  return(out)
+}
+
+# Function to set the selection criteria based on the genotype format
+.set_selection_criteria_for_recalc <- function(object,
+                                               geno_format,
+                                               peak_variant_id) {
+  snp_id <- getMarID(object = object, valid = FALSE)
+  if(geno_format == "haplotype") {
+    # Get the dimensions of the haplotype data
+    obj_desp <- objdesp.gdsn(node = index.gdsn(node = object,
+                                               path = "annotation/format/HAP/data"))
+
+    # Set selection criteria for haplotype data
+    selection <- list(rep(TRUE, obj_desp$dim[1]),
+                      validSam(object = object),
+                      snp_id %in% peak_variant_id)
+    node <- "annotation/format/HAP/data"
+    is_categorical <- TRUE
+
+  } else {
+    # Set selection criteria for genotype or dosage data
+    selection <- list(validSam(object = object),
+                      snp_id %in% peak_variant_id)
+    node <- ifelse(geno_format == "dosage",
+                   "annotation/format/EDS/data",
+                   "genotype/data")
+    is_categorical <- FALSE
+  }
+  return(list(node = node,
+              selection = selection,
+              snp_id = snp_id,
+              is_categorical = is_categorical))
+}
+
+.composite <- function(query_peak,
+                       peak_obj,
+                       output_all = FALSE){
+  if(length(query_peak) == 0){
+    null_df <- NULL
+    subject_peak <- peak_obj$peak_variant_id
+    target_geno <- peak_obj$geno
+    target_geno <- apply(X = target_geno, MARGIN = 3, FUN = list)
+    target_geno <- lapply(X = target_geno, FUN = "[[", 1)
+
+  } else {
+    if(length(query_peak) > 1){
+      null_df <- NULL
+      for(j in query_peak){
+        index <- peak_obj$peak_variant_id %in% j
+        tmp_df <- .makeDF(g = peak_obj$geno[, index],
+                          phe = peak_obj$pheno,
+                          makeDF_FUN = peak_obj$makeDF_FUN,
+                          formula = peak_obj$formula)
+        if(is.null(null_df)){
+          names(tmp_df$df)[-1] <- paste(names(tmp_df$df)[-1], j, sep = "_")
+          null_df <- tmp_df
+
+        } else {
+          names(tmp_df$df)[-1] <- paste(names(tmp_df$df)[-1], j, sep = "_")
+          null_df$df <- cbind(null_df$df, subset(tmp_df$df, select = -phe))
+        }
+        null_df$fml <- paste0("phe ~ ",
+                              paste(names(null_df$df)[-1], collapse = " + "))
+      }
+
+      index <- peak_obj$peak_variant_id %in% query_peak
+      subject_peak <- peak_obj$peak_variant_id[!index]
+
+    } else {
+      index <- peak_obj$peak_variant_id %in% query_peak
+      subject_peak <- peak_obj$peak_variant_id[!index]
+      if(length(subject_peak) == 0){
+        return(data.frame(VariantID = NA, FDR = NA))
+      }
+    }
+
+    if(peak_obj$geno_format == "haplotype"){
+      g <- peak_obj$geno[, , index]
+      target_geno <- peak_obj$geno[, , !index]
+      target_geno <- apply(X = target_geno, MARGIN = 3, FUN = list)
+      target_geno <- lapply(X = target_geno, FUN = "[[", 1)
+
+    } else {
+      g <- peak_obj$geno[, index]
+      target_geno <- peak_obj$geno[, !index]
+      target_geno <- apply(X = target_geno, MARGIN = 2, FUN = list)
+      target_geno <- lapply(X = target_geno, FUN = "[[", 1)
+    }
+
+    null_df <- .makeDF(g = g,
+                       phe = peak_obj$pheno,
+                       makeDF_FUN = peak_obj$makeDF_FUN,
+                       formula = peak_obj$formula)
+  }
+
+  cores <- detectCores()
+  if(cores > 1){
+    cores <- cores - 1
+  }
+  p_values <- mclapply(X = target_geno, mc.cores = cores, mc.preschedule = TRUE,
+                       function(g){
+                         df <- .makeDF(g = g,
+                                       phe = peak_obj$pheno,
+                                       makeDF_FUN = peak_obj$makeDF_FUN,
+                                       formula = peak_obj$formula)
+                         if(length(query_peak) != 0){
+                           tmp <- subset(null_df$df, select = -phe)
+                           names(tmp) <- paste0("qtl_", names(tmp))
+                           df$df <- cbind(df$df, tmp)
+                           df$fml <- paste(c(df$fml, names(tmp)),
+                                           collapse = " + ")
+                         }
+
+                         if(peak_obj$binary){
+                           family <- "binomial"
+
+                         } else {
+                           family <- "gaussian"
+                         }
+
+                         out <- .doGLM(df = df,
+                                       family = family,
+                                       null_df = null_df)
+
+                         return(out)
+                       })
+
+  if(is.list(p_values)){
+    p_values <- data.frame(do.call("rbind", p_values))
+
+  } else {
+    p_values <- data.frame(t(p_values))
+  }
+  p_values$FDR <- p.adjust(p_values$P.model, "fdr")
+
+  if(output_all){
+    return(data.frame(VariantID = subject_peak, p_values))
+
+  } else {
+    return(data.frame(VariantID = subject_peak, FDR = p_values$FDR))
+  }
+}
+
+.group_peaks <- function(cov_scan, peak_variant_id){
+  peak_list <- peak_variant_id
+  out <- NULL
+  for(j in seq_along(cov_scan)){
+    if(!peak_variant_id[j] %in% peak_list){
+      next
+    }
+    grp <- c(peak_variant_id[j],
+             cov_scan[[j]]$VariantID[cov_scan[[j]]$FDR > 0.05])
+    grp <- grp[grp %in% peak_list]
+    out <- c(out, list(grp))
+    peak_list <- peak_list[!peak_list %in% grp]
+  }
+  return(out)
+}
+
+.get_newpeaks <- function(object, peak_grp, peak_obj){
+  out <- NULL
+  for(j in seq_along(peak_grp)){
+    grp <- peak_grp[[j]]
+    query_peak <- grp[1]
+    out <- c(out, list(query_peak))
+    subject_peak <- as.numeric(names(peak_obj$peak_block)) %in% grp
+    subject_peak <- sort(unique(unlist(peak_obj$peak_block[subject_peak])))
+
+    if(length(subject_peak) == 0){
+      next
+    }
+
+    peak_obj <- .remake_peakobj(object = object,
+                                peak_obj = peak_obj,
+                                peak_variant_id = subject_peak)
+
+    peak_scan <- .composite(query_peak = query_peak, peak_obj = peak_obj)
+
+    near_peak <- peak_obj$peakcall$peakVariantID == query_peak
+    max_cor <- max(peak_obj$peakcall$LD2peak[near_peak], na.rm = TRUE)
+    near_peak_cor <- peak_obj$peakcall$LD2peak[near_peak] == max_cor
+    cor1 <- peak_obj$peakcall$VariantID[near_peak][near_peak_cor]
+    peak_scan$FDR[peak_scan$VariantID %in% cor1] <- 1
+
+    other_peaks <- peak_scan[peak_scan$FDR < peak_obj$signif, ]
+    other_peaks_hit <- peak_obj$peakcall$VariantID %in% other_peaks$VariantID
+    other_peaks_id <- unique(peak_obj$peakcall$peakVariantID[other_peaks_hit])
+    if(query_peak %in% other_peaks_id){
+      query_peak_member <- peak_obj$peakcall$Peak_variantID %in% query_peak
+      in_query_peak <- other_peaks$VariantID %in% peak_obj$peakcall$VariantID[query_peak_member]
+      in_query_peak <- other_peaks[in_query_peak, ]
+      in_query_peak_id <- in_query_peak$VariantID[which.min(in_query_peak$FDR)]
+      other_peaks_id[other_peaks_id %in% query_peak] <- in_query_peak_id
+    }
+    if(length(other_peaks_id) != 0){
+      out <- c(out, list(other_peaks_id))
+    }
+  }
+  out <- unique(unlist(out))
+  return(out)
+}
+
+.remake_peakobj <- function(object, peak_obj, peak_variant_id){
+  peak_obj$peak_variant_id <- peak_variant_id
+
+  selection <- .set_selection_criteria_for_recalc(object = object,
+                                                  geno_format = peak_obj$geno_format,
+                                                  peak_variant_id = peak_variant_id)
+
+  geno <- .retrieve_geno(object = object,
+                         selection = selection,
+                         geno_format = peak_obj$geno_format,
+                         collapse = FALSE)
+
+  if(is.vector(geno)){
+    geno <- matrix(geno, ncol = 1)
+  }
+
+  if(peak_obj$geno_format == "haplotype"){
+    if(length(dim(geno)) == 3){
+      geno[, , order(peak_variant_id)] <- geno
+    }
+
+  } else {
+    geno[, order(peak_variant_id)] <- geno
+  }
+
+  peak_obj$geno <- geno
+  return(peak_obj)
+}
+
+.recallPeak <- function(peak_id, peak_obj, object, peakcall, values){
+  target_variants <- peakcall$peakID %in% peakcall$peakID[peakcall$VariantID %in% peak_id]
+  out <- target_variants <- sort(peakcall$VariantID[target_variants])
+
+  if(length(target_variants) == 1){
+    if(values){
+      out <- data.frame(Dist2peak = 0,
+                        LD2peak = 1,
+                        VariantID = out)
+    }
+
+  } else{
+    variables <- .initialize_variables(object = object)
+    index <- which(variables$snp_id == peak_id)
+    chr <- variables$chr[index]
+    chr_with_peak <- which(variables$chr == chr)
+    id_in_chr <- variables$snp_id[chr_with_peak]
+    peak_index_in_chr <- which(id_in_chr == peak_id)
+    peak_info <-   list(index = index,
+                        variantID = peak_id,
+                        chr = chr,
+                        chr_with_peak = chr_with_peak,
+                        id_in_chr = id_in_chr,
+                        peak_index_in_chr = peak_index_in_chr)
+
+    # Set the selection criteria based on the genotype format
+    selection <- .set_selection_criteria_for_peakcall(object = object,
+                                                      geno_format = peak_obj$geno_format,
+                                                      chr = peak_info$chr)
+
+    # Retrieve genotype data based on the selection criteria
+    geno <- .retrieve_geno(object = object,
+                           selection = selection,
+                           geno_format = peak_obj$geno_format)
+
+    # Calculate linkage disequilibrium (LD) for the identified peak
+    peak_ld <- .calculate_ld(geno = as.matrix(geno),
+                             peak_variant_idx = peak_info$peak_index_in_chr,
+                             is_categorical = selection$is_categorical)
+
+    # Identify the peak block based on the LD values
+    peak_block <- .identify_peak_block(peak_ld = peak_ld,
+                                       variables = variables,
+                                       peak_info = peak_info,
+                                       threshold = peak_obj$threshold,
+                                       geno_format = peak_obj$geno_format)
+    if(values){
+      out <- data.frame(Dist2peak = peak_block$dist,
+                        LD2peak = peak_block$ld,
+                        VariantID = peak_block$ids)
+
+    } else {
+      out <- peak_block$ids
+    }
+  }
+
+  return(out)
+}
+
+.make_newblocks <- function(i, object, peak_obj){
+  query_peak <- peak_obj$peak_variant_id[-i]
+  hit_id <- peak_obj$peakcall$VariantID %in% peak_obj$peak_variant_id[i]
+  i_peak <- peak_obj$peakcall[hit_id, ]
+  hit_subject <- peak_obj$peakcall$peakVariantID %in% i_peak$peakVariantID
+  subject_id <- unique(peak_obj$peakcall$VariantID[hit_subject])
+  peak_obj <- .remake_peakobj(object = object,
+                              peak_obj = peak_obj,
+                              peak_variant_id = c(query_peak, subject_id))
+  peakcall <- .composite(query_peak = query_peak,
+                          peak_obj = peak_obj,
+                          output_all = TRUE)
+  peak_id <- peakcall$VariantID[which.min(peakcall$P.model)]
+  peakcall$peakID <- i
+  recall_peak <- .recallPeak(peak_id = peak_id,
+                             peak_obj = peak_obj,
+                             object = object,
+                             peakcall = peakcall,
+                             values = TRUE)
+
+  peak_obj <- .remake_peakobj(object = object,
+                              peak_obj = peak_obj,
+                              peak_variant_id = recall_peak$VariantID)
+  peakcall <- .composite(query_peak = query_peak,
+                         peak_obj = peak_obj,
+                         output_all = TRUE)
+  peakcall$negLog10P <- -log10(peakcall$P.model)
+  out <- data.frame(peakID = i,
+                    peakVariantID = peak_id,
+                    peakNegLog10P = peakcall$negLog10P[peakcall$VariantID == peak_id],
+                    recall_peak, subset(peakcall, select = -VariantID))
+  return(out)
 }

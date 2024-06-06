@@ -2,58 +2,21 @@
 % Please edit documentation in R/00_functions.R
 \name{plotManhattan}
 \alias{plotManhattan}
-\alias{plotManhattan.QTLscan}
-\alias{plotManhattan.GWASscan}
-\alias{plotManhattan.character}
-\alias{plotManhattan.data.frame}
 \title{Draw a Manhattan plot}
 \usage{
-plotManhattan(x, ...)
-
-\method{plotManhattan}{QTLscan}(
-  x,
+plotManhattan(
+  object,
   pheno = NULL,
   chr = NULL,
   start = NULL,
   end = NULL,
-  signif = NULL,
+  signif = "FDR<0.05",
   out_fn = "",
-  out_fmt = "pdf"
-)
-
-\method{plotManhattan}{GWASscan}(
-  x,
-  pheno = NULL,
-  chr = NULL,
-  start = NULL,
-  end = NULL,
-  signif = NULL,
-  out_fn = "",
-  out_fmt = "pdf"
-)
-
-\method{plotManhattan}{character}(
-  x,
-  chr = NULL,
-  start = NULL,
-  end = NULL,
-  signif = NULL,
-  out_fn = "",
-  out_fmt = "pdf"
-)
-
-\method{plotManhattan}{data.frame}(
-  x,
-  chr = NULL,
-  start = NULL,
-  end = NULL,
-  signif = NULL,
-  out_fn = "",
-  out_fmt = "pdf"
+  ...
 )
 }
 \arguments{
-\item{x}{data.frame of pvalue data}
+\item{object}{QTLscan object}
 
 \item{chr}{Chromosome ID to be drawn}
 
@@ -64,8 +27,6 @@ plotManhattan(x, ...)
 \item{signif}{Expression to define the significant markers}
 
 \item{out_fn}{Prefix of output file}
-
-\item{out_fmt}{Output image format}
 
 \item{pehno}{Phenotype names to be drawn}
 }

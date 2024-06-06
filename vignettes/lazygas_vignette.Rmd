@@ -1,0 +1,180 @@
+---
+title: "Genetic Association Study with LazyGas"
+author: "Your Name"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+## Introduction
+This vignette demonstrates the process of conducting a genetic association study using the `lazyGas` package, along with the `GBScleanR` package for data cleaning. We will go through the steps of loading input files, preprocessing data, performing association analysis, and visualizing results. 
+
+## Prerequisites
+Ensure you have the following packages installed and loaded:
+```{r}
+library(lazyGas)
+library(GBScleanR)
+library(ggplot2)
+```
+
+## Setting Up the Working Directory
+Create a directory to store the results:
+```{r}
+dir.create("/home/ftom/hdd3/kosami/ponkan_ehime47/qtl")
+```
+
+## Loading Input GDS File and Building a LazyGas Object
+Load the input GDS file and build a `LazyGas` class object:
+```{r}
+gds_fn <- "/home/ftom/hdd3/kosami/ponkan_ehime47/gbs/input/ponkan_ehime47_gbs_on_sinensis_genome_merged_w_founders.gds"
+lg <- buildLazyGas(gds_fn = gds_fn, load_filter = TRUE, overwrite = FALSE)
+```
+
+## Loading and Preprocessing Phenotype Data
+Load the phenotype data:
+```{r}
+pheno_fn <- "/home/ftom/hdd3/kosami/docs/2024/disease_resist_citrus.csv"
+pheno <- read.csv(file = pheno_fn)
+```
+
+Reformat sample IDs to match those in the GDS file:
+```{r}
+sample_id <- getSamID(object = lg)
+pheno$ID <- paste0("Kosami23_", sprintf("%03d", pheno$ID))
+```
+
+Calculate the average disease resistance evaluation scores per sample and handle invalid scores:
+```{r}
+pheno$score <- rowMeans(pheno[, -1], na.rm = TRUE)
+pheno$score[pheno$rep4 <= 3 & !is.na(pheno$rep4)] <- NA
+```
+
+Load additional phenotype data and combine:
+```{r}
+pheno_fn <- "/home/ftom/hdd3/kosami/docs/2024/presence_needles.csv"
+pheno2 <- read.csv(file = pheno_fn)
+pheno <- cbind(pheno, pheno2[, -1])
+```
+
+Assign phenotype data to the LazyGas object:
+```{r}
+lg <- assignPheno(object = lg,
+                  pheno = subset(pheno, select = c(ID, score:needle.freq_1.4y)),
+                  rename = c("Canker resistant",
+                             "Leaf-to-top length (1Y)",
+                             "Node number (1Y)",
+                             "Needle number (1Y)",
+                             "Needle frequency (1Y)",
+                             "Node number (1.3Y)",
+                             "Needle number (1.3Y)",
+                             "Needle frequency (1.3Y)"))
+```
+
+## Visualizing Phenotype Data
+Generate and save plots for phenotype data:
+```{r}
+pheno <- getPheno(object = lg)
+pdf("/home/ftom/hdd3/kosami/ponkan_ehime47/qtl/phenotype_plot.pdf")
+for(i in seq_along(pheno$pheno_names)){
+    p <- plotPheno(object = lg, pheno = i, xlab = pheno$pheno_names[i])
+    print(p)
+}
+dev.off()
+```
+
+## Confirming Haplotype Data
+Check haplotypes and sample IDs:
+```{r}
+hap <- getHaplotype(object = lg, valid = FALSE)
+all_sample_id <- getSamID(object = lg, valid = FALSE)
+valid_indices <- validSam(object = lg)
+all_sample_id[!valid_indices] # IDs of invalid (parental) samples
+hap[, !valid_indices, 1] # Assigned integers for the invalid (parental) samples
+```
+
+## Conducting Association Analysis
+Define a function to convert haplotype data to a model matrix:
+```{r}
+makeDF_FUN <- function(h){
+    out <- cbind(colSums(h == 1), colSums(h == 3))
+    colnames(out) <- c("hap1", "hap3")
+    return(out)
+}
+```
+
+Run the association scan:
+```{r}
+scanAssoc(object = lg,
+          formula = "hap1 + hap3",
+          makeDF_FUN = makeDF_FUN,
+          geno_format = "haplotype",
+          kruskal = NULL)
+```
+
+## Visualizing Results
+Generate Manhattan plots for association results:
+```{r}
+pheno <- getPheno(object = lg)
+pdf("/home/ftom/hdd3/kosami/ponkan_ehime47/qtl/manhattan.pdf")
+for(i in seq_along(pheno$pheno_names)){
+    p <- plotManhattan(object = lg, pheno = i)
+    p <- p + labs(title = pheno$pheno_names[i])
+    print(p)
+}
+dev.off()
+```
+
+Call and visualize peak blocks:
+```{r}
+callPeakBlock(object = lg, signif = 0.3, threshold = 0.4)
+
+pdf("/home/ftom/hdd3/kosami/ponkan_ehime47/qtl/peaks.pdf")
+for(i in seq_along(pheno$pheno_names)){
+    p <- plotPeaks(object = lg, pheno = i, recalc = FALSE)
+    p <- p + labs(title = pheno$pheno_names[i])
+    print(p)
+}
+dev.off()
+```
+
+## Recalculating and Visualizing Peaks
+Recalculate and visualize peaks:
+```{r}
+recalcAssoc(object = lg, signif = 0.3, threshold = 0.4)
+
+pdf("/home/ftom/hdd3/kosami/ponkan_ehime47/qtl/peaks_recalc.pdf")
+for(i in seq_along(pheno$pheno_names)){
+    p <- plotPeaks(object = lg, pheno = i, recalc = TRUE)
+    p <- p + labs(title = pheno$pheno_names[i])
+    print(p)
+}
+dev.off()
+```
+
+## Visualizing Haplotype and Phenotype Data
+Generate plots for haplotype and phenotype data:
+```{r}
+pdf("/home/ftom/hdd3/kosami/ponkan_ehime47/qtl/pheno_haplo_plot.pdf")
+for(i in seq_along(pheno$pheno_names)){
+    out <- haploPlot(object = lg, pheno = i, recalc = FALSE)
+    print(out)
+}
+dev.off()
+
+pdf("/home/ftom/hdd3/kosami/ponkan_ehime47/qtl/pheno_haplo_plot_recalc.pdf")
+for(i in seq_along(pheno$pheno_names)){
+    out <- haploPlot(object = lg, pheno = i, recalc = TRUE)
+    print(out)
+}
+dev.off()
+```
+
+## Extracting Data
+Extract data for further analysis:
+```{r}
+pheno <- getPheno(object = lg)
+scan_pheno_1 <- lazyData(object = lg, dataset = "scan", pheno = pheno$pheno_names[1])
+peakcall_pheno_5 <- lazyData(object = lg, dataset = "peakcall", pheno = pheno$pheno_names[5])
+recalc_pheno_2 <- lazyData(object = lg, dataset = "recalc", pheno = pheno$pheno_names[2])
+```
+
+This completes the genetic association study using the `lazyGas` package.

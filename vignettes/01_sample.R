@@ -73,7 +73,7 @@ peakblock <- callPeakBlock(scanqtl, signif = signif,
 ##################
 # Execute snpEff #
 ##################
-args <- "-Xmx8g -jar ~/tools/snpEff/snpEff.jar nb_rapmsu "
+args <- "-Xmx8g -jar ~/tools/snpEff/snpEff.jar nb_rapmsu"
 vcf_fn <- "~/hdd3/gbs/runs/2022_TP72_TP74_NBWRC46_KoshiWCSL/NippWRC46/gbscleanr_out/NBxWRC46_F2_MCPtaggR_GBScleanR.vcf"
 out_fn <- "~/hdd3/gbs/runs/2022_TP72_TP74_NBWRC46_KoshiWCSL/NippWRC46/gbscleanr_out/NBxWRC46_F2_MCPtaggR_GBScleanR.snpEff.vcf"
 system2("java", paste0(args, vcf_fn, " > ", out_fn))
