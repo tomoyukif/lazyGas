@@ -1,6 +1,3 @@
-Sure, here's a sample README.md file for the `lazyGas` package:
-
-```markdown
 # lazyGas
 
 `lazyGas` is an R package designed for conducting genetic association studies. It provides tools for loading, preprocessing, and analyzing genomic and phenotype data, as well as for visualizing the results.
@@ -113,5 +110,3 @@ We welcome contributions to `lazyGas`. Please submit issues and pull requests on
 
 This project is licensed under the MIT License - see the [LICENSE.md](LICENSE.md) file for details.
 ```
-
-You can adjust the paths, package names, and other details according to your specific setup and repository structure.
