@@ -27,6 +27,10 @@ if (!requireNamespace("devtools", quietly = TRUE))
     
 devtools::install_github("tomoyukif/lazyGas", build_vignettes = TRUE)
 ```
+## Vignette
+For more information, run the following code on a R console to see a vignette.
+
+browseVignettes(package = "lazyGas")
 
 ## Usage
 
