@@ -30,3 +30,4 @@ add.gdsn(index.gdsn(gds, "annotation/format/HAP"), name = "data",
 add.gdsn(index.gdsn(gds, "annotation/format/EDS"), name = "data",
          val = df$dosage, storage = "bit2", compress = "LZMA_RA")
 closefn.gds(gds)
+unlink("inst/extdata/temp.gds")
