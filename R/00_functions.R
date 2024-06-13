@@ -2566,278 +2566,241 @@ setMethod("recalcAssoc",
                       recall_peak, subset(peakcall, select = -VariantID))
     return(out)
 }
-#'
-#' ################################################################################
-#' #'
-#' #' @param x peakCall object
-#' #' @param annotation_fn path to an annotation information file or a data.frame
-#' #' @param gff_fn path to a GFF file
-#' #' @param snpeff_fn path to a snpEff file
-#' #' @param out_fn prefix of output file name
-#' #'
-#' #' @importFrom vcfR read.vcfR
-#' #'
-#' #' @export
-#' setGeneric("listCandidate", function(object,
-#'                                      signif = 0.05,
-#'                                      threshold = 0.6,
-#'                                      ...)
-#'     standardGeneric("listCandidate"))
-#'
-#' setMethod("listCandidate",
-#'           "LazyGas",
-#'           function(x,
-#'                    ann = NULL,
-#'                    gff,
-#'                    snpeff = NULL){
-#'               if(!is.null(snpeff)){
-#'                   if(!inherits(snpeff, "SeqVarGDSClass")){
-#'                       snpeff <- seqOpen(snpeff)
-#'                   }
-#'               }
-#'               if(!is.null(ann)){
-#'                   if(is.character(ann)){
-#'                       if(grepl("\\.csv$", basename(ann))){
-#'                           ann <- read.csv(ann)
-#'                       } else if(grepl("\\.tsv$", basename(ann))){
-#'                           ann <- read.table(ann, sep = "\t", header = TRUE)
-#'                       }
-#'                   }
-#'               }
-#'               if(is.character(gff)){
-#'                   gff <- import.gff(gff)
-#'               }
-#'               for(i in seq_along(x$peakblock_fn)){
-#'                   peakblock <- read.csv(x$peakblock_fn[i])
-#'                   tmp_fn <- paste0(out_fn, x$pheno_names[i])
-#'                   listCandidate.data.frame(x = peakblock,
-#'                                            ann = ann,
-#'                                            gff = gff,
-#'                                            snpeff = snpeff,
-#'                                            out_fn = tmp_fn,
-#'                                            scan = attributes(x)$scan)
-#'               }
-#'               out <- paste0(out_fn, x$pheno_names, "_candidateList.csv")
-#'               x$candidatelist_fn <- out
-#'               invisible(x)
-#'           }
-#' )
-#' #' @rdname listCandidate
-#' #'
-#' #' @param x peakcall data.frame
-#' #' @param annotation_fn path to an annotation information file
-#' #' @param gff_fn path to a GFF file
-#' #' @param snpeff_fn path to a snpEff file
-#' #' @param out_fn prefix of output file name
-#' #' @param scan scan type
-#' #'
-#' #' @importFrom vcfR read.vcfR
-#' #' @importFrom dplyr left_join
-#' #' @importFrom rtracklayer import.gff
-#' #' @importFrom GenomicRanges GRanges findOverlaps
-#' #' @importFrom IRanges IRanges
-#' #'
-#' #' @export
-#' listCandidate.data.frame <- function(x,
-#'                                      ann = NULL,
-#'                                      ann_names = "",
-#'                                      gff,
-#'                                      snpeff = NULL,
-#'                                      out_fn,
-#'                                      scan = "QTL"){
-#'     out <- NULL
-#'     if(nrow(x) != 0){
-#'         if(!is.null(ann)){
-#'             if(is.character(ann)){
-#'                 if(grepl("\\.csv$", basename(ann))){
-#'                     ann <- read.csv(ann)
-#'                 } else if(grepl("\\.tsv$", basename(ann))){
-#'                     ann <- read.table(ann, sep = "\t", header = TRUE)
-#'                 }
-#'             }
-#'             if(!inherits(ann, "data.frame")){
-#'                 stop("ann should be a data.frame or a path to a csv/tsv file.")
-#'             }
-#'         }
-#'
-#'         if(is.character(gff)){
-#'             gff <- import.gff(gff)
-#'         }
-#'         if(!inherits(gff, "GRanges")){
-#'             stop("gff should be a GRanges or a path to a gff file.")
-#'         }
-#'
-#'         if(!is.null(snpeff)){
-#'             if(!inherits(snpeff, "SeqVarGDSClass")){
-#'                 snpeff <- seqOpen(snpeff)
-#'             }
-#'             snp_ann <- seqGetData(snpeff, "annotation/info/ANN")
-#'             if(is.null(snp_ann$data)){
-#'                 snpeff <- DataFrame(chr = chr,
-#'                                     pos = seqGetData(snpeff, "position"),
-#'                                     snp_ann = I(sapply(seq_along(chr), function(x){return(list(NA))})))
-#'                 snpeff$snp_ann[as.numeric(names(snp_ann))] <- snp_ann
-#'                 snpeff <- snpeff[sapply(snpeff$snp_ann, function(x){return(!is.na(x[1]))}), ]
-#'
-#'             } else {
-#'                 index <- unlist(sapply(seq_along(snp_ann$length),
-#'                                        function(i) {rep(i, snp_ann$length[i])}))
-#'                 snp_ann <- tapply(snp_ann$data, index, list)
-#'                 chr <- seqGetData(snpeff, "chromosome")
-#'                 snpeff <- DataFrame(variant_id = seqGetData(snpeff, "variant.id"),
-#'                                     chr = chr,
-#'                                     pos = seqGetData(snpeff, "position"),
-#'                                     snp_ann = I(sapply(seq_along(chr), function(x){return(list(NA))})))
-#'                 snpeff$snp_ann[as.numeric(names(snp_ann))] <- snp_ann
-#'                 snpeff <- snpeff[sapply(snpeff$snp_ann, function(x){return(!is.na(x[1]))}), ]
-#'             }
-#'         }
-#'
-#'         for(i_peak in unique(x$Peak_id)){
-#'             peakblock_i <- x[x$Peak_id == i_peak, ]
-#'
-#'             if(scan == "QTL"){
-#'                 tmp <- getQTLcandidate(gff = gff,
-#'                                        peakblock = peakblock_i,
-#'                                        snpeff = snpeff)
-#'
-#'             } else if(scan == "GWAS"){
-#'                 tmp <- getGWAScandidate(gff = gff,
-#'                                         peakblock = peakblock_i,
-#'                                         snpeff = snpeff)
-#'             }
-#'             if(is.null(peakblock_i$Cor_id)){
-#'                 tmp <- data.frame(Peak_id = i_peak,
-#'                                   tmp)
-#'             } else {
-#'                 tmp <- data.frame(Cor_id = peakblock_i$Cor_id[1],
-#'                                   Peak_id = i_peak,
-#'                                   tmp)
-#'             }
-#'             out <- rbind(out, tmp)
-#'         }
-#'         if(!is.null(out)){
-#'             if(!is.null(ann)){
-#'                 out <- left_join(out, ann, by = "GeneID")
-#'             }
-#'         }
-#'     }
-#'     write.csv(out, paste0(out_fn, "_candidateList.csv"), row.names = FALSE)
-#' }
-#'
-#' #' @importFrom GenomicRanges GRanges findOverlaps
-#' #' @importFrom IRanges IRanges
-#' #' @importFrom S4Vectors queryHits
-#' #' @importFrom GenomeInfoDb seqnames
-#' getQTLcandidate <- function(gff, peakblock, snpeff){
-#'     peak_gff <- GRanges(seqnames = peakblock$Peak_chr[1],
-#'                         ranges = IRanges(start = peakblock$Pos[1],
-#'                                          end = tail(peakblock$Pos, 1)))
-#'     gene_gff <- gff[gff$type == "gene"]
-#'     hit <- gene_gff[queryHits(findOverlaps(gene_gff, peak_gff))]
-#'     hit <- hit[order(start(hit))]
-#'     hit$fromPeak <- start(hit) - peakblock$Peak_pos[1]
-#'     nearest_p <- sapply(start(hit), function(x){
-#'         return(peakblock$negLog10P[which.min(abs(peakblock$Pos - x))])
-#'     })
-#'     out <- data.frame(negLog10P = nearest_p,
-#'                       Dist2peak = hit$fromPeak,
-#'                       Gene_chr = as.character(seqnames(hit)),
-#'                       Gene_start = start(hit),
-#'                       GeneID = hit$ID)
-#'
-#'     if(!is.null(snpeff)){
-#'         snpeff_out <- addSnpEff(snpeff, peakblock, scan = "QTL")
-#'         out <- left_join(out, snpeff_out, by ="GeneID")
-#'     }
-#'     return(out)
-#' }
-#'
-#' getGWAScandidate <- function(gff, peakblock, snpeff){
-#'     snpeff_out <- addSnpEff(snpeff, peakblock, scan = "GWAS")
-#'     if(all(is.na(snpeff_out$GeneID))){
-#'         out <- data.frame(Dist2peak = NA, Gene_chr = NA, Gene_start = NA,
-#'                           snpeff_out)
-#'
-#'     } else {
-#'         snpeff_out$gene_id <- sub("-.+|&.+", "", snpeff_out$GeneID)
-#'         gene_gff <- gff[gff$type == "gene"]
-#'         hit <- gene_gff[gene_gff$ID %in% snpeff_out$gene_id]
-#'         hit$fromPeak <- start(hit) - peakblock$Peak_pos[1]
-#'         out <- full_join(data.frame(Dist2peak = hit$fromPeak,
-#'                                     Gene_chr = as.character(seqnames(hit)),
-#'                                     Gene_start = start(hit),
-#'                                     gene_id = hit$gene_id),
-#'                          snpeff_out, by = "gene_id")
-#'         out <- subset(out, subset = !is.na(HIGH), select = -gene_id)
-#'     }
-#'     return(out)
-#' }
-#'
-#' #' @importFrom vcfR getFIX getINFO
-#' addSnpEff <- function(snpeff, peakblock, scan){
-#'     if(scan == "QTL"){
-#'         target_chr <- snpeff$chr %in% peakblock$Chr
-#'         target_pos <-  snpeff$pos >= min(peakblock$Pos) &  snpeff$pos <= max(peakblock$Pos)
-#'         peak_ann <- snpeff$snp_ann[target_chr & target_pos]
-#'         peak_ann <- unlist(peak_ann)
-#'         peak_ann[grepl("\\|$", peak_ann)] <- paste(peak_ann[grepl("\\|$", peak_ann)], " ")
-#'         peak_ann <- strsplit(peak_ann, "\\|")
-#'         peak_ann <- do.call("rbind", peak_ann)
-#'         peak_ann <- subset(peak_ann, select = c(2:4))
-#'
-#'         colnames(peak_ann) <- c("type", "impact", "GeneID")
-#'         genewise <- tapply(peak_ann$impact, peak_ann$GeneID, function(x){
-#'             as.vector(table(factor(x, c("HIGH", "MODERATE", "LOW", "MODIFIER"))))
-#'         })
-#'         genewise <- data.frame(GeneID = names(genewise),
-#'                                do.call("rbind", genewise))
-#'         colnames(genewise)[-1] <- c("HIGH", "MODERATE", "LOW", "MODIFIER")
-#'
-#'     } else if(scan == "GWAS"){
-#'         peak_ann <- snpeff[snpeff$variant_id %in% peakblock$VariantID, ]
-#'         if(nrow(peak_ann) == 0){
-#'             genewise <- data.frame(t(rep(NA, 9)))
-#'             names(genewise) <- c("GeneID", "Max_Pval", "Min_Pval", "Maf_Max", "Maf_Min",
-#'                                  "HIGH", "MODERATE", "LOW", "MODIFIER")
-#'
-#'         } else {
-#'             tmp <- unlist(peak_ann$snp_ann)
-#'             tmp[grepl("\\|$", tmp)] <- paste(tmp[grepl("\\|$", tmp)], " ")
-#'             tmp <- strsplit(tmp, "\\|")
-#'             tmp <- do.call("rbind", tmp)
-#'             tmp <- subset(tmp, select = 2:4)
-#'             n_ann <- sapply(peak_ann$snp_ann, length)
-#'             index_ann <- unlist(sapply(seq_along(n_ann), function(i){rep(i, n_ann[i])}))
-#'             index_ann <- match(peak_ann$variant_id[index_ann], peakblock$VariantID)
-#'             peak_ann <- data.frame(negLog10P = peakblock$negLog10P[index_ann],
-#'                                    MAF = peakblock$MAF[index_ann],
-#'                                    tmp)
-#'             colnames(peak_ann) <- c("negLog10P", "MAF", "Type",
-#'                                     "Impact", "GeneID")
-#'             peak_ann <- subset(peak_ann, subset = !Type %in% "intergenic_region")
-#'             if(nrow(peak_ann) == 0){
-#'                 genewise <- data.frame(t(rep(NA, 9)))
-#'                 names(genewise) <- c("GeneID", "Max_Pval", "Min_Pval", "Maf_Max", "Maf_Min",
-#'                                      "HIGH", "MODERATE", "LOW", "MODIFIER")
-#'
-#'             } else {
-#'                 impacts <- c("HIGH", "MODERATE", "LOW", "MODIFIER")
-#'                 genewise <- tapply(seq_along(peak_ann$Impact), peak_ann$GeneID, function(i){
-#'                     data.frame(Max_Pval = max(peak_ann$negLog10P[i]),
-#'                                Min_Pval = min(peak_ann$negLog10P[i]),
-#'                                Maf_Max = peak_ann$MAF[i][which.max(peak_ann$negLog10P[i])],
-#'                                Maf_Min = peak_ann$MAF[i][which.min(peak_ann$negLog10P[i])],
-#'                                t(as.vector(table(factor(peak_ann$Impact[i], impacts)))))
-#'                 })
-#'                 GeneID = names(genewise)
-#'                 names(genewise) <- NULL
-#'                 genewise <- data.frame(GeneID = GeneID,
-#'                                        do.call("rbind", genewise))
-#'                 colnames(genewise)[-(1:5)] <- c("HIGH", "MODERATE", "LOW", "MODIFIER")
-#'             }
-#'         }
-#'     }
-#'     return(genewise)
-#' }
 
+################################################################################
+
+#' @export
+setGeneric("listCandidate", function(object,
+                                     gff,
+                                     snpeff = NULL,
+                                     ann = NULL,
+                                     recalc = FALSE,
+                                     ...)
+    standardGeneric("listCandidate"))
+
+setMethod("listCandidate",
+          "LazyGas",
+          function(object,
+                   gff,
+                   snpeff = NULL,
+                   ann = NULL,
+                   recalc = FALSE){
+              if(recalc){
+                  if(!exist.gdsn(node = object$root, path = "lazygas/recalc")){
+                      stop("No peakcall data in the input LazyGas object.\n",
+                           "Run recalcAssoc() to recalculate associations.")
+                  }
+
+              } else {
+                  if(!exist.gdsn(node = object$root, path = "lazygas/peakcall")){
+                      stop("No peakcall data in the input LazyGas object.\n",
+                           "Run callPeakBlock() to call peak blocks.")
+                  }
+              }
+
+              gff <- .loadGFF(gff = gff)
+              snpeff <- .loadSNPEff(snpeff = snpeff)
+              ann <- .loadANN(ann = ann)
+
+              ## Function to create the necessary folders in the GDS object
+              .create_candidate_folders(object = object)
+
+              pheno <- getPheno(object = object)
+
+              for(i in seq_along(pheno$pheno_names)){
+                  pheno_name <- pheno$pheno_names[i]
+
+                  .candidatelistor(object = object,
+                                   ann = ann,
+                                   gff = gff,
+                                   snpeff = snpeff,
+                                   pheno_name = pheno_name,
+                                   recalc = recalc)
+
+                  .finalize_gdsn_candidate(object = object,
+                                           pheno_name = pheno_name)
+              }
+          })
+
+.create_candidate_folders <- function(object) {
+    candidate_gdsn <- .create_gdsn(root_node = object$root,
+                                   target_node = "lazygas",
+                                   new_node = "candidate",
+                                   is_folder = TRUE)
+
+    put.attr.gdsn(node = candidate_gdsn, name = "col_names",
+                  val = c("peakID", "peakVariantID"))
+}
+
+#' @importFrom rtracklayer import.gff
+.loadGFF <- function(gff){
+    if(!file.exists(gff)){
+        stop("The specified GFF file does not exist!",
+             call. = FALSE)
+    }
+    gff <- import.gff(gff)
+    return(gff)
+}
+
+#' @importFrom vcfR read.vcfR
+.loadSNPEff <- function(snpeff){
+    if(!is.null(snpeff)){
+        if(!file.exists(snpeff)){
+            stop("The specified SNPEff file does not exist!",
+                 call. = FALSE)
+        }
+        snpeff <- read.vcfR(snpeff, limit = 1e9)
+    }
+    return(snpeff)
+}
+
+.loadANN <- function(ann){
+    if(!is.null(ann)){
+        if(!file.exists(ann)){
+            stop("The specified annotation file does not exist!",
+                 call. = FALSE)
+        }
+        ann <- read.csv(ann)
+    }
+    return(ann)
+}
+
+## Sub-function to finalize GDS nodes
+#' @importFrom gdsfmt index.gdsn readmode.gdsn
+.finalize_gdsn_candidate <- function(object, pheno_name) {
+    readmode.gdsn(node = index.gdsn(node = object$root,
+                                    path = paste0("lazygas/candidate/", pheno_name)))
+}
+
+#' @importFrom dplyr left_join
+.candidatelistor <- function(object,
+                             ann,
+                             gff,
+                             snpeff,
+                             pheno_name,
+                             recalc){
+    peakcall <- .get_peakcall(object = object,
+                              pheno_name = pheno_name,
+                              recalc = recalc)
+
+    if(is.null(peakcall)){
+        .create_gdsn(root_node = object$root,
+                     target_node = "lazygas/cadidate",
+                     new_node = pheno_name,
+                     storage = "string",
+                     replace = TRUE)
+
+    } else {
+        out <- NULL
+        for(i_peak in unique(peakcall$peakID)){
+            peakblock <- peakcall[peakcall$peakID == i_peak, ]
+
+            tmp <- .getCandidate(peakblock = peakblock,
+                                 gff = gff,
+                                 snpeff = snpeff)
+
+            if(is.null(peakblock$Cor_id)){
+                tmp <- data.frame(peakID = i_peak,
+                                  tmp)
+            } else {
+                tmp <- data.frame(Cor_id = peakblock$Cor_id[1],
+                                  peakID = i_peak,
+                                  tmp)
+            }
+            out <- rbind(out, tmp)
+        }
+
+        if(!is.null(out)){
+            if(!is.null(ann)){
+                out <- left_join(out, ann, by = "GeneID")
+            }
+        }
+
+        .create_gdsn(root_node = object$root,
+                     target_node = "lazygas/cadidate",
+                     new_node = pheno_name,
+                     val = as.matrix(out),
+                     storage = "string",
+                     replace = TRUE)
+    }
+}
+
+#' @importFrom GenomicRanges GRanges findOverlaps
+#' @importFrom IRanges IRanges
+#' @importFrom S4Vectors queryHits
+#' @importFrom GenomeInfoDb seqnames
+.getCandidate <- function(peakblock, gff, snpeff){
+    peak_variant_id <- peakblock$peakVariantID[1]
+    is_peak <- peakcall$VariantID == peak_variant_id
+    peak_gff <- GRanges(seqnames = peakblock$Chr[is_peak],
+                        ranges = IRanges(start = peakblock$Pos[1],
+                                         end = tail(peakblock$Pos, 1)))
+    gene_gff <- gff[gff$type %in% "gene"]
+    hit <- gene_gff[queryHits(findOverlaps(gene_gff, peak_gff))]
+    hit <- hit[order(start(hit))]
+    hit$dist2peak <- start(hit) - peakblock$Pos[is_peak]
+    nearest_p <- sapply(start(hit), function(x){
+        return(peakblock$negLog10P[which.min(abs(peakblock$Pos - x))])
+    })
+    out <- data.frame(negLog10P = nearest_p,
+                      Dist2peak = hit$dist2peak,
+                      Gene_chr = as.character(seqnames(hit)),
+                      Gene_start = start(hit),
+                      GeneID = hit$ID)
+
+    if(!is.null(snpeff)){
+        snpeff_out <- .addSnpEff(snpeff, peakblock, scan = "QTL")
+        out <- left_join(out, snpeff_out, by ="GeneID")
+    }
+    return(out)
+}
+
+#' @importFrom vcfR getFIX getINFO
+.addSnpEff <- function(snpeff, peakblock){
+    target_chr <- snpeff$chr %in% peakblock$Chr
+    target_pos <-  snpeff$pos >= min(peakblock$Pos) &  snpeff$pos <= max(peakblock$Pos)
+    peak_ann <- snpeff[target_chr & target_pos, ]
+
+    if(nrow(peak_ann) == 0){
+        out <- data.frame(t(rep(NA, 9)))
+        names(out) <- c("GeneID", "Max_Pval", "Min_Pval", "Maf_Max", "Maf_Min",
+                             "HIGH", "MODERATE", "LOW", "MODIFIER")
+
+    } else {
+        tmp <- unlist(peak_ann$snp_ann)
+        tmp[grepl("\\|$", tmp)] <- paste(tmp[grepl("\\|$", tmp)], " ")
+        tmp <- strsplit(tmp, "\\|")
+        tmp <- do.call("rbind", tmp)
+        tmp <- subset(tmp, select = 2:4)
+        n_ann <- sapply(peak_ann$snp_ann, length)
+        index_ann <- unlist(sapply(seq_along(n_ann), function(i){rep(i, n_ann[i])}))
+        index_ann <- match(peak_ann$variant_id[index_ann], peakblock$VariantID)
+        peak_ann <- data.frame(negLog10P = peakblock$negLog10P[index_ann],
+                               MAF = peakblock$MAF[index_ann],
+                               tmp)
+        colnames(peak_ann) <- c("negLog10P", "MAF", "Type",
+                                "Impact", "GeneID")
+        peak_ann <- subset(peak_ann, subset = !Type %in% "intergenic_region")
+        if(nrow(peak_ann) == 0){
+            out <- data.frame(t(rep(NA, 9)))
+            names(out) <- c("GeneID", "Max_Pval", "Min_Pval", "Maf_Max", "Maf_Min",
+                                 "HIGH", "MODERATE", "LOW", "MODIFIER")
+
+        } else {
+            impacts <- c("HIGH", "MODERATE", "LOW", "MODIFIER")
+            out <- tapply(seq_along(peak_ann$Impact), peak_ann$GeneID, function(i){
+                data.frame(Max_Pval = max(peak_ann$negLog10P[i]),
+                           Min_Pval = min(peak_ann$negLog10P[i]),
+                           Maf_Max = peak_ann$MAF[i][which.max(peak_ann$negLog10P[i])],
+                           Maf_Min = peak_ann$MAF[i][which.min(peak_ann$negLog10P[i])],
+                           t(as.vector(table(factor(peak_ann$Impact[i], impacts)))))
+            })
+            GeneID = names(out)
+            names(out) <- NULL
+            out <- data.frame(GeneID = GeneID,
+                                   do.call("rbind", out))
+            colnames(out)[-(1:5)] <- c("HIGH", "MODERATE", "LOW", "MODIFIER")
+        }
+    }
+    return(out)
+}
