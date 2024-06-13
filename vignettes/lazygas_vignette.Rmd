@@ -25,9 +25,40 @@ dir.create("/home/ftom/hdd3/kosami/ponkan_ehime47/qtl")
 ## Loading Input GDS File and Building a LazyGas Object
 Load the input GDS file and build a `LazyGas` class object:
 ```{r}
-gds_fn <- "/home/ftom/hdd3/kosami/ponkan_ehime47/gbs/input/ponkan_ehime47_gbs_on_sinensis_genome_merged_w_founders.gds"
+gds_fn <- "inst/extdata/sample.gds"
 lg <- buildLazyGas(gds_fn = gds_fn, load_filter = TRUE, overwrite = FALSE)
 ```
+
+If you have genotype information that are not stored in a GDS file, you can build 
+a LazyGas class object by supplying a named list including the necessary 
+information to the `create_gds` argument of the `buildLazyGas()` function.
+```{r}
+temp_dir <- tempdir()
+
+# Now we assume genotype and marker data were provided as a matrix or 
+# data.frame that have been loaded from CSV files.
+genotype <- getGenotype(object = lg, node = "raw")
+dosage <- getGenotype(object = lg, node = "dosage")
+haplotype <- getHaplotype(object = lg)
+snp.chromosome <- getChromosome(object = lg)
+snp.position <- getPosition(object = lg)
+snp.allele <- getAllele(object = lg)
+sample.id <- getSamID(object = lg)
+snp.id <- getMarID(object = lg)
+
+create_gds <-  list(genotype = genotype,
+                    sample.id = sample.id,
+                    snp.id = snp.id,
+                    snp.rs.id = NULL,
+                    snp.chromosome = snp.chromosome,
+                    snp.position = snp.position,
+                    snp.allele = snp.allele,
+                    haplotype = haplotype,
+                    dosage = dosage)
+lg2 <- buildLazyGas(gds_fn = file.path(temp_dir, "sample.gds"), 
+                    create_gds = create_gds)
+```
+
 
 ## Loading and Preprocessing Phenotype Data
 Load the phenotype data:
@@ -75,8 +106,8 @@ Generate and save plots for phenotype data:
 pheno <- getPheno(object = lg)
 pdf("/home/ftom/hdd3/kosami/ponkan_ehime47/qtl/phenotype_plot.pdf")
 for(i in seq_along(pheno$pheno_names)){
-    p <- plotPheno(object = lg, pheno = i, xlab = pheno$pheno_names[i])
-    print(p)
+  p <- plotPheno(object = lg, pheno = i, xlab = pheno$pheno_names[i])
+  print(p)
 }
 dev.off()
 ```
@@ -95,9 +126,9 @@ hap[, !valid_indices, 1] # Assigned integers for the invalid (parental) samples
 Define a function to convert haplotype data to a model matrix:
 ```{r}
 makeDF_FUN <- function(h){
-    out <- cbind(colSums(h == 1), colSums(h == 3))
-    colnames(out) <- c("hap1", "hap3")
-    return(out)
+  out <- cbind(colSums(h == 1), colSums(h == 3))
+  colnames(out) <- c("hap1", "hap3")
+  return(out)
 }
 ```
 
@@ -116,9 +147,9 @@ Generate Manhattan plots for association results:
 pheno <- getPheno(object = lg)
 pdf("/home/ftom/hdd3/kosami/ponkan_ehime47/qtl/manhattan.pdf")
 for(i in seq_along(pheno$pheno_names)){
-    p <- plotManhattan(object = lg, pheno = i)
-    p <- p + labs(title = pheno$pheno_names[i])
-    print(p)
+  p <- plotManhattan(object = lg, pheno = i)
+  p <- p + labs(title = pheno$pheno_names[i])
+  print(p)
 }
 dev.off()
 ```
@@ -129,9 +160,9 @@ callPeakBlock(object = lg, signif = 0.3, threshold = 0.4)
 
 pdf("/home/ftom/hdd3/kosami/ponkan_ehime47/qtl/peaks.pdf")
 for(i in seq_along(pheno$pheno_names)){
-    p <- plotPeaks(object = lg, pheno = i, recalc = FALSE)
-    p <- p + labs(title = pheno$pheno_names[i])
-    print(p)
+  p <- plotPeaks(object = lg, pheno = i, recalc = FALSE)
+  p <- p + labs(title = pheno$pheno_names[i])
+  print(p)
 }
 dev.off()
 ```
@@ -143,9 +174,9 @@ recalcAssoc(object = lg, signif = 0.3, threshold = 0.4)
 
 pdf("/home/ftom/hdd3/kosami/ponkan_ehime47/qtl/peaks_recalc.pdf")
 for(i in seq_along(pheno$pheno_names)){
-    p <- plotPeaks(object = lg, pheno = i, recalc = TRUE)
-    p <- p + labs(title = pheno$pheno_names[i])
-    print(p)
+  p <- plotPeaks(object = lg, pheno = i, recalc = TRUE)
+  p <- p + labs(title = pheno$pheno_names[i])
+  print(p)
 }
 dev.off()
 ```
@@ -155,15 +186,15 @@ Generate plots for haplotype and phenotype data:
 ```{r}
 pdf("/home/ftom/hdd3/kosami/ponkan_ehime47/qtl/pheno_haplo_plot.pdf")
 for(i in seq_along(pheno$pheno_names)){
-    out <- haploPlot(object = lg, pheno = i, recalc = FALSE)
-    print(out)
+  out <- haploPlot(object = lg, pheno = i, recalc = FALSE)
+  print(out)
 }
 dev.off()
 
 pdf("/home/ftom/hdd3/kosami/ponkan_ehime47/qtl/pheno_haplo_plot_recalc.pdf")
 for(i in seq_along(pheno$pheno_names)){
-    out <- haploPlot(object = lg, pheno = i, recalc = TRUE)
-    print(out)
+  out <- haploPlot(object = lg, pheno = i, recalc = TRUE)
+  print(out)
 }
 dev.off()
 ```
@@ -177,4 +208,10 @@ peakcall_pheno_5 <- lazyData(object = lg, dataset = "peakcall", pheno = pheno$ph
 recalc_pheno_2 <- lazyData(object = lg, dataset = "recalc", pheno = pheno$pheno_names[2])
 ```
 
-This completes the genetic association study using the `lazyGas` package.
+## List up candidate genes
+You can list up candidate genes responsisble for the detected associations as 
+following. 
+```{r}
+
+```
+

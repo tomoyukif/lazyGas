@@ -4,13 +4,35 @@
 \alias{buildLazyGas}
 \title{Build a LazyGas object}
 \usage{
-buildLazyGas(gds_fn = "", load_filter = TRUE, overwrite = FALSE)
+buildLazyGas(
+  gds_fn = "",
+  load_filter = TRUE,
+  overwrite = FALSE,
+  create_gds = list(genotype = NULL, sample.id = NULL, snp.id = NULL, snp.rs.id = NULL,
+    snp.chromosome = NULL, snp.position = NULL, snp.allele = NULL, haplotype = NULL,
+    dosage = NULL)
+)
 }
 \arguments{
 \item{gds_fn}{A path to a GDS file}
 
-\item{load_filter}{A logical value to indicate whether apply filering stored in the input GDS file to samples and markers.}
+\item{load_filter}{A logical value to indicate whether apply filrering stored in the input GDS file to samples and markers.}
+
+\item{create_gds}{A named list to create a new GDS file with specified genotype and marker information. See the Details section.}
 }
 \description{
 Build a LazyGas object
+}
+\details{
+As the default, the \code{buildLazyGas()} function loads the genotype and marker
+information from a GDS file specified to the \code{gds_fn} argument.
+If a named list storing genotype and marker information was specified to the
+\code{create_gds} argument, a GDS file will be created with supplied genotype and
+marker information. the \code{create_gds} list should have the following elements:
+genotype, sample.id, snp.id, snp.rs.id, snp.chromosome, snp.position,
+snp.allele, haplotype, dosage. Either genotype, haplotype, or dosage should
+be supplied in the \code{create_gds} list. If \code{sample.id}, \code{snp.id}, and
+\code{snp.rs.id} were left as \code{NULL}, serial numbers will be assigned as sample
+and SNP IDs. Random alleles will be assigned if \code{snp.allele = NULL}.
+\code{snp.chromosome} and \code{snp.marker} must be supplied.
 }
