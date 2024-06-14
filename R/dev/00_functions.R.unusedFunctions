@@ -1,0 +1,453 @@
+################################################################################
+evalModel <- function(x, recalc = TRUE, n_core = 1){
+  if(!exist.gdsn(node = x$root, path = "peakcall")){
+    stop("No peakcall data in the input LazyQTL object.\n",
+         "Run callPeakBlock() to call peaks.")
+  }
+  if(recalc){
+    if(!exist.gdsn(node = x$root, path = "recalc")){
+      stop("reclac = TRUE was specified but, \n",
+           "no recalculated scan data in the input LazyQTL object.\n",
+           "Run recalcAssoc() to recalculate associations.")
+    }
+    path <- "recalc"
+
+  } else {
+    path <- "peakcall"
+  }
+
+  eval_node <- addfolder.gdsn(node = x$root, name = "eval.model", replace = TRUE)
+
+  scan_node <- ls.gdsn(node = index.gdsn(node = x,
+                                         path = paste0(path, "/peaks")))
+  n_sample <- length(.get_data(x = x, node = "sample.id"))
+  snp_id <- .get_data(x = x, node = "snp.id")
+  makeDF_FUN <- eval(parse(text = .get_data(x = x, node = "makeDF_FUN")))
+  formula <- .get_data(x = x, node = "formula")
+  binary <- .get_data(x = x, node = "pheno_type/binary")
+  kruskal <- .get_data(x = x, node = "kruskal")
+  for(i in phe_index){
+    pheno_name <- x$pheno_names[i]
+    dokruskal <- pheno_names %in% kruskal
+
+    pheno_node <- addfolder.gdsn(node = eval_node, name = pheno_name, replace = TRUE)
+
+    if(dokruskal){
+      message("Skip evalution for non-parametric data: ", pheno_name)
+      next
+    }
+    peaks <- .get_peakcall(x = x, node = scan_node[i], recalc = recalc)
+    if(!is.null(peaks)){
+      peaks <- subset(peaks, subset = peakVariantID == VariantID)
+      pheno <- .get_data(x = x, node = paste("pheno", pheno_name, sep = "/"))
+      glm_pred <- lapply(peaks$peakVariantID, .glm_pred, x = x, pheno = pheno,
+                         makeDF_FUN = makeDF_FUN, formula = formula,
+                         binary = binary[i], n_sample, snp_id)
+      glm_pred <- do.call("rbind", glm_pred)
+
+      glm_pred_all <- .glm_pred(x = x, pheno = pheno, peak = peaks$peakVariantID,
+                                makeDF_FUN = makeDF_FUN, formula = formula,
+                                binary = binary[i], n_sample = n_sample,
+                                snp_id = snp_id)
+
+      glassp_pred <- .glasso_pred(x = x, pheno = pheno, peak = peaks$peakVariantID,
+                                  makeDF_FUN = makeDF_FUN, formula = formula,
+                                  binary = binary[i], n_sample = n_sample,
+                                  snp_id = snp_id)
+
+      gk_pred <- .gk_pred(x = x, pheno = pheno, peak = peaks$peakVariantID,
+                          makeDF_FUN = makeDF_FUN, formula = formula,
+                          binary = binary[i], n_sample = n_sample,
+                          snp_id = snp_id, n_core = n_core)
+
+      rr_pred <- .rr_pred(x = x, pheno = pheno, peak = peaks$peakVariantID,
+                          makeDF_FUN = makeDF_FUN, formula = formula,
+                          binary = binary[i], n_sample = n_sample,
+                          snp_id = snp_id, n_core = n_core)
+
+      add.gdsn(node = pheno_node,
+               name = "glm_single",
+               val = as.matrix(glm_pred),
+               storage = "double",
+               replace = TRUE)
+      add.gdsn(node = pheno_node,
+               name = "glm_all",
+               val = as.matrix(glm_pred_all),
+               storage = "double",
+               replace = TRUE)
+      add.gdsn(node = pheno_node,
+               name = "glasso",
+               val = as.matrix(glassp_pred),
+               storage = "double",
+               replace = TRUE)
+      add.gdsn(node = pheno_node,
+               name = "gk",
+               val = as.matrix(gk_pred),
+               storage = "double",
+               replace = TRUE)
+      add.gdsn(node = pheno_node,
+               name = "rr",
+               val = as.matrix(rr_pred),
+               storage = "double",
+               replace = TRUE)
+
+    } else {
+      add.gdsn(node = pheno_node,
+               name = "glm_single",
+               storage = "double",
+               replace = TRUE)
+      add.gdsn(node = pheno_node,
+               name = "glm_all",
+               storage = "double",
+               replace = TRUE)
+      add.gdsn(node = pheno_node,
+               name = "glasso",
+               storage = "double",
+               replace = TRUE)
+      add.gdsn(node = pheno_node,
+               name = "gk",
+               storage = "double",
+               replace = TRUE)
+      add.gdsn(node = pheno_node,
+               name = "rr",
+               storage = "double",
+               replace = TRUE)
+    }
+  }
+}
+
+#' @importFrom rrBLUP kin.blup
+.gk_pred <- function(x, pheno, peak, makeDF_FUN, formula,
+                     binary, n_sample, snp_id, n_core){
+  sel <- list(rep(TRUE, n_sample), snp_id %in% peak)
+  g <- .get_data(x = x, node = "genotype", sel = sel)
+  g <- g - 1
+  rownames(g) <- seq_len(n_sample)
+  data <- data.frame(pheno = pheno, gid = seq_len(n_sample))
+  k <- dist(g)
+  blup <- kin.blup(data = data, geno = "gid", pheno = "pheno",
+                   GAUSS = TRUE, K = k, PEV = TRUE, n.core = n_core)
+  pred <- blup$pred
+  auc_out <- suppressMessages(auc(pheno, pred))
+  threthold <- seq(0, 1, 0.05)
+  out <- lapply(threthold, .pred_metrics, pred, pheno)
+  out <- do.call("rbind", out)
+  out$auc <- auc_out
+  out$best <- FALSE
+  out$best[which.max(out$f)] <- TRUE
+  out$pve <- blup$Vg / (blup$Vg + blup$Ve)
+  return(out)
+}
+
+#' @importFrom rrBLUP kin.blup
+.rr_pred <- function(x, pheno, peak, makeDF_FUN, formula,
+                     binary, n_sample, snp_id, n_core){
+  sel <- list(rep(TRUE, n_sample), snp_id %in% peak)
+  g <- .get_data(x = x, node = "genotype", sel = sel)
+  g <- g - 1
+  rownames(g) <- seq_len(n_sample)
+  data <- data.frame(pheno = pheno, gid = seq_len(n_sample))
+  k <- A.mat(g)
+  blup <- kin.blup(data = data, geno = "gid", pheno = "pheno",
+                   GAUSS = FALSE, K = k, PEV = TRUE, n.core = n_core)
+  pred <- blup$pred
+  auc_out <- suppressMessages(auc(pheno, pred))
+  threthold <- seq(0, 1, 0.05)
+  out <- lapply(threthold, .pred_metrics, pred, pheno)
+  out <- do.call("rbind", out)
+  out$auc <- auc_out
+  out$best <- FALSE
+  out$best[which.max(out$f)] <- TRUE
+  out$pve <- blup$Vg / (blup$Vg + blup$Ve)
+  return(out)
+}
+
+#' @importFrom gglasso gglasso cv.gglasso
+.glasso_pred <- function(x, pheno, peak, makeDF_FUN, formula,
+                         binary, n_sample, snp_id){
+  sel <- list(rep(TRUE, n_sample), snp_id %in% peak)
+  g <- .get_data(x = x, node = "genotype", sel = sel)
+  sel_snp_id <- snp_id[sel[[2]]]
+  df <- NULL
+  for(j in peak){
+    index <- sel_snp_id %in% j
+    tmp_df <- .makeDF(g = g[, index],
+                      phe = pheno,
+                      makeDF_FUN = makeDF_FUN,
+                      formula = formula)
+    if(is.null(df)){
+      names(tmp_df$df)[-1] <- paste(names(tmp_df$df)[-1], j, sep = "_")
+      df <- tmp_df
+
+    } else {
+      names(tmp_df$df)[-1] <- paste(names(tmp_df$df)[-1], j, sep = "_")
+      df$df <- cbind(df$df, subset(tmp_df$df, select = -phe))
+    }
+    df$fml <- paste0("phe ~ ",
+                     paste(names(df$df)[-1], collapse = " + "))
+  }
+
+  if(binary){
+    loss <- "logit"
+  } else {
+    loss <- "ls"
+  }
+
+  predictors <- as.matrix(subset(df$df, select = -phe))
+  response <- df$df$phe
+  response[response == 0] <- -1
+  grp <- rep(seq_along(peak), each = 2)
+  gl <- gglasso(x = predictors, y = response, group = grp, loss = loss)
+  cv_gl <- cv.gglasso(x = predictors, y = response, group = grp, loss = loss)
+  gl_coef <- coef(cv_gl, s = "lambda.min")
+  pred <- predict(gl, newx = predictors, s = cv_gl$lambda.min, type = "link")
+  pred <- as.vector(pred)
+  pred <- exp(pred) / (1 + exp(pred))
+  auc_out <- suppressMessages(auc(pheno, pred))
+  threthold <- seq(0, 1, 0.05)
+  out <- lapply(threthold, .pred_metrics, pred, pheno)
+  out <- do.call("rbind", out)
+  out$auc <- auc_out
+  out$best <- FALSE
+  out$best[which.max(out$f)] <- TRUE
+  return(out)
+}
+
+#' @importFrom lrm rms
+.glm_pred <- function(x, pheno, peak, makeDF_FUN, formula,
+                      binary, n_sample, snp_id){
+  sel <- list(rep(TRUE, n_sample), snp_id %in% peak)
+  g <- .get_data(x = x, node = "genotype", sel = sel)
+
+  if(length(peak) > 1){
+    sel_snp_id <- snp_id[sel[[2]]]
+    df <- NULL
+    for(j in peak){
+      index <- sel_snp_id %in% j
+      tmp_df <- .makeDF(g = g[, index],
+                        phe = pheno,
+                        makeDF_FUN = makeDF_FUN,
+                        formula = formula)
+      if(is.null(df)){
+        names(tmp_df$df)[-1] <- paste(names(tmp_df$df)[-1], j, sep = "_")
+        df <- tmp_df
+
+      } else {
+        names(tmp_df$df)[-1] <- paste(names(tmp_df$df)[-1], j, sep = "_")
+        df$df <- cbind(df$df, subset(tmp_df$df, select = -phe))
+      }
+      df$fml <- paste0("phe ~ ",
+                       paste(names(df$df)[-1], collapse = " + "))
+    }
+  } else {
+    df <- .makeDF(g = g,
+                  phe = pheno,
+                  makeDF_FUN = makeDF_FUN,
+                  formula = formula)
+  }
+
+  if(binary){
+    family <- "binomial"
+  } else {
+    family <- "gaussian"
+  }
+  lr <- lrm(formula = formula(df$fml), data = df$df)
+
+  if(binary){
+    pred <- predict(lr, type = "fitted")
+    auc_out <- suppressMessages(auc(pheno, pred))
+    if(length(peak) == 1){
+      pred <- as.numeric(factor(pred))
+      pred <- pred - 1
+      threthold <- 0:2
+    } else {
+      threthold <- seq(0, 1, 0.05)
+    }
+    out <- lapply(threthold, .pred_metrics, pred, pheno)
+    out <- do.call("rbind", out)
+    out$auc <- auc_out
+    out$best <- FALSE
+    out$best[which.max(out$f)] <- TRUE
+    if(length(peak) == 1){
+      out <- cbind(peakID = peak, out)
+    }
+  } else {
+
+  }
+
+  out$AIC <- model$aic
+  out$pR2 <- lr$stats["R2"]
+  return(out)
+}
+
+#' @importFrom pROC auc
+.pred_metrics <- function(threshold, pred, pheno){
+  pred_pheno <- as.integer(pred >= threshold)
+  pheno <- as.integer(pheno)
+  tp <- sum(pheno == 1 & pred_pheno == 1)
+  fp <- sum(pheno == 0 & pred_pheno == 1)
+  tn <- sum(pheno == 0 & pred_pheno == 0)
+  fn <- sum(pheno == 1 & pred_pheno == 0)
+  accuracy <- (tp + tn) / (tp + fp + tn + fn)
+  precision <- tp / (tp + fp)
+  recall <- tp / (tp + fn)
+  fpr <- fp / (tn + fp)
+  f <- 2 * precision * recall / (precision + recall)
+  out <- data.frame(threshold = threshold,
+                    tp = tp, fp = fp, tn = tn, fn = fn,
+                    accuracy = accuracy, precision = precision,
+                    recall = recall, fpr = fpr, f = f)
+  return(out)
+}
+
+#'
+#' ################################################################################
+#' #' Find corresponding positions of markers
+#' #'
+#' #' @param x input object
+#' #'
+#' #' @export
+#' #'
+#' compareGenomes <- function(x, ...){
+#'   UseMethod("compareGenomes", x)
+#' }
+#'
+#' #' Find corresponding positions of markers
+#' #'
+#' #' @param x input object
+#' #'
+#' #' @export
+#' #'
+#' compareGenomes.LazyQTL <- function(x, ref, alt, recalc = TRUE, rsquare = 0.6){
+#'   ref <- readDNAStringSet(ref)
+#'   temp_dir <- tempdir()
+#'   alt_db <- paste0(temp_dir, "/alt.db")
+#'   makeblastdb(file = alt, dbtype = "nucl",
+#'               args = paste("-out", alt_db))
+#'   db <- blast(db = alt_db, type = "blastn")
+#'
+#'   if(recalc){
+#'     out <- lapply(x$recalc_fn, .pairMarker, ref = ref, db = db)
+#'
+#'   } else {
+#'     out <- lapply(x$peakblock_fn, .pairMarker, ref = ref, db = db)
+#'
+#'   }
+#'   x$marker_pairs <- out
+#'   return(x)
+#' }
+#'
+#' .pairMarker <- function(peak_fn, ref, db){
+#'   peaks <- read.csv(peak_fn)
+#'   if(nrow(peaks) == 0){
+#'     return(data.frame(VariantID = numeric(0),
+#'                       Ref_chr = numeric(0),
+#'                       Ref_pos = numeric(0),
+#'                       Peak_id = numeric(0),
+#'                       Alt_chr = numeric(0),
+#'                       Alt_start = numeric(0),
+#'                       Alt_end = numeric(0)))
+#'   }
+#'   peak_id <- peaks$Peak_id
+#'   variant_id <- peaks$VariantID
+#'
+#'   upper_boundary <- tapply(variant_id, peak_id, min) - 1
+#'   lower_boundary <- tapply(variant_id, peak_id, max) + 1
+#'   boundary_peak_id <- as.numeric(names(upper_boundary))
+#'
+#'   peak_id <- c(peak_id, boundary_peak_id, boundary_peak_id)
+#'   variant_id <- c(variant_id, upper_boundary, lower_boundary)
+#'
+#'   chr <- x$marker_chr[match(variant_id, x$marker_id)]
+#'   pos <- x$marker_pos[match(variant_id, x$marker_id)]
+#'
+#'   fasta <- .makefasta(chr = chr, pos = pos, ref = ref)
+#'   names(fasta) <- variant_id
+#'   fasta <- fasta[!duplicated(names(fasta))]
+#'
+#'   tags <- tapply(variant_id, peak_id, .getTags,
+#'                  fasta = fasta, db = db)
+#'
+#'   tags <- lapply(seq_along(tags), function(i){
+#'     out <- data.frame(Peak_id = as.numeric(names(tags)[i]),
+#'                       tags[[i]])
+#'     return(out)
+#'   })
+#'   tags <- do.call("rbind", tags)
+#'
+#'   out <- data.frame(VariantID = variant_id,
+#'                     Ref_chr = chr,
+#'                     Ref_pos = pos,
+#'                     Peak_id = peak_id)
+#'   out <- out[order(out$Peak_id, out$VariantID), ]
+#'   out <- left_join(out, tags, by = c("Peak_id", "VariantID"))
+#'   return(out)
+#' }
+#'
+#' .makefasta <- function(chr, pos, ref){
+#'   gr <- GRanges(seqnames = chr, ranges = IRanges(start = pos + 1, width = 100))
+#'   out <- ref[gr]
+#'   return(out)
+#' }
+#'
+#' .getTags <- function(target, fasta, db){
+#'   hit <- predict(object = db,
+#'                  newdata = fasta[names(fasta) %in% as.character(target)],
+#'                  silent = TRUE,
+#'                  BLAST_args = "-task blastn -evalue 1e-3 -max_target_seqs 5")
+#'
+#'   hit <- .filtTAGs(hit = hit)
+#'   # hit <- .evalTAGs(hit = hit, boundary = tail(target, 2))
+#'   out <- subset(hit, select = c(QueryID, SubjectID, S.start, S.end))
+#'   names(out) <- c("VariantID", "Alt_chr", "Alt_start", "Alt_end")
+#'   return(out)
+#' }
+#'
+#' .filtTAGs <- function(hit){
+#'   out <- tapply(seq_along(hit$QueryID), hit$QueryID, function(i){
+#'     if(length(i) == 1){
+#'       return(hit[i, ])
+#'     }
+#'     tmp <- hit[i, ]
+#'     tmp <- tmp[tmp$E == min(tmp$E), ]
+#'     if(nrow(tmp) == 1){
+#'       return(tmp)
+#'     }
+#'     tmp <- tmp[tmp$Perc.Ident == max(tmp$Perc.Ident), ]
+#'     if(nrow(tmp) == 1){
+#'       return(tmp)
+#'     }
+#'     return(NULL)
+#'   })
+#'   out <- do.call("rbind", out)
+#'   return(out)
+#' }
+
+# .evalTAGs <- function(hit, boundary){
+#     major_chr <- table(hit$SubjectID)
+#     major_chr <- names(major_chr)[which.max(major_chr)]
+#     in_chr <- hit$SubjectID == major_chr
+#     hit <- hit[in_chr, ]
+#
+#     while(TRUE){
+#         if(nrow(hit) == 0){
+#             return(hit)
+#         }
+#         upper_boundary <- min(hit$S.start)
+#         lower_boundary <- max(hit$S.end)
+#         with_in <- upper_boundary <= hit$S.start & hit$S.end <= lower_boundary
+#         if(sum(with_in) / nrow(hit) >= 0.8){
+#             return(hit)
+#         } else {
+#             check1 <- upper_boundary <= hit$S.start
+#             check2 <- hit$S.end <= lower_boundary
+#
+#             if(sum(check1) / nrow(hit) >= 0.8){
+#                 hit <- hit[hit$S.start == upper_boundary, ]
+#             }
+#             if(sum(check2) / nrow(hit) >= 0.8){
+#                 hit <- hit[hit$S.start == lower_boundary, ]
+#             }
+#         }
+#     }
+# }

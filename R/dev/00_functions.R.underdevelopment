@@ -1,0 +1,2949 @@
+#' Build a lazyQTL object
+#'
+#' @param geno Genotype data.frame
+#' @param pheno Phenotype data.frame
+#' @param sampleID_geno Sample ID in genotype data
+#' @param sampleID_pheno Sample ID in phenotype data
+#' @param marker_chr Chromosome ID of markers
+#' @param marker_pos Physical positin of markers
+#' @param geno_fmt Genotype data format
+#' @param geno_levels Factor levels of genotype data
+#'
+#' @export
+#'
+buildLazyQTL <- function(geno,
+                         pheno,
+                         sampleID_geno = NULL,
+                         sampleID_pheno = NULL,
+                         marker_chr,
+                         marker_pos,
+                         geno_fmt = "dosage",
+                         geno_levels = 0:2){
+  # Validation of genotype and phenotype data
+  if(is.null(sampleID_pheno)){
+    sampleID_pheno <- pheno[, grepl("ID|id", colnames(pheno))]
+    pheno <- subset(pheno, select = !grepl("ID|id", colnames(pheno)))
+  }
+  if(is.null(sampleID_geno)){
+    sampleID_geno <- rownames(geno)
+  }
+  nopheno <- sampleID_geno[!sampleID_geno %in% sampleID_pheno]
+  nogeno <- sampleID_pheno[!sampleID_pheno %in% sampleID_geno]
+  if(length(nopheno) > 0){
+    message("The following samples have no phenotype info: \n",
+            paste(nopheno, collapse = " "))
+  }
+  if(length(nogeno) > 0){
+    message("The following samples have no genotype info: \n",
+            paste(nogeno, collapse = " "))
+  }
+
+  # Validate genotype format
+  uniq_geno <- na.omit(unique(as.vector(unlist(geno))))
+  if(!all(uniq_geno %in% geno_levels)){
+    stop("The input geno contains the following levels: \n",
+         paste(sort(uniq_geno), collapse = " "),
+         "\n But you specified geno_levels as: \n",
+         paste(sort(geno_levels), collapse = " "),
+         call. = FALSE)
+  }
+  if(any(is.na(suppressWarnings(as.numeric(uniq_geno))))){
+    stop("The input geno contains the level(s) that cannot be coerced",
+         "into numeric value(s). \n",
+         'Set geno_fmt = "haplotype" if your geno indicates haplotype info.',
+         call. = FALSE)
+  }
+
+  # Reorder phenotype data to match it with genotype data
+  pheno <- subset(pheno, subset = !sampleID_pheno %in% nogeno)
+  geno <- subset(geno, subset = !sampleID_geno %in% nopheno)
+  colnames(geno) <- NULL
+  sampleID_geno <- sampleID_geno[!sampleID_geno %in% nopheno]
+  hitid <- match(sampleID_geno, sampleID_pheno)
+  pheno <- pheno[hitid, ]
+  if(is.vector(pheno)){
+    pheno <- data.frame(pheno)
+    names(pheno) <- pheno_names
+  }
+
+  # Calculate MAF
+  if(geno_fmt == "dosage"){
+    maf <- apply(geno, 2, function(x){
+      tabx <- table(factor(x, geno_levels))
+      tabx <- c(sum(tabx * rev(geno_levels)),
+                sum(tabx * geno_levels))
+      return(min(tabx)/sum(tabx))
+    })
+    maf <- unname(maf)
+
+  } else {
+    maf <- apply(geno, 2, function(x){
+      tabx <- table(factor(x, geno_levels))
+      return(min(tabx)/sum(tabx))
+    })
+    maf <- unname(maf)
+  }
+
+  out <- list(geno = geno,
+              pheno = pheno,
+              pheno_names = colnames(pheno),
+              marker_id = seq_len(ncol(geno)),
+              sample_id = sampleID_geno,
+              marker_chr = marker_chr,
+              marker_pos = marker_pos,
+              maf = maf,
+              geno_fmt = geno_fmt,
+              geno_levels = geno_levels)
+  class(out) <- c(class(out), "lazyQTL")
+  gc();gc()
+  return(out)
+}
+
+#' Build a lazyGWAS object
+#'
+#' @param gds A gbsrGenotypeData object
+#' @param pheno Phenotype data.frame
+#' @param sampleID_pheno Sample ID in phenotype data
+#'
+#' @importFrom GBScleanR getSamID setSamFilter
+#' @importFrom SeqArray seqGetData seqSetFilter seqAlleleFreq
+#' @importFrom rrBLUP A.mat
+#'
+#' @export
+buildLazyGWAS <- function(object,
+                          pheno,
+                          sampleID_pheno = NULL,
+                          calc_grm = TRUE){
+  # Validation of genotype and phenotype data
+  if(is.null(sampleID_pheno)){
+    sampleID_pheno <- pheno[, grepl("ID|id", colnames(pheno))]
+    pheno <- subset(pheno, select = !grepl("ID|id", colnames(pheno)))
+  }
+  sampleID_geno <- seqGetData(object, "sample.id")
+  nopheno <- sampleID_geno[!sampleID_geno %in% sampleID_pheno]
+  nogeno <- sampleID_pheno[!sampleID_pheno %in% sampleID_geno]
+  if(length(nopheno) > 0){
+    message("The following samples have no phenotype info: \n",
+            paste(nopheno, collapse = " "))
+  }
+  if(length(nogeno) > 0){
+    message("The following samples have no genotype info: \n",
+            paste(nogeno, collapse = " "))
+  }
+
+  # Reorder phenotype data to match it with genotype data
+  pheno_names <- colnames(pheno)
+  pheno <- subset(pheno, subset = !sampleID_pheno %in% nogeno)
+  sampleID_geno <- sampleID_geno[!sampleID_geno %in% nopheno]
+  hitid <- match(sampleID_geno, sampleID_pheno)
+  pheno <- pheno[hitid, ]
+  if(is.vector(pheno)){
+    pheno <- data.frame(pheno)
+    names(pheno) <- pheno_names
+  }
+
+  # Calculate a genomic relationship matrix
+  if(calc_grm){
+    message("Calculating the genomic relationship matrix.")
+    pruned_snp <- snpgdsLDpruning(object, autosome.only = FALSE, verbose = FALSE)
+    pca <- snpgdsPCA(object, autosome.only = FALSE, snp.id = unlist(pruned_snp), verbose = FALSE)
+    pca <- pca$eigenvect
+    seqResetFilter(object)
+    grm <-  snpgdsGRM(object, autosome.only = FALSE, verbose = FALSE)
+    seqResetFilter(object)
+    geno <- SeqVarData(object)
+    grm <- grm$grm
+    colnames(grm) <- rownames(grm) <- sampleID_geno
+  } else {
+    grm <- NA
+    pca <- NA
+    geno <- SeqVarData(object)
+  }
+
+  out <- list(geno = geno,
+              grm = grm,
+              pca = pca,
+              pheno = pheno,
+              pheno_names = pheno_names,
+              marker_id = seqGetData(object, "variant.id"),
+              sample_id = sampleID_geno)
+  class(out) <- c(class(out), "lazyGWAS")
+  gc();gc()
+  return(out)
+}
+
+#'
+#'
+#' @export
+#'
+print.lazyQTL <- function(x){
+  message("Genotype")
+  if(nrow(x$geno) >= 5){
+    r_i <- seq_len(5)
+  } else {
+    r_i <- seq_len(nrow(x$geno))
+  }
+  if(ncol(x$geno) >= 5){
+    c_i <- seq_len(5)
+  } else {
+    c_i <- seq_len(ncol(x$geno))
+  }
+  print(x$geno[r_i, c_i])
+  message("Phenotype")
+  print(head(x$pheno))
+  message("Sample ID")
+  print(head(x$sample_id))
+  message("Marker position")
+  print(rbind(head(x$marker_chr), head(x$marker_pos)))
+  message("Minor allele frequency")
+  print(head(x$maf))
+  message("Genotype format")
+  print(head(x$geno_fmt))
+  message("Genotype levels")
+  print(head(x$geno_levels))
+}
+
+#'
+#' @export
+#'
+print.lazyGWAS <- function(x){
+  message("Genotype")
+  if(nscan(x$geno) >= 7){
+    r_i <- seq(3, 7)
+  } else {
+    r_i <- seq_len(nscan(x$geno))
+  }
+  if(nsnp(x$geno) >= 7){
+    c_i <- seq(3, 7)
+  } else {
+    c_i <- seq_len(nsnp(x$geno))
+  }
+  print(x$geno[r_i, c_i])
+  message("Phenotype")
+  print(head(x$pheno))
+  message("Sample ID")
+  print(head(x$sample_id))
+  message("Marker position")
+  print(rbind(x$chr_lev[getChromosome(x$geno)], getPosition(x$geno)))
+  message("Minor allele frequency")
+  print(head(x$maf))
+}
+
+#' Replace phenotype data in a lazyGWAS object
+#'
+#' @param object a lazyGWAS object
+#' @param pheno a data.frame of phenotype data in which the `ID` column should indicate
+#' sample IDs that match sample IDs in the given lazyGWAS object
+#'
+#' @export
+#'
+replacePheno <- function(object, pheno, sampleID_pheno){
+  hit <- match(object$sample_id, sampleID_pheno)
+  check <- is.na(hit)
+  if(any(check)){
+    stop("The following sample(s) was not found in the given phenotype: \n",
+         paste(object$sample_id[check], collapse = ", "))
+  }
+  pheno_names <- names(pheno)
+  pheno <- pheno[hit, ]
+  if(is.vector(pheno)){
+    pheno <- data.frame(pheno)
+    names(pheno) <- pheno_names
+  }
+  object$pheno <- pheno
+  object$pheno_names <- names(pheno)
+  return(object)
+}
+
+#' Scan QTL
+#'
+#' @param x input object
+#'
+#' @export
+#'
+scanQTL <- function(x, ...){
+  UseMethod("scanQTL", x)
+}
+
+#' @rdname scanQTL
+#' @param x A lazyQTL object
+#' @param out_fn Prefix of output file name
+#' @param formula The formula of the regression model
+#' @param makeDF_FUN The function to modify model data for the regression
+#'
+#' @export
+#'
+scanQTL.lazyQTL <- function(x,
+                            out_fn,
+                            formula = "",
+                            makeDF_FUN = NULL){
+  if(!inherits(x, "lazyQTL")){
+    stop("The input should be the lazyQTL object",
+         call. = FALSE)
+  }
+
+  message("Going to analyse the following phenotypes: \n",
+          paste(x$pheno_names, collapse = ", "))
+
+  for(i in seq_along(x$pheno_names)){
+    p_values <- apply(x$geno, 2, function(g){
+      if(length(unique(na.omit(g))) == 1){
+        return(rep(NA, 6))
+      }
+      if(x$geno_fmt == "dosage"){
+        df <- makeDF(g = g,
+                     phe = x$pheno[, i],
+                     makeDF_FUN = makeDF_FUN,
+                     formula = formula)
+
+        if(length(na.omit(unique(df$phe))) == 2){
+          out <- doGLM(df$df, df$fml)
+
+        } else {
+          out <- doLM(df$df, df$fml)
+        }
+
+      } else if(x$geno_fmt == "haplotype"){
+        if(is.null(makeDF_FUN)){
+          df <- data.frame(phe = x$pheno[, i], group = g)
+          fml <- "phe ~ group"
+
+        } else {
+          df <-  data.frame(phe = x$pheno[, i], makeDF_FUN(g))
+          if(ncol(df) > 2){
+            stop("Haplotype association test accepts only one ",
+                 "explanatory variable.\n",
+                 "Please revise the makeDF_FUN.",
+                 call. = FALSE)
+          }
+        }
+        out <- doKruskal(df, fmt)
+      }
+
+      return(out)
+    })
+
+    if(x$geno_fmt == "haplotype"){
+      p_values <- data.frame(negLog10P = p_values)
+
+    } else {
+      if(is.list(p_values)){
+        p_values <- data.frame(do.call("rbind", p_values))
+      } else {
+        p_values <- data.frame(t(p_values))
+      }
+    }
+
+    p_values <- data.frame(VariantID = x$marker_id,
+                           Chr = x$marker_chr,
+                           Pos = x$marker_pos,
+                           MAF = x$maf,
+                           p_values)
+    colnames(p_values)[ncol(p_values)] <- "PVE"
+    p_values$AdjustedP <- p.adjust(p_values$negLog10P, "fdr")
+    p_values$negLog10P <- -log10(p_values$negLog10P)
+    write.csv(p_values,
+              paste0(out_fn, x$pheno_names[i], "_scanQTL.csv"),
+              row.names = FALSE)
+    gc();gc()
+  }
+  out <- list(geno = x$geno,
+              pheno = x$pheno,
+              sample_id = x$sample_id,
+              pheno_names = x$pheno_names,
+              pvalues_fn = paste0(out_fn, x$pheno_names, "_scanQTL.csv"))
+  class(out) <- c(class(out), "QTLscan")
+  attributes(out) <- c(attributes(out), geno_fmt = x$geno_fmt)
+  invisible(out)
+}
+
+makeDF <- function(g, phe, makeDF_FUN, formula){
+  g <- as.numeric(g)
+
+  if(is.null(makeDF_FUN)){
+    df <- data.frame(add = g)
+    fml <- formula("phe ~ add")
+
+  } else {
+    df <- makeDF_FUN(g)
+    if(formula == ""){
+      stop("Provide formula if you specified makeDF_FUN",
+           call. = FALSE)
+    }
+    fml <- formula(paste0("phe ~ ", formula))
+  }
+
+  return(list(df = data.frame(phe = phe, df), fml = fml))
+}
+
+doGLM <- function(df, fml){
+  res <- try(glm(formula = fml, data = df, family = binomial))
+  if(inherits(res, "try-error")){ return(NA) }
+
+  p <- pchisq(res$null.deviance - res$deviance,
+              res$df.null - res$df.residual,
+              lower.tail = FALSE)
+  pervar <- 1 - res$deviance / res$null.deviance
+  s <- summary(res)
+  coef <- s$coefficients
+
+  if(nrow(coef) == 1){ return(NA) }
+
+  att <- attributes(res$terms)
+  return(makeOut(p, coef, pervar, att$term.labels))
+}
+
+doLM <- function(df, fml){
+  res <- try(lm(formula = fml, data = df))
+  if(inherits(res, "try-error")){ return(NA) }
+  s <- summary(res)
+  f <- s$fstatistic
+  pervar <- s$r.squared
+  coef <- s$coefficients
+  if(is.numeric(f)){
+    p <- pf(f[1], f[2], f[3], lower.tail = FALSE)
+
+  } else {
+    return(NA)
+  }
+  att <- attributes(res$terms)
+  return(makeOut(p, coef, pervar, att$term.labels))
+}
+
+doKruskal <- function(df, fml){
+  res <- try(kruskal.test(formula = formula(fml), data = df))
+  if(inherits(res, "try-error")){ return(NA) }
+  return(res$p.value)
+}
+
+makeOut <- function(p, coef, pervar, terms){
+  labs <- c("negLog10P", paste("P", terms, sep= "."),
+            paste("Coef", terms, sep = "."),
+            "PVE")
+  out <- rep(NA, length(labs))
+  out[1] <- p
+  coef_row <- rownames(coef)
+  for(j in seq_along(terms)){
+    if(terms[j] %in% coef_row){
+      out[1 + j] <- coef[terms[j], 4]
+      out[1 + j + length(terms)] <- coef[terms[j], 1]
+    }
+  }
+  out[2 + length(terms)*2] <- pervar
+  names(out) <- labs
+  return(out)
+}
+
+#'
+#' @export
+#'
+print.QTLscan <- function(x){
+  message("Genotype")
+  if(nrow(x$geno) >= 5){
+    r_i <- seq_len(5)
+  } else {
+    r_i <- seq_len(nrow(x$geno))
+  }
+  if(ncol(x$geno) >= 5){
+    c_i <- seq_len(5)
+  } else {
+    c_i <- seq_len(ncol(x$geno))
+  }
+  print(x$geno[r_i, c_i])
+  message("File names storing regression results")
+  print(cbind(x$pheno_names, x$pvalues_fn))
+}
+
+#' Build QTLscan object
+#' @param geno Genotype data.frame
+#' @param pheno Phenotype data.frame
+#' @param pvalues_fn pvalues file names
+#' @param sampleID_geno Sample ID in genotype data
+#' @param sampleID_pheno Sample ID in phenotype data
+#' @param marker_chr Chromosome ID of markers
+#' @param marker_pos Physical positin of markers
+#' @param geno_fmt Genotype data format
+#' @param geno_levels Factor levels of genotype data
+#'
+#' @export
+#'
+buildQTLscan <- function(geno,
+                         pheno,
+                         pvalues_fn,
+                         sampleID_geno = NULL,
+                         sampleID_pheno = NULL,
+                         marker_chr,
+                         marker_pos,
+                         geno_fmt = "dosage",
+                         geno_levels = 0:2){
+  obj <- buildLazyQTL(geno,
+                      pheno,
+                      sampleID_geno,
+                      sampleID_pheno,
+                      marker_chr,
+                      marker_pos,
+                      geno_fmt,
+                      geno_levels)
+
+  if(length(obj$pheno_names) != length(pvalues_fn)){
+    stop("The number of phenotype in pheno",
+         " does not match with the number of phenotype_fn.",
+         call. = FALSE)
+  }
+
+  pvalues_fn <- sapply(obj$pheno_names, function(x){
+    return(grep(x, pvalues_fn, value = TRUE))
+  })
+  out <- list(geno = obj$geno,
+              pheno = obj$pheno,
+              sample_id = obj$sample_id,
+              pheno_names = obj$pheno_names,
+              pvalues_fn = unname(pvalues_fn))
+
+  class(out) <- c(class(out), "QTLscan")
+  attributes(out) <- c(attributes(out), geno_fmt = obj$geno_fmt)
+  invisible(out)
+}
+
+#' Scan GWAS
+#'
+#' @param x input object
+#'
+#' @export
+#'
+scanGWAS <- function(x, ...){
+  UseMethod("scanGWAS", x)
+}
+
+#' @rdname scanGWAS
+#' @param x A lazyGWAS object
+#' @param out_fn Prefix of output file name
+#' @param grm If TRUE, execute regression analysis with the linear mixed model,
+#' while single marker linear regression if FALSE.
+#' @param nPC The number of principal components in the regression model
+#' @param n_core The number of threads for parallel computing
+#'
+#' @importFrom rrBLUP GWAS
+#'
+#' @export
+#'
+scanGWAS.lazyGWAS <- function(x,
+                              out_fn,
+                              grm = TRUE,
+                              nPC = 2,
+                              n_core = 1,
+                              p_adjust = "fdr"){
+  for(i in seq_along(x$pheno_names)){
+    pheno <- subset(x$pheno, select = x$pheno_names[i])
+    if(length(unique(na.omit(pheno))) == 2){
+      family <- "binomial"
+    } else {
+      family <- "gaussian"
+    }
+    if(nPC > 0){
+      pca_df <- data.frame(x$pca[, seq_len(nPC)])
+      names(pca_df) <- paste0("pc", seq_len(nPC))
+      covars <- names(pca_df)
+      df <- data.frame(sample.id = x$sample_id, pca_df, pheno)
+
+    } else {
+      pca_df <- NULL
+      covars <- NULL
+      df <- data.frame(sample.id = x$sample_id, pheno)
+    }
+    seqvar <- SeqVarData(x$geno, AnnotatedDataFrame(df))
+
+    if(grm){
+      mcp <- MulticoreParam(workers = n_core)
+      covmat <- x$grm
+      genoIterator <- SeqVarBlockIterator(seqvar)
+      nullmod <- fitNullModel(genoIterator,
+                              outcome = x$pheno_names[i],
+                              covars = covars,
+                              cov.mat = covmat,
+                              family = family,
+                              verbose = FALSE)
+      var_est <- varCompCI(nullmod, prop = TRUE)
+      gwas <- assocTestSingle(genoIterator,
+                              null.model = nullmod,
+                              BPPARAM = mcp)
+      seqResetFilter(seqvar)
+      write.csv(var_est,
+                paste0(out_fn, x$pheno_names[i], "_heritability.csv"),
+                row.names = FALSE)
+
+      gwas_names <- names(gwas)
+      gwas_names[gwas_names == "Score.pval"] <- "negLog10P"
+      gwas_names[gwas_names == "chr"] <- "Chr"
+      gwas_names[gwas_names == "pos"] <- "Pos"
+      gwas_names[gwas_names == "freq"] <- "MAF"
+      gwas_names[gwas_names == "n.obs"] <- "N_obs"
+      names(gwas) <- gwas_names
+      if(p_adjust == "fdr"){
+        gwas$AdjustedP <- p.adjust(gwas$negLog10P, method = "fdr")
+      } else {
+        gwas$AdjustedP <- p.adjust(gwas$negLog10P, method = "bonferroni")
+      }
+      gwas$negLog10P <- -log10(gwas$negLog10P)
+      gwas$negLog10P[gwas$negLog10P == 0] <- NA
+      gwas$MAF[gwas$MAF > 0.5] <- 1 - gwas$MAF[gwas$MAF > 0.5]
+      gwas$VariantID <- gwas$variant.id
+      gwas <- subset(gwas,
+                     select = c(VariantID, Chr, Pos, MAF, MAC, N_obs,
+                                negLog10P, AdjustedP, PVE, Est))
+
+    } else {
+      gwas <- regression(gdsobj = seqvar,
+                         outcome = x$pheno_names[i],
+                         covar = covars,
+                         model.type = "linear",
+                         parallel = n_core)
+      seqResetFilter(seqvar)
+      gwas_names <- names(gwas)
+      gwas_names[gwas_names == "Wald.Pval"] <- "negLog10P"
+      gwas_names[gwas_names == "freq"] <- "MAF"
+      gwas_names[gwas_names == "n"] <- "N_obs"
+      names(gwas) <- gwas_names
+      if(p_adjust == "fdr"){
+        gwas$AdjustedP <- p.adjust(gwas$negLog10P, method = "fdr")
+      } else {
+        gwas$AdjustedP <- p.adjust(gwas$negLog10P, method = "bonferroni")
+      }
+      gwas$negLog10P <- -log10(gwas$negLog10P)
+      gwas$negLog10P[gwas$negLog10P == 0] <- NA
+      gwas$MAF[gwas$MAF > 0.5] <- 1 - gwas$MAF[gwas$MAF > 0.5]
+      variant_id <- seqGetData(seqvar, "variant.id")
+      chr <- seqGetData(seqvar, "chromosome")
+      pos <- seqGetData(seqvar, "position")
+      gwas$Chr <- chr[na.omit(match(gwas$variant.id, variant_id))]
+      gwas$Pos <- pos[na.omit(match(gwas$variant.id, variant_id))]
+      gwas$VariantID <- gwas$variant.id
+      gwas <- subset(gwas,
+                     select = c(VariantID, Chr, Pos, MAF, N_obs,
+                                negLog10P, AdjustedP, Est))
+    }
+    write.csv(gwas,
+              paste0(out_fn, x$pheno_names[i], "_scanGWAS.csv"),
+              row.names = FALSE, quote = FALSE)
+    gc();gc()
+  }
+
+  out <- list(geno = x$geno,
+              pheno = x$pheno,
+              sample_id = x$sample_id,
+              pheno_names = x$pheno_names,
+              pvalues_fn = paste0(out_fn, x$pheno_names, "_scanGWAS.csv"))
+  class(out) <- c(class(out), "GWASscan")
+  invisible(out)
+}
+
+#'
+#' @export
+#'
+print.GWASscan <- function(x){
+  message("Genotype")
+  if(nrow(x$geno) >= 7){
+    r_i <- seq(3, 7)
+  } else {
+    r_i <- seq_len(nrow(x$geno))
+  }
+  if(ncol(x$geno) >= 7){
+    c_i <- seq(3, 7)
+  } else {
+    c_i <- seq_len(ncol(x$geno))
+  }
+  print(x$geno[r_i, c_i])
+  message("File names storing regression results")
+  print(cbind(x$pheno_names, x$pvalues_fn))
+}
+
+#' Build a lazyGWAS object
+#'
+#' @param gds A gbsrGenotypeData object
+#' @param pheno Phenotype data.frame
+#' @param pvalues_fn pvalues file names
+#' @param sampleID_pheno Sample ID in phenotype data
+#'
+#' @export
+buildGWASscan <- function(object,
+                          pheno,
+                          pvalues_fn,
+                          sampleID_pheno = NULL){
+  obj <- buildLazyGWAS(object = object,
+                       pheno = pheno,
+                       sampleID_pheno = sampleID_pheno,
+                       calc_grm = FALSE)
+
+  if(length(obj$pheno_names) != length(pvalues_fn)){
+    stop("The number of phenotype in pheno",
+         " does not match with the number of pvalues_fn.",
+         call. = FALSE)
+  }
+
+  name_hit <- sapply(obj$pheno_names, function(x){
+    return(grep(paste0(x, "_scanGWAS.csv"), pvalues_fn))
+  })
+  pvalues_fn <- pvalues_fn[name_hit]
+
+  out <- list(geno = obj$geno,
+              pheno = obj$pheno,
+              sample_id = obj$sample_id,
+              pheno_names = obj$pheno_names,
+              pvalues_fn = pvalues_fn)
+  class(out) <- c(class(out), "GWASscan")
+  invisible(out)
+}
+
+#' Draw a Manhattan plot
+#'
+#' @param x Input object
+#'
+plotManhattan <- function(x, ...){
+  UseMethod("plotManhattan", x)
+}
+
+#' @rdname plotManhattan
+#' @param x QTLscan object
+#' @param pehno Phenotype names to be drawn
+#' @param chr Chromosome ID to be drawn
+#' @param start Start position of the range to be drawn
+#' @param end End position of the range to be drawn
+#' @param signif Expression to define the significant markers
+#' @param out_fn Prefix of output file
+#' @param out_fmt Output image format
+#'
+#' @export
+plotManhattan.QTLscan <- function(x,
+                                  pheno = NULL,
+                                  chr = NULL,
+                                  start = NULL,
+                                  end = NULL,
+                                  signif = NULL,
+                                  out_fn = "",
+                                  out_fmt = "pdf"){
+  if(!is.null(pheno)){
+    if(is.numeric(pheno)){
+      phe_index <- pheno
+    } else if(is.logical(pheno)){
+      phe_index <- which(pheno)
+    } else if(is.character(pheno)){
+      phe_index <- which(x$pheno_names %in% pheno)
+    }
+  } else {
+    phe_index <- seq_along(x$pvalues_fn)
+  }
+  for(i in phe_index){
+    pvalues <- read.csv(x$pvalues_fn[i], quote = "")
+    tmp_fn <- paste0(out_fn, x$pheno_names[i], "_plotManhattan.", out_fmt)
+    p <- plotManhattan.data.frame(pvalues, chr, start, end, signif, tmp_fn, out_fmt)
+    print(p)
+  }
+}
+
+
+#' @rdname plotManhattan
+#' @param x GWASscan object
+#' @param pehno Phenotype names to be drawn
+#' @param chr Chromosome ID to be drawn
+#' @param start Start position of the range to be drawn
+#' @param end End position of the range to be drawn
+#' @param signif Expression to define the significant markers
+#' @param out_fn Prefix of output file
+#' @param out_fmt Output image format
+#'
+#' @export
+plotManhattan.GWASscan <- function(x,
+                                   pheno = NULL,
+                                   chr = NULL,
+                                   start = NULL,
+                                   end = NULL,
+                                   signif = NULL,
+                                   out_fn = "",
+                                   out_fmt = "pdf"){
+  if(!is.null(pheno)){
+    if(is.numeric(pheno)){
+      phe_index <- pheno
+    } else if(is.logical(pheno)){
+      phe_index <- which(pheno)
+    } else if(is.character(pheno)){
+      phe_index <- which(x$pheno_names %in% pheno)
+    }
+  } else {
+    phe_index <- seq_along(x$pvalues_fn)
+  }
+  for(i in phe_index){
+    pvalues <- read.csv(x$pvalues_fn[i])
+    tmp_fn <- paste0(out_fn, x$pheno_names[i], "_plotManhattan.", out_fmt)
+    p <- plotManhattan.data.frame(pvalues, chr, start, end, signif, tmp_fn, out_fmt)
+    invisible(p)
+  }
+}
+
+
+#' @rdname plotManhattan
+#' @param x Chracter string of input file name
+#' @param pehno Phenotype names to be drawn
+#' @param chr Chromosome ID to be drawn
+#' @param start Start position of the range to be drawn
+#' @param end End position of the range to be drawn
+#' @param signif Expression to define the significant markers
+#' @param out_fn Prefix of output file
+#' @param out_fmt Output image format
+#'
+#' @export
+plotManhattan.character <- function(x,
+                                    chr = NULL,
+                                    start = NULL,
+                                    end = NULL,
+                                    signif = NULL,
+                                    out_fn = "",
+                                    out_fmt = "pdf"){
+  pvalues <- read.csv(x)
+  p <- plotManhattan.data.frame(pvalues, chr, start, end, signif, out_fn, out_fmt)
+  invisible(p)
+}
+
+
+#' @rdname plotManhattan
+#' @param x data.frame of pvalue data
+#' @param pehno Phenotype names to be drawn
+#' @param chr Chromosome ID to be drawn
+#' @param start Start position of the range to be drawn
+#' @param end End position of the range to be drawn
+#' @param signif Expression to define the significant markers
+#' @param out_fn Prefix of output file
+#' @param out_fmt Output image format
+#'
+#' @import ggplot2
+#'
+#' @export
+plotManhattan.data.frame <- function(x,
+                                     chr = NULL,
+                                     start = NULL,
+                                     end = NULL,
+                                     signif = NULL,
+                                     out_fn = "",
+                                     out_fmt = "pdf"){
+  if(is.null(signif)){
+    signif <- rep(TRUE, nrow(x))
+  }
+  if(!is.null(chr)){
+    signif <- signif[x$Chr == chr]
+    x <- subset(x, subset = Chr == chr)
+  }
+  if(!is.null(start)){
+    signif <- signif[x$Pos >= start]
+    x <- subset(x, subset = Pos >= start)
+  }
+  if(!is.null(end)){
+    signif <- signif[x$Pos <= end]
+    x <- subset(x, subset = Pos <= end)
+  }
+
+  if(!is.logical(signif)){
+    if(is.character(signif)){
+      signif <- eval(parse(text = signif))
+    } else {
+      stop("signif should be a string or a vector of logical values.",
+           call. = FALSE)
+    }
+  }
+
+  signif[is.na(signif)] <- FALSE
+  x_signif <- subset(x, subset = signif)
+  x <- subset(x, subset = !signif)
+  p <- ggplot() +
+    geom_point(data = x,
+               mapping = aes(x = Pos, y = negLog10P),
+               color = "darkgray",
+               size = 1,
+               shape = 20)
+  if(nrow(x_signif) != 0){
+    p <- p + geom_point(data = x_signif,
+                        mapping = aes(x = Pos, y = negLog10P),
+                        color = "magenta", size = 1, shape = 18)
+  }
+  p <- p + facet_wrap(~ Chr,
+                      nrow = 1,
+                      scales = "free_x",
+                      strip.position = "bottom") +
+    ylab("-log10(P)") +
+    xlab("Chromosome") +
+    scale_x_continuous(breaks = NULL) +
+    scale_y_continuous(expand = expansion(mult = c(0, 0.1))) +
+    theme(axis.text.x = element_blank(),
+          axis.text.y = element_text(size = 14),
+          axis.title.y = element_text(size = 15),
+          axis.title.x = element_text(size = 15),
+          strip.text.x = element_text(size = 12),
+          plot.title = element_text(hjust = 0.5, size = 20),
+          legend.position = "none",
+          axis.line.x.bottom = element_line(colour = "black"),
+          panel.spacing.x = unit(0.2, "lines"),
+          panel.border = element_blank(),
+          panel.background = element_rect(fill = "gray90"),
+          panel.grid.major.x = element_blank(),
+          panel.grid.minor.x = element_blank(),
+          strip.placement = "outside",
+          strip.background = element_rect(fill = "white", colour = "white"))
+  if(out_fmt == "pdf"){
+    pdf(out_fn)
+    print(p)
+    dev.off()
+  } else if(out_fmt == "png"){
+    png(out_fn, res = 300, width = 480*4, height = 480*4)
+    print(p)
+    dev.off()
+  }
+  gc();gc()
+  invisible(p)
+}
+
+#' Call peack blocks
+#'
+#' @param x input object
+#'
+#' @export
+#'
+callPeakBlock <- function(x, ...){
+  UseMethod("callPeakBlock", x)
+}
+
+#' @rdname callPeakBlock
+#'
+#' @param x data.frame of genotype data
+#' @param pvalues data.frame of pvalue data
+#' @param signif expression to define significant markers
+#' @param out_fn prefix of output file name
+#' @param rsquare threshold on squared R values to define peak blocks
+#'
+#' @export
+#'
+callPeakBlock.data.frame <- function(x,
+                                     pvalues,
+                                     signif,
+                                     out_fn,
+                                     rsquare = 0.6){
+  geno <- matrix(as.numeric(as.matrix(x)), nrow(x), ncol(x))
+  signif_x <- callPeakBlock.matrix(geno, pvalues, signif, out_fn, rsquare)
+  invisible(signif_x)
+}
+
+#' @rdname callPeakBlock
+#'
+#' @param x QTLscan object
+#' @param signif expression to define significant markers
+#' @param out_fn prefix of output file name
+#' @param rsquare threshold on squared R values to define peak blocks
+#'
+#' @export
+#'
+callPeakBlock.QTLscan <- function(x,
+                                  signif,
+                                  out_fn,
+                                  rsquare = 0.6){
+  geno <- matrix(as.numeric(as.matrix(x$geno)), nrow(x$geno), ncol(x$geno))
+  rownames(geno) <- x$sample_id
+  signif_x_list <- NULL
+  for(i in seq_along(x$pvalues_fn)){
+    pvalues <- read.csv(x$pvalues_fn[i])
+    tmp_fn <- paste0(out_fn, x$pheno_names[i])
+    signif_x <- callPeakBlock.matrix(geno, pvalues, signif, tmp_fn, rsquare)
+    signif_x_list <- c(signif_x_list, list(signif_x))
+  }
+  names(signif_x_list) <- x$pheno_names
+  out <- list(peakblock_fn = paste0(out_fn, x$pheno_names, "_peakBlock.csv"),
+              pheno_names = x$pheno_names,
+              signif_geno = signif_x_list,
+              pheno = x$pheno)
+  class(out) <- c(class(out), "peakCall")
+  attributes(out) <- c(attributes(out), scan = "QTL", geno_fmt = x$geno_fmt)
+
+  invisible(out)
+}
+
+#' @rdname callPeakBlock
+#'
+#' @param x GWASscan object
+#' @param pvalues data.frame of pvalue data
+#' @param signif expression to define significant markers
+#' @param out_fn prefix of output file name
+#' @param rsquare threshold on squared R values to define peak blocks
+#'
+#' @export
+#'
+callPeakBlock.GWASscan <- function(x,
+                                   signif,
+                                   out_fn,
+                                   rsquare = 0.6){
+  geno <- abs(seqGetData(x$geno, "$dosage") - 2)
+  rownames(geno) <- seqGetData(x$geno, "sample.id")
+  colnames(geno) <- seqGetData(x$geno, "variant.id")
+  signif_x_list <- NULL
+  for(i in seq_along(x$pvalues_fn)){
+    pvalues <- read.csv(x$pvalues_fn[i])
+    tmp_fn <- paste0(out_fn, x$pheno_names[i])
+    hit <- match(pvalues$VariantID, colnames(geno))
+    geno_mat <- geno[, na.omit(hit)]
+    signif_x <- callPeakBlock.matrix(x = geno_mat, pvalues = pvalues,
+                                     signif = signif, out_fn = tmp_fn,
+                                     rsquare = rsquare)
+    signif_x_list <- c(signif_x_list, list(signif_x))
+  }
+  names(signif_x_list) <- x$pheno_names
+  out <- list(peakblock_fn = paste0(out_fn, x$pheno_names, "_peakBlock.csv"),
+              pvalues_fn = x$pvalues_fn,
+              pheno_names = x$pheno_names,
+              signif_geno = signif_x_list,
+              pheno = x$pheno)
+  class(out) <- c(class(out), "peakCall")
+  attributes(out) <- c(attributes(out), scan = "GWAS")
+  invisible(out)
+}
+
+#' @rdname callPeakBlock
+#'
+#' @param x matrix of genotype data
+#' @param pvalues data.frame of pvalue data
+#' @param signif expression to define significant markers
+#' @param out_fn prefix of output file name
+#' @param rsquare threshold on squared R values to define peak blocks
+#'
+#' @export
+#'
+callPeakBlock.matrix <- function(x,
+                                 pvalues,
+                                 signif,
+                                 out_fn,
+                                 rsquare = 0.6){
+  if(!is.numeric(x)){
+    stop("The input x should be the numeric matrix.",
+         call. = FALSE)
+  }
+  if(nrow(pvalues) != ncol(x)){
+    stop("The number of markers does not match between geno and pvalues.",
+         call. = FALSE)
+  }
+
+  if(!is.logical(signif)){
+    if(is.character(signif)){
+      signif <- eval(parse(text = sub("x\\$", "pvalues$", signif)))
+    } else {
+      stop("signif should be a string or a vector of logical values.",
+           call. = FALSE)
+    }
+  }
+
+  signif[is.na(signif)] <- FALSE
+  pvalues <- subset(pvalues, subset = signif)
+  x <- subset(x, select = signif)
+  out_x <- data.frame(VariantID = pvalues$VariantID, Chr = pvalues$Chr, Pos = pvalues$Pos, t(x))
+  names(out_x) <- c("VariantID", "Chr", "Pos", rownames(x))
+  write.table(t(c("Peak_id", "Peak_variantID", "Peak_chr", "Peak_pos", "Peak_pval", "Dist2peak",
+                  "LD2peak", colnames(pvalues))),
+              paste0(out_fn, "_peakBlock.csv"),
+              sep = ",", quote = TRUE, row.names = FALSE, col.names = FALSE)
+
+  peak_id <- 0
+  while(TRUE){
+    if(nrow(pvalues) == 0){
+      break
+    }
+    peak_id <- peak_id + 1
+    variant_index <- seq_len(nrow(pvalues))
+    peak_index <- which.max(pvalues$negLog10P)
+    peak_chr <- pvalues$Chr[peak_index]
+    peak_pos <- pvalues$Pos[peak_index]
+    peak_variantID <- pvalues$VariantID[peak_index]
+
+    target_variants <- which(pvalues$Chr == peak_chr)
+    if(length(target_variants) == 1){
+      peak_block <- target_variants
+      ld_to_peak <- 1
+
+    } else {
+      r2 <- cor(x[, target_variants], use = "pairwise.complete.obs")^2
+      peak_ld  <- r2[, which.max(pvalues$negLog10P[target_variants])]
+      ld_block <- peak_ld >= rsquare
+      ld_block[is.na(ld_block)] <- FALSE
+      peak_block <- target_variants[ld_block]
+      ld_to_peak <- peak_ld[ld_block]
+    }
+    peakblock_pvalues <- subset(pvalues,
+                                subset = variant_index %in% peak_block)
+    write.table(data.frame(peak_id = peak_id,
+                           peak_variantID = peak_variantID,
+                           peak_chr = peak_chr,
+                           peak_pos = peak_pos,
+                           peak_pval = max(peakblock_pvalues$negLog10P),
+                           dist2peak = peakblock_pvalues$Pos - peak_pos,
+                           ld2peak = ld_to_peak,
+                           peakblock_pvalues),
+                paste0(out_fn, "_peakBlock.csv"),
+                sep = ",", quote = TRUE, row.names = FALSE, col.names = FALSE,
+                append = TRUE)
+    x <- subset(x, select = !variant_index %in% peak_block)
+    pvalues <- subset(pvalues, subset = !variant_index %in% peak_block)
+  }
+  gc();gc()
+  invisible(out_x)
+}
+
+#' #' @rdname callPeakBlock
+#' #'
+#' #' @param x matrix of genotype data
+#' #' @param pvalues data.frame of pvalue data
+#' #' @param signif expression to define significant markers
+#' #' @param out_fn prefix of output file name
+#' #' @param rsquare threshold on squared R values to define peak blocks
+#' #'
+#' #' @export
+#' #'
+#' callPeakBlock.SeqVarData <- function(x,
+#'                                      pvalues,
+#'                                      signif,
+#'                                      out_fn,
+#'                                      rsquare = 0.6){
+#'   pvalue_variant <- paste(pvalues$Chr, pvalues$Pos, sep = "_")
+#'   gds_variant <- paste(seqGetData(x, "chromosome"), seqGetData(x, "position"), sep = "_")
+#'   check <- pvalue_variant %in% gds_variant
+#'   if(!all(check)){
+#'     stop("One or more markers in the given pvalues data do not match ",
+#'          "the markers in the SeqVarData object.",
+#'          call. = FALSE)
+#'   }
+#'
+#'   if(!is.logical(signif)){
+#'     if(is.character(signif)){
+#'       signif <- eval(parse(text = sub("x\\$", "pvalues$", signif)))
+#'     } else {
+#'       stop("signif should be a string or a vector of logical values.",
+#'            call. = FALSE)
+#'     }
+#'   }
+#'
+#'   signif[is.na(signif)] <- FALSE
+#'   if(all(!signif)){
+#'     out_x <- NULL
+#'
+#'   } else {
+#'     out_x <- data.frame(Chr = pvalues$Chr, Pos = pvalues$Pos, t(seqGetData(x, "$dosage")))
+#'     pvalues <- subset(pvalues, subset = signif)
+#'     pvalue_variant <- paste(pvalues$Chr, pvalues$Pos, sep = "_")
+#'     hit <- match(gds_variant, pvalue_variant)
+#'     var_id <- read.gdsn(index.gdsn(x, "variant.id"))
+#'     var_id[na.omit(hit)] <- var_id[!is.na(hit)]
+#'     signif <- signif[hit]
+#'     signif[is.na(signif)] <- FALSE
+#'     seqSetFilter(x, variant.sel = signif)
+#'
+#'   }
+#'
+#'   write.table(t(c("Peak_id", "Peak_chr", "Peak_pos", "Peak_pval", "Dist2peak",
+#'                   colnames(pvalues))),
+#'               paste0(out_fn, "_peakBlock.csv"),
+#'               sep = ",", quote = TRUE, row.names = FALSE, col.names = FALSE)
+#'
+#'
+#'   peak_id <- 0
+#'   while(TRUE){
+#'     if(nrow(pvalues) == 0){
+#'       break
+#'     }
+#'     peak_id <- peak_id + 1
+#'     variant_index <- seq_len(nrow(pvalues))
+#'     peak_index <- which.max(pvalues$negLog10P)
+#'     chr <- pvalues$Chr[peak_index]
+#'     pos <- pvalues$Pos[peak_index]
+#'
+#'     target_variants <- which(pvalues$Chr == chr)
+#'     if(length(target_variants) == 1){
+#'       peak_block <- target_variants
+#'
+#'     } else {
+#'       r <- cor(x[, target_variants], use = "pairwise.complete.obs")
+#'       peak_pos <- pvalues$Pos[target_variants] == pos
+#'       peak_ld  <- r[, peak_pos]^2
+#'       ld_block <- peak_ld >= rsquare
+#'       ld_block[is.na(ld_block)] <- FALSE
+#'       peak_block <- target_variants[ld_block]
+#'     }
+#'     peakblock_pvalues <- subset(pvalues,
+#'                                 subset = variant_index %in% peak_block)
+#'     write.table(data.frame(peak_id = peak_id,
+#'                            peak_chr = chr,
+#'                            peak_pos = pos,
+#'                            peak_pval = max(peakblock_pvalues$negLog10P),
+#'                            dist2peak = peakblock_pvalues$Pos - pos,
+#'                            peakblock_pvalues),
+#'                 paste0(out_fn, "_peakBlock.csv"),
+#'                 sep = ",", quote = TRUE, row.names = FALSE, col.names = FALSE,
+#'                 append = TRUE)
+#'     x <- subset(x, select = !variant_index %in% peak_block)
+#'     pvalues <- subset(pvalues, subset = !variant_index %in% peak_block)
+#'   }
+#'   gc();gc()
+#'   invisible(out_x)
+#' }
+
+#'
+#' @export
+#'
+print.peakCall <- function(x){
+  message("Peakcall file names")
+  print(cbind(x$pheno_names, x$peakblock_fn))
+  message("Scan type")
+  print(attributes(x)$scan)
+}
+
+################################################################################
+buildPeakCall <- function(x, ...){
+  UseMethod("buildPeakCall", x)
+}
+
+buildPeakCall.SeqVarGDSClass <- function(x,
+                                         pheno,
+                                         sampleID_pheno,
+                                         peakcall_fn,
+                                         candidatelist_fn = NULL,
+                                         pvalues_fn = NULL,
+                                         scan){
+  # Validation of genotype and phenotype data
+  if(is.null(sampleID_pheno)){
+    sampleID_pheno <- pheno[, grepl("ID|id", colnames(pheno))]
+    pheno <- subset(pheno, select = !grepl("ID|id", colnames(pheno)))
+  }
+  sampleID_geno <- seqGetData(x, "sample.id")
+  nopheno <- sampleID_geno[!sampleID_geno %in% sampleID_pheno]
+  nogeno <- sampleID_pheno[!sampleID_pheno %in% sampleID_geno]
+  if(length(nopheno) > 0){
+    message("The following samples have no phenotype info: \n",
+            paste(nopheno, collapse = " "))
+  }
+  if(length(nogeno) > 0){
+    message("The following samples have no genotype info: \n",
+            paste(nogeno, collapse = " "))
+  }
+
+  # Reorder phenotype data to match it with genotype data
+  pheno <- subset(pheno, subset = !sampleID_pheno %in% nogeno)
+  sampleID_geno <- sampleID_geno[!sampleID_geno %in% nopheno]
+  pheno_names <- colnames(pheno)
+  hitid <- match(sampleID_geno, sampleID_pheno)
+  pheno <- pheno[hitid, ]
+  if(is.vector(pheno)){
+    pheno <- data.frame(pheno)
+    names(pheno) <- pheno_names
+  }
+
+
+  name_hit <- sapply(pheno_names, function(x){
+    return(grep(paste0(x, "_peakBlock[_Cor]*.csv"), peakcall_fn))
+  })
+  peakcall_fn <- peakcall_fn[name_hit]
+
+  variant_id <- seqGetData(x, "variant.id")
+  geno <- t(abs(seqGetData(x, "$dosage") - 2))
+  signif_x_list <- lapply(peakcall_fn, function(x){
+    df <- read.csv(x, header = TRUE)
+    hit <- match(df$VariantID, variant_id)
+    geno <- geno[hit, ]
+    if(is.vector(geno)){
+      geno <- matrix(geno, nrow = 1)
+    }
+    out_df <- data.frame(VariantID = df$VariantID, Chr = df$Chr, Pos = df$Pos,
+                         geno)
+    names(out_df) <- c("VariantID", "Chr", "Pos", sampleID_geno)
+    return(out_df)
+  })
+  names(signif_x_list) <- pheno_names
+
+  out <- list(peakblock_fn = peakcall_fn,
+              pheno_names = names(signif_x_list),
+              signif_geno = signif_x_list,
+              pheno = pheno)
+  if(!is.null(candidatelist_fn)){
+    name_hit <- sapply(pheno_names, function(x){
+      return(grep(paste0(x, "_candidateList.csv"), candidatelist_fn))
+    })
+    out$candidatelist_fn <- candidatelist_fn[name_hit]
+  }
+  if(!is.null(pvalues_fn)){
+    name_hit <- sapply(pheno_names, function(x){
+      return(grep(paste0(x, "_scan(GWAS|QTL).csv"), pvalues_fn))
+    })
+    out$pvalues_fn <- pvalues_fn[name_hit]
+  }
+  class(out) <- c(class(out), "peakCall")
+  attributes(out) <- c(attributes(out), scan = scan)
+  return(out)
+}
+
+################################################################################
+#' List up candidate genes
+#'
+#' @param x input object
+#'
+#' @export
+#'
+listCandidate <- function(x, ...){
+  UseMethod("listCandidate", x)
+}
+
+#' @rdname listCandidate
+#'
+#' @param x peakCall object
+#' @param annotation_fn path to an annotation information file or a data.frame
+#' @param gff_fn path to a GFF file
+#' @param snpeff_fn path to a snpEff file
+#' @param out_fn prefix of output file name
+#'
+#' @importFrom vcfR read.vcfR
+#'
+#' @export
+listCandidate.peakCall <- function(x,
+                                   ann = NULL,
+                                   gff,
+                                   snpeff = NULL,
+                                   out_fn){
+  if(!is.null(snpeff)){
+    if(!inherits(snpeff, "SeqVarGDSClass")){
+      snpeff <- seqOpen(snpeff)
+    }
+  }
+  if(!is.null(ann)){
+    if(is.character(ann)){
+      if(grepl("\\.csv$", basename(ann))){
+        ann <- read.csv(ann)
+      } else if(grepl("\\.tsv$", basename(ann))){
+        ann <- read.table(ann, sep = "\t", header = TRUE)
+      }
+    }
+  }
+  if(is.character(gff)){
+    gff <- import.gff(gff)
+  }
+  for(i in seq_along(x$peakblock_fn)){
+    peakblock <- read.csv(x$peakblock_fn[i])
+    tmp_fn <- paste0(out_fn, x$pheno_names[i])
+    listCandidate.data.frame(x = peakblock,
+                             ann = ann,
+                             gff = gff,
+                             snpeff = snpeff,
+                             out_fn = tmp_fn,
+                             scan = attributes(x)$scan)
+  }
+  out <- paste0(out_fn, x$pheno_names, "_candidateList.csv")
+  x$candidatelist_fn <- out
+  invisible(x)
+}
+
+#' @rdname listCandidate
+#'
+#' @param x peakcall data.frame
+#' @param annotation_fn path to an annotation information file
+#' @param gff_fn path to a GFF file
+#' @param snpeff_fn path to a snpEff file
+#' @param out_fn prefix of output file name
+#' @param scan scan type
+#'
+#' @importFrom vcfR read.vcfR
+#' @importFrom dplyr left_join
+#' @importFrom rtracklayer import.gff
+#' @importFrom GenomicRanges GRanges findOverlaps
+#' @importFrom IRanges IRanges
+#'
+#' @export
+listCandidate.data.frame <- function(x,
+                                     ann = NULL,
+                                     ann_names = "",
+                                     gff,
+                                     snpeff = NULL,
+                                     out_fn,
+                                     scan = "QTL"){
+  out <- NULL
+  if(nrow(x) != 0){
+    if(!is.null(ann)){
+      if(is.character(ann)){
+        if(grepl("\\.csv$", basename(ann))){
+          ann <- read.csv(ann)
+        } else if(grepl("\\.tsv$", basename(ann))){
+          ann <- read.table(ann, sep = "\t", header = TRUE)
+        }
+      }
+      if(!inherits(ann, "data.frame")){
+        stop("ann should be a data.frame or a path to a csv/tsv file.")
+      }
+    }
+
+    if(is.character(gff)){
+      gff <- import.gff(gff)
+    }
+    if(!inherits(gff, "GRanges")){
+      stop("gff should be a GRanges or a path to a gff file.")
+    }
+
+    if(!is.null(snpeff)){
+      if(!inherits(snpeff, "SeqVarGDSClass")){
+        snpeff <- seqOpen(snpeff)
+      }
+      snp_ann <- seqGetData(snpeff, "annotation/info/ANN")
+      if(is.null(snp_ann$data)){
+        snpeff <- DataFrame(chr = chr,
+                            pos = seqGetData(snpeff, "position"),
+                            snp_ann = I(sapply(seq_along(chr), function(x){return(list(NA))})))
+        snpeff$snp_ann[as.numeric(names(snp_ann))] <- snp_ann
+        snpeff <- snpeff[sapply(snpeff$snp_ann, function(x){return(!is.na(x[1]))}), ]
+
+      } else {
+        index <- unlist(sapply(seq_along(snp_ann$length),
+                               function(i) {rep(i, snp_ann$length[i])}))
+        snp_ann <- tapply(snp_ann$data, index, list)
+        chr <- seqGetData(snpeff, "chromosome")
+        snpeff <- DataFrame(variant_id = seqGetData(snpeff, "variant.id"),
+                            chr = chr,
+                            pos = seqGetData(snpeff, "position"),
+                            snp_ann = I(sapply(seq_along(chr), function(x){return(list(NA))})))
+        snpeff$snp_ann[as.numeric(names(snp_ann))] <- snp_ann
+        snpeff <- snpeff[sapply(snpeff$snp_ann, function(x){return(!is.na(x[1]))}), ]
+      }
+    }
+
+    for(i_peak in unique(x$Peak_id)){
+      peakblock_i <- x[x$Peak_id == i_peak, ]
+
+      if(scan == "QTL"){
+        tmp <- getQTLcandidate(gff = gff,
+                               peakblock = peakblock_i,
+                               snpeff = snpeff)
+
+      } else if(scan == "GWAS"){
+        tmp <- getGWAScandidate(gff = gff,
+                                peakblock = peakblock_i,
+                                snpeff = snpeff)
+      }
+      if(is.null(peakblock_i$Cor_id)){
+        tmp <- data.frame(Peak_id = i_peak,
+                          tmp)
+      } else {
+        tmp <- data.frame(Cor_id = peakblock_i$Cor_id[1],
+                          Peak_id = i_peak,
+                          tmp)
+      }
+      out <- rbind(out, tmp)
+    }
+    if(!is.null(out)){
+      if(!is.null(ann)){
+        out <- left_join(out, ann, by = "GeneID")
+      }
+    }
+  }
+  write.csv(out, paste0(out_fn, "_candidateList.csv"), row.names = FALSE)
+}
+
+#' @importFrom GenomicRanges GRanges findOverlaps
+#' @importFrom IRanges IRanges
+#' @importFrom S4Vectors queryHits
+#' @importFrom GenomeInfoDb seqnames
+getQTLcandidate <- function(gff, peakblock, snpeff){
+  peak_gff <- GRanges(seqnames = peakblock$Peak_chr[1],
+                      ranges = IRanges(start = peakblock$Pos[1],
+                                       end = tail(peakblock$Pos, 1)))
+  gene_gff <- gff[gff$type == "gene"]
+  hit <- gene_gff[queryHits(findOverlaps(gene_gff, peak_gff))]
+  hit <- hit[order(start(hit))]
+  hit$fromPeak <- start(hit) - peakblock$Peak_pos[1]
+  nearest_p <- sapply(start(hit), function(x){
+    return(peakblock$negLog10P[which.min(abs(peakblock$Pos - x))])
+  })
+  out <- data.frame(negLog10P = nearest_p,
+                    Dist2peak = hit$fromPeak,
+                    Gene_chr = as.character(seqnames(hit)),
+                    Gene_start = start(hit),
+                    GeneID = hit$ID)
+
+  if(!is.null(snpeff)){
+    snpeff_out <- addSnpEff(snpeff, peakblock, scan = "QTL")
+    out <- left_join(out, snpeff_out, by ="GeneID")
+  }
+  return(out)
+}
+
+getGWAScandidate <- function(gff, peakblock, snpeff){
+  snpeff_out <- addSnpEff(snpeff, peakblock, scan = "GWAS")
+  if(all(is.na(snpeff_out$GeneID))){
+    out <- data.frame(Dist2peak = NA, Gene_chr = NA, Gene_start = NA,
+                      snpeff_out)
+
+  } else {
+    snpeff_out$gene_id <- sub("-.+|&.+", "", snpeff_out$GeneID)
+    gene_gff <- gff[gff$type == "gene"]
+    hit <- gene_gff[gene_gff$ID %in% snpeff_out$gene_id]
+    hit$fromPeak <- start(hit) - peakblock$Peak_pos[1]
+    out <- full_join(data.frame(Dist2peak = hit$fromPeak,
+                                Gene_chr = as.character(seqnames(hit)),
+                                Gene_start = start(hit),
+                                gene_id = hit$gene_id),
+                     snpeff_out, by = "gene_id")
+    out <- subset(out, subset = !is.na(HIGH), select = -gene_id)
+  }
+  return(out)
+}
+
+#' @importFrom vcfR getFIX getINFO
+addSnpEff <- function(snpeff, peakblock, scan){
+  if(scan == "QTL"){
+    target_chr <- snpeff$chr %in% peakblock$Chr
+    target_pos <-  snpeff$pos >= min(peakblock$Pos) &  snpeff$pos <= max(peakblock$Pos)
+    peak_ann <- snpeff$snp_ann[target_chr & target_pos]
+    peak_ann <- unlist(peak_ann)
+    peak_ann[grepl("\\|$", peak_ann)] <- paste(peak_ann[grepl("\\|$", peak_ann)], " ")
+    peak_ann <- strsplit(peak_ann, "\\|")
+    peak_ann <- do.call("rbind", peak_ann)
+    peak_ann <- subset(peak_ann, select = c(2:4))
+
+    colnames(peak_ann) <- c("type", "impact", "GeneID")
+    genewise <- tapply(peak_ann$impact, peak_ann$GeneID, function(x){
+      as.vector(table(factor(x, c("HIGH", "MODERATE", "LOW", "MODIFIER"))))
+    })
+    genewise <- data.frame(GeneID = names(genewise),
+                           do.call("rbind", genewise))
+    colnames(genewise)[-1] <- c("HIGH", "MODERATE", "LOW", "MODIFIER")
+
+  } else if(scan == "GWAS"){
+    peak_ann <- snpeff[snpeff$variant_id %in% peakblock$VariantID, ]
+    if(nrow(peak_ann) == 0){
+      genewise <- data.frame(t(rep(NA, 9)))
+      names(genewise) <- c("GeneID", "Max_Pval", "Min_Pval", "Maf_Max", "Maf_Min",
+                           "HIGH", "MODERATE", "LOW", "MODIFIER")
+
+    } else {
+      tmp <- unlist(peak_ann$snp_ann)
+      tmp[grepl("\\|$", tmp)] <- paste(tmp[grepl("\\|$", tmp)], " ")
+      tmp <- strsplit(tmp, "\\|")
+      tmp <- do.call("rbind", tmp)
+      tmp <- subset(tmp, select = 2:4)
+      n_ann <- sapply(peak_ann$snp_ann, length)
+      index_ann <- unlist(sapply(seq_along(n_ann), function(i){rep(i, n_ann[i])}))
+      index_ann <- match(peak_ann$variant_id[index_ann], peakblock$VariantID)
+      peak_ann <- data.frame(negLog10P = peakblock$negLog10P[index_ann],
+                             MAF = peakblock$MAF[index_ann],
+                             tmp)
+      colnames(peak_ann) <- c("negLog10P", "MAF", "Type",
+                              "Impact", "GeneID")
+      peak_ann <- subset(peak_ann, subset = !Type %in% "intergenic_region")
+      if(nrow(peak_ann) == 0){
+        genewise <- data.frame(t(rep(NA, 9)))
+        names(genewise) <- c("GeneID", "Max_Pval", "Min_Pval", "Maf_Max", "Maf_Min",
+                             "HIGH", "MODERATE", "LOW", "MODIFIER")
+
+      } else {
+        impacts <- c("HIGH", "MODERATE", "LOW", "MODIFIER")
+        genewise <- tapply(seq_along(peak_ann$Impact), peak_ann$GeneID, function(i){
+          data.frame(Max_Pval = max(peak_ann$negLog10P[i]),
+                     Min_Pval = min(peak_ann$negLog10P[i]),
+                     Maf_Max = peak_ann$MAF[i][which.max(peak_ann$negLog10P[i])],
+                     Maf_Min = peak_ann$MAF[i][which.min(peak_ann$negLog10P[i])],
+                     t(as.vector(table(factor(peak_ann$Impact[i], impacts)))))
+        })
+        GeneID = names(genewise)
+        names(genewise) <- NULL
+        genewise <- data.frame(GeneID = GeneID,
+                               do.call("rbind", genewise))
+        colnames(genewise)[-(1:5)] <- c("HIGH", "MODERATE", "LOW", "MODIFIER")
+      }
+    }
+  }
+  return(genewise)
+}
+
+#' Haplotype analysis for peak blocks
+#'
+#' @param x input object
+haploPlot <- function(x, ...){
+  UseMethod("haploPlot", x)
+}
+
+#' @rdname haploPlot
+#'
+#' @param peakblock peakCall obeject
+#' @param out_fn prefix of output file name
+#'
+#'
+#' @export
+haploPlot.peakCall <- function(x,
+                               out_fn,
+                               max_variants = 1){
+  for(i in seq_along(x$peakblock_fn)){
+    peakblock <- read.csv(x$peakblock_fn[i])
+    if(nrow(peakblock) == 0){
+      next
+    }
+    geno <- x$signif_geno[[x$pheno_names[i]]]
+    tmp_fn <- paste0(out_fn, x$pheno_names[i])
+    haploPlot.data.frame(x = peakblock,
+                         geno = geno,
+                         pheno = x$pheno[, i],
+                         out_fn = tmp_fn,
+                         max_variants = max_variants)
+  }
+  out <- paste0(out_fn, x$pheno_names, "_haploPattern.csv")
+  names(out) <- x$pheno_names
+  invisible(out)
+}
+
+#' @rdname haploPlot
+#'
+#' @param peakblock peak block data.frame
+#' @param geno genotype data.frame
+#' @param pheno phenotype data.frame
+#' @param out_fn prefix of output file name
+#' @param scan scan type
+#'
+#' @import ggplot2
+#'
+#' @export
+haploPlot.data.frame <- function(x,
+                                 geno,
+                                 pheno,
+                                 out_fn,
+                                 max_variants = 1){
+  if(nrow(x) == 0){
+    message("No peak")
+    return(NULL)
+  }
+  haplo <- NULL
+
+  pdf(paste0(out_fn,"_haploPattern.pdf"))
+
+  for(i_peak in unique(x$Peak_id)){
+    peakblock_i <- x[x$Peak_id == i_peak, ]
+    valid <- geno$VariantID %in% peakblock_i$VariantID
+    target_geno <- subset(geno, subset = valid)
+    valid <- peakblock_i$VariantID %in% geno$VariantID
+    peakblock_i <- subset(peakblock_i, subset = valid)
+    haplo <- rbind(haplo, data.frame(Peak_ID = i_peak, target_geno))
+    variant_pos <- subset(target_geno, select = VariantID:Pos)
+    target_geno <- subset(target_geno, select = -(VariantID:Pos))
+
+    if(nrow(target_geno) >= 2){
+      target_geno <- apply(target_geno, 2, function(x){
+        if(sum(is.na(x))/length(x) > 0.8){
+          return(x)
+        }
+        tmp_gt <- target_geno
+        while(any(is.na(x))){
+          hit <- apply(tmp_gt, 2, function(y){
+            sum(x == y, na.rm = TRUE)
+          })
+          hit_gt <- tmp_gt[, which.max(hit)]
+          x[is.na(x)] <- hit_gt[is.na(x)]
+          tmp_gt <- tmp_gt[, -which.max(hit)]
+        }
+        return(x)
+      })
+    }
+
+    if(nrow(target_geno) > max_variants){
+      valid <- apply(target_geno, 1, function(x){
+        return(sum(is.na(x))/length(x) < 0.2)
+      })
+      if(sum(valid) != 0){
+        peakblock_i <- subset(peakblock_i, subset = valid)
+        variant_pos <- subset(variant_pos, subset = valid)
+        target_geno <- subset(target_geno, subset = valid)
+      }
+    }
+
+    if(nrow(target_geno) > max_variants){
+      peak_index <- which(peakblock_i$VariantID == peakblock_i$Peak_variantID[1])
+      n_variants <- length(variant_pos$Pos)
+      if(peak_index < ceiling(max_variants / 2)){
+        sel_start <- 1
+      } else {
+        if(n_variants - peak_index < ceiling(max_variants / 2)){
+          sel_start <- n_variants - max_variants + 1
+        } else {
+          sel_start <- peak_index - floor(max_variants / 2)
+        }
+      }
+      sel_variants <- seq(sel_start, length.out = max_variants)
+      valid <- seq_len(nrow(target_geno)) %in% sel_variants
+      peakblock_i <- subset(peakblock_i, subset = valid)
+      variant_pos <- subset(variant_pos, subset = valid)
+      target_geno <- subset(target_geno, subset = valid)
+    }
+
+    hap <- unique(target_geno)
+    hap <- apply(hap, 2, paste, collapse = "")
+
+    df <- data.frame(pheno = pheno,
+                     hap = factor(hap, sort(unique(hap))))
+
+    p <- ggplot(df) +
+      geom_boxplot(aes(x = hap, y = pheno)) +
+      labs(title = paste("Peak @",
+                         paste(peakblock_i$Peak_chr[1],
+                               peakblock_i$Peak_pos[1],
+                               sep = "_"))) +
+      xlab("Haplotype group")
+    print(p)
+  }
+  dev.off()
+  pheno <- t(pheno)
+  if(!is.null(haplo)){
+    pheno <- data.frame(Peak_ID = "Phenotype_value",
+                        VariantID = "",
+                        Chr = "", Pos = "", pheno)
+    colnames(pheno)[-1] <- colnames(geno)
+    colnames(haplo)[-1] <- colnames(geno)
+    haplo <- rbind(pheno, haplo)
+  }
+  write.csv(haplo, paste0(out_fn,"_haploPattern.csv"), row.names = FALSE)
+}
+
+################################################################################
+peakSummary <- function(x, ...){
+  UseMethod("peakSummary", x)
+}
+
+peakSummary.peakCall <- function(x, out_fn){
+  for(i in seq_along(x$peakblock_fn)){
+    peakblock <- read.csv(x$peakblock_fn[i])
+    if(nrow(peakblock) == 0){
+      next
+    }
+    tmp_fn <- paste0(out_fn, x$pheno_names[i])
+    peakSummary.data.frame(x = peakblock, out_fn = tmp_fn)
+  }
+  out <- paste0(out_fn, x$pheno_names, "_peakSummary.csv")
+  names(out) <- x$pheno_names
+  invisible(out)
+}
+
+peakSummary.data.frame <- function(x, out_fn){
+  if(nrow(x) == 0){
+    message("No peak")
+    return(NULL)
+  }
+
+  peaks_id <- unique(x$Peak_variantID)
+  if(is.null(x$Cor_id)){
+    out <- subset(x, subset = VariantID %in% peaks_id,
+                  select = c(Peak_id:Peak_pval, MAF, Est))
+  } else {
+    out <- subset(x, subset = VariantID %in% peaks_id,
+                  select = c(Cor_id:Peak_pval, MAF, Est))
+  }
+
+  peak_summary <- NULL
+  for(i_peak in out$Peak_id){
+    peakblock_i <- x[x$Peak_id == i_peak, ]
+    peak_pos <- which.max(peakblock_i$negLog10P)
+    b <- boxplot(peakblock_i$negLog10P, plot = FALSE)
+    qtile <- quantile(peakblock_i$negLog10P, c(0.90, 0.99))
+    top10 <- peakblock_i$negLog10P >= qtile[1]
+    top1 <- peakblock_i$negLog10P >= qtile[2]
+    tmp <- data.frame(Peak_start = min(peakblock_i$Pos),
+                      Peak_end = max(peakblock_i$Pos),
+                      Lowest_pval = min(peakblock_i$negLog10P),
+                      Number_of_variants = nrow(peakblock_i),
+                      Mean_of_observations = round(mean(peakblock_i$N_obs), 1),
+                      Top1_start = min(peakblock_i$Pos[top1]),
+                      Top1_end = max(peakblock_i$Pos[top1]),
+                      Top10_start = min(peakblock_i$Pos[top10]),
+                      Top10_end = max(peakblock_i$Pos[top10]))
+    peak_summary <- rbind(peak_summary, tmp)
+  }
+  peak_summary <- cbind(Peak_id = out$Peak_id, peak_summary)
+  peak_summary <- left_join(out, peak_summary, "Peak_id")
+  write.csv(peak_summary, paste0(out_fn, "_peakSummary.csv"), row.names = FALSE)
+}
+
+
+################################################################################
+peakCor <- function(x, ...){
+  UseMethod("peakCor", x)
+}
+
+peakCor.peakCall <- function(x, rsquare = 0.6, out_fn){
+  for(i in seq_along(x$peakblock_fn)){
+    peakblock <- read.csv(x$peakblock_fn[i])
+    if(nrow(peakblock) == 0){
+      out <- cbind(Cor_id = numeric(0), peakblock)
+      write.csv(out, paste0(out_fn, x$pheno_names[i], "_peakBlock_Cor.csv"),
+                row.names = FALSE)
+      next
+    }
+    tmp_fn <- paste0(out_fn, x$pheno_names[i])
+    peakCor.data.frame(x = peakblock, signif_geno = x$signif_geno[[i]], out_fn = tmp_fn)
+  }
+  x$peakblock_fn <- paste0(out_fn, x$pheno_names, "_peakBlock_Cor.csv")
+  invisible(x)
+}
+
+peakCor.data.frame <- function(x, signif_geno, rsquare = 0.6, out_fn){
+  if(nrow(x) == 0){
+    message("No peak")
+    return(NULL)
+  }
+
+  peaks_id <- unique(x$Peak_variantID)
+  peaks_geno <- apply(subset(signif_geno,
+                             subset = VariantID %in% peaks_id,
+                             select = -(VariantID:Pos)),
+                      1,
+                      as.numeric)
+  r2 <- cor(peaks_geno, use = "pairwise.complete.obs")^2
+  hit <- lapply(seq_len(nrow(r2)), function(i){
+    out <- which(r2[i, ] > rsquare)
+    out <- unique(sort(c(out, i)))
+    return(out)
+  })
+  grp <- rep(list(NA), length(hit))
+  i <- 0
+  while(TRUE){
+    i <- i + 1
+    if(i > length(hit)){
+      break
+    }
+    grp[[i]] <- c(grp[[i]], hit[[i]])
+    hit[hit[[i]]] <- list(NA)
+  }
+  grp <- lapply(grp, function(x){
+    x <- na.omit(x)
+    if(length(x) == 0){
+      return(NA)
+    } else {
+      return(as.numeric(x))
+    }
+  })
+  grp_n <- lapply(seq_along(grp), function(i){
+    return(rep(i, length(grp[[i]])))
+  })
+  grp_df <- data.frame(Cor_id = unlist(grp_n), Peak_id = unlist(grp))
+  grp_df <- subset(grp_df, subset = !is.na(Peak_id))
+  grp_df <- subset(grp_df, subset = !duplicated(Peak_id))
+  grp_df <- cbind(grp_df, Peak_cor = apply(grp_df, 1, function(i){
+    return(r2[i[1], i[2]])
+  }))
+  out <- subset(x,
+                subset = VariantID %in% peaks_id,
+                select = -(Peak_pval:Pos))
+  out <- left_join(grp_df, x, "Peak_id")
+  write.csv(out, paste0(out_fn, "_peakBlock_Cor.csv"), row.names = FALSE)
+}
+
+################################################################################
+peakPlot <- function(x, ...){
+  UseMethod("peakPlot", x)
+}
+
+peakPlot.peakCall <- function(x, out_fn){
+  for(i in seq_along(x$peakblock_fn)){
+    peakblock <- read.csv(x$peakblock_fn[i])
+    if(nrow(peakblock) == 0){
+      next
+    }
+    tmp_fn <- paste0(out_fn, x$pheno_names[i], "_peakPlot.pdf")
+    peakPlot.data.frame(x = peakblock, out_fn = tmp_fn)
+  }
+}
+
+peakPlot.data.frame <- function(x, out_fn){
+  peak_index <- match(unique(x$Peak_variantID), x$VariantID)
+  x$peak_label <- x$Peak_id
+  x$peak_label[-peak_index] <- ""
+
+  if(is.null(x$Cor_id)){
+    x$plot_id <- x$Peak_id
+  } else {
+    x$plot_id <- x$Cor_id
+  }
+
+  pdf(out_fn)
+  for(i in unique(x$plot_id)){
+    x_i <- subset(x, subset = plot_id == i)
+    x_in_range <- sapply(unique(x_i$Peak_id), function(id){
+      in_chr <- x$Chr == x_i$Chr[x_i$Peak_id == id][1]
+      lower_pos <- x$Pos > min(x_i$Pos[x_i$Peak_id == id]) - 5e05
+      upper_pos <- x$Pos < max(x_i$Pos[x_i$Peak_id == id]) + 5e05
+      return(which(in_chr & lower_pos & upper_pos))
+    })
+    x_in_range <- subset(x, subset = seq_along(x$Peak_id) %in% unlist(x_in_range))
+    x_in_range <- subset(x_in_range, subset = !Peak_id %in% x_i$Peak_id)
+    x_in_range <- subset(x_in_range, subset = Peak_id %in% as.numeric(peak_label))
+    p <- ggplot(data = x_i, mapping = aes(x = Pos * 1e-06, y = negLog10P, group = plot_id)) +
+      geom_point(data = x_in_range,
+                 mapping = aes(x = Pos * 1e-06, y = negLog10P,
+                               group = plot_id),
+                 color = "gray60",
+                 size = 2,
+                 shape = 20) +
+      geom_line(data = x_in_range,
+                mapping = aes(x = Pos * 1e-06, y = negLog10P,
+                              group = plot_id),
+                color = "gray60",
+                size = 0.5) +
+      geom_text(data = x_in_range,
+                mapping = aes(x = Pos * 1e-06, y = negLog10P,
+                              label = peak_label),
+                nudge_y = 1,
+                color = "gray60") +
+      geom_point(color = "magenta",
+                 size = 3,
+                 shape = 20) +
+      geom_line(color = "magenta",
+                size = 0.5) +
+      geom_text(mapping = aes(label = peak_label), nudge_y = 1) +
+      facet_wrap(~ Chr,
+                 nrow = 1,
+                 scales = "free_x",
+                 strip.position = "bottom") +
+      ylab("-log10(P)") +
+      xlab("Variant position (Mb)") +
+      scale_y_continuous(expand = expansion(mult = c(0, 0.1)), limits = c(0, NA)) +
+      theme(axis.text.x = element_text(size = 11),
+            axis.text.y = element_text(size = 11),
+            axis.title.y = element_text(size = 13),
+            axis.title.x = element_text(size = 13),
+            strip.text.x = element_text(size = 11),
+            plot.title = element_text(hjust = 0.5, size = 20),
+            legend.position = "none",
+            axis.line.x.bottom = element_line(colour = "black"),
+            panel.spacing.x = unit(0.2, "lines"),
+            panel.border = element_blank(),
+            panel.background = element_rect(fill = "gray90"),
+            panel.grid.major.x = element_blank(),
+            panel.grid.minor.x = element_blank(),
+            strip.placement = "outside",
+            strip.background = element_rect(fill = "white", colour = "white"))
+    print(p)
+  }
+  dev.off()
+}
+
+################################################################################
+makeCatalog <- function(x, ...){
+  UseMethod("makeCatalog", x)
+}
+
+makeCatalog.peakCall <- function(x,
+                                 out_fn,
+                                 manhattan_fn = NULL,
+                                 heritability_fn = NULL,
+                                 max_variants = 1){
+  for(i in seq_along(x$peakblock_fn)){
+    peakblock <- read.csv(x$peakblock_fn[i])
+    tmp_fn <- paste0(out_fn, x$pheno_names[i], "_catalog.html")
+    makeCatalog.character(x = x$peakblock_fn[i],
+                          geno = x$signif_geno[[i]],
+                          pheno = x$pheno[, i],
+                          pheno_name = x$pheno_names[i],
+                          manhattan_fn = grep(paste0(x$pheno_names[i],
+                                                     "_plotManhattan.png"),
+                                              manhattan_fn, value = TRUE),
+                          candidatelist_fn = x$candidatelist_fn[i],
+                          heritability_fn = grep(paste0(x$pheno_names[i],
+                                                        "_he[r|l]itability.csv"),
+                                                 heritability_fn, value = TRUE),
+                          max_variants = max_variants,
+                          out_fn = tmp_fn)
+  }
+}
+
+makeCatalog.character <- function(x,
+                                  geno,
+                                  pheno,
+                                  pheno_name,
+                                  manhattan_fn = NULL,
+                                  candidatelist_fn = NULL,
+                                  heritability_fn = NULL,
+                                  max_variants = 1,
+                                  out_fn = "catalog.html"){
+  rmd_fn <- tempfile(pattern = "gwascatalog", fileext = ".Rmd")
+  .makeHeader(rmd_fn = rmd_fn, pheno_name = pheno_name)
+
+  tmp_fn <- .makeTempFiles(pheno = pheno, pheno_name = pheno_name, geno = geno)
+
+  .putStats(tmp_fn = tmp_fn, heritability_fn = heritability_fn, rmd_fn = rmd_fn)
+
+  if(!is.null(manhattan_fn)){
+    .putManhattan(manhattan_fn = manhattan_fn, rmd_fn = rmd_fn)
+  }
+
+  .putPeaks(tmp_fn = tmp_fn, peakblock_fn = x,
+            candidatelist_fn = candidatelist_fn, rmd_fn = rmd_fn,
+            max_variants = max_variants)
+  render(input = rmd_fn, output_file = out_fn, html_document())
+  .deleteFiles(tmp_fn = tmp_fn, rmd_fn = rmd_fn)
+}
+
+.makeHeader <- function(rmd_fn, pheno_name){
+  header <- c("---",
+              paste0("title: 'GWAS catalog for ", pheno_name, "'"),
+              paste0("date: '", format(Sys.time(), "%a %b %d %X %Y"), "'"),
+              paste0("output: html_document"),
+              "---",
+              "<style type='text/css'>",
+              ".datatables {max-width: 800px;}",
+              "</style>",
+              "```{r include = FALSE}",
+              "library(ggplot2)",
+              "library(cowplot)",
+              "library(DT)",
+              "library(dplyr)",
+              "library(knitr)",
+              "source('~/hdd2/softDevel/lazyGeno/R/00_functions.R')",
+              "```")
+  write.table(header, file = rmd_fn, sep = "\t",
+              row.names = FALSE, col.names = FALSE, quote = FALSE)
+}
+
+.makeTempFiles <- function(pheno, pheno_name, geno){
+  pheno_fn <- tempfile(pattern = "gwascatalog_temp_pheno", fileext = ".Rdata")
+  save(list = c("pheno", "pheno_name"), file = pheno_fn)
+  geno_fn <- tempfile(pattern = "gwascatalog_temp_geno", fileext = ".Rdata")
+  save(list = "geno", file = geno_fn)
+  return(list(pheno_fn = pheno_fn, geno_fn = geno_fn))
+}
+
+.putStats <- function(tmp_fn, heritability_fn = NULL, rmd_fn){
+  load(tmp_fn$pheno_fn)
+  n_sample <- length(pheno)
+  n_obs <- sum(!is.na(pheno))
+
+  if(!is.null(heritability_fn)){
+    heritability <- read.csv(heritability_fn)
+    heritability_out <- c(paste0("#### Heritability: ", round(heritability[1, 1], 5)),
+                          paste0("#### Confidence interval: ",
+                                 round(heritability[1, 2], 5),
+                                 "-",
+                                 round(heritability[1, 3], 5)))
+  } else {
+    heritability_out <- NULL
+  }
+
+  out_stats <- c("  ",
+                 "# Phenotype stats",
+                 paste0("#### Number of samples: ", n_sample),
+                 paste0("#### Number of observations: ", n_obs),
+                 paste0("#### Phenotype name: ", pheno_name),
+                 heritability_out,
+                 "  ",
+                 "```{r echo = FALSE, , message = FALSE, warning = FALSE, fig.align = 'center'}",
+                 paste0("load('", tmp_fn$pheno_fn, "')"),
+                 ".plotPheno4HTML(pheno = pheno, xlab = pheno_name)",
+                 "```")
+  write.table(out_stats, file = rmd_fn, sep = "\t",
+              row.names = FALSE, col.names = FALSE, quote = FALSE,
+              append = TRUE)
+}
+
+.plotPheno4HTML <- function(pheno, xlab){
+  df <- data.frame(x = pheno)
+  p1 <- ggplot(df, aes(x = x)) +
+    geom_histogram(fill = 'skyblue', color = 'darkblue') +
+    ylab('Count') +
+    theme(axis.title.y = element_text(size = 14),
+          axis.text.y = element_text(size = 12),
+          axis.text.x = element_blank(),
+          axis.ticks.x = element_blank(),
+          axis.title.x = element_blank())
+  p2 <- ggplot(df, aes(x = x)) +
+    geom_boxplot(fill = 'skyblue', color = 'darkblue') +
+    xlab(xlab) +
+    theme(axis.title.x = element_text(size = 14),
+          axis.text.x = element_text(size = 12),
+          axis.text.y = element_blank(),
+          axis.ticks.y = element_blank(),
+          panel.grid = element_blank())
+  p <- plot_grid(p1, p2, ncol = 1, rel_heights = c(3, 1), align = 'v', axis = 'lr')
+  return(p)
+}
+
+.putManhattan <- function(manhattan_fn, rmd_fn){
+  out_manhattan <- c("  ",
+                     "",
+                     "",
+                     "",
+                     "# Manhattan plot",
+                     "```{r echo = FALSE, , message = FALSE, warning = FALSE, fig.align = 'center', out.width = '70%'}",
+                     paste0("include_graphics('", manhattan_fn, "')"),
+                     "```")
+  write.table(out_manhattan, file = rmd_fn, sep = "\t",
+              row.names = FALSE, col.names = FALSE, quote = FALSE,
+              append = TRUE)
+}
+
+.putPeaks <- function(tmp_fn, peakblock_fn, candidatelist_fn, rmd_fn, max_variants = 1){
+  peakblock <- read.csv(peakblock_fn)
+  if(nrow(peakblock) != 0){
+    peak_index <- match(unique(peakblock$Peak_variantID), peakblock$VariantID)
+    peakblock$peak_label <- peakblock$Peak_id
+    peakblock$peak_label[-peak_index] <- ""
+
+    if(is.null(peakblock$Cor_id)){
+      peakblock$plot_id <- peakblock$Peak_id
+    } else {
+      peakblock$plot_id <- peakblock$Cor_id
+    }
+    out_peaks <- c("  ",
+                   "# Peaks",
+                   "```{r echo = FALSE, include = FALSE}",
+                   "datatable(matrix())",
+                   "```",
+                   "```{r echo = FALSE, message = FALSE, warning = FALSE}",
+                   paste0("peakblock <- read.csv('", peakblock_fn, "')"),
+                   paste0("candidate <- read.csv('", candidatelist_fn, "')"),
+                   paste0("load('", tmp_fn$pheno_fn, "')"),
+                   paste0("load('", tmp_fn$geno_fn, "')"),
+                   paste0("plot_peaks <- .summarizePeaks4HTML(peakblock = peakblock, geno = geno, pheno = pheno, candidate = candidate, max_variants = ", max_variants, ")"),
+                   "```")
+    for(i in seq_along(unique(peakblock$plot_id))){
+      out_peaks <- c(out_peaks,
+                     c(paste0("### Peak ", i),
+                       "#### Peak summary",
+                       "```{r echo = FALSE, message = FALSE, warning = FALSE, fig.align = 'center'}",
+                       paste0("yscroll1 <- nrow(plot_peaks[[", i, "]]$peak_summary) * 50"),
+                       "if(yscroll1 > 500){yscroll1 <- 500}",
+                       "yscroll1 <- paste0(as.character(yscroll1), 'px')",
+                       paste0("knit_print(formatRound(datatable(plot_peaks[[",
+                              i,
+                              "]]$peak_summary, class = 'cell-border stripe', rownames = FALSE,",
+                              "options = list(scrollY = yscroll1, scrollX = '300px')),",
+                              " columns=c('Peak_cor', 'Peak_pval', 'MAF', 'Est', 'Lowest_pval'), digits=3))"),
+                       "```",
+                       "  ",
+                       "#### Peak plot",
+                       "```{r echo = FALSE, message = FALSE, warning = FALSE, fig.align = 'center'}",
+                       paste0("print(plot_peaks[[", i, "]]$peak_plot)"),
+                       "```",
+                       "  ",
+                       "#### Haplotype-by-phenotype plot",
+                       "```{r echo = FALSE, message = FALSE, warning = FALSE, fig.align = 'center'}",
+                       paste0("print(plot_peaks[[", i, "]]$haplo_plot)"),
+                       "```",
+                       "  ",
+                       "#### Haplotype-by-phenotype list",
+                       "```{r echo = FALSE, message = FALSE, warning = FALSE, fig.align = 'center'}",
+                       paste0("yscroll2 <- nrow(plot_peaks[[", i, "]]$haplo_df) * 50"),
+                       "if(yscroll2 > 500){yscroll2 <- 500}",
+                       "yscroll2 <- paste0(as.character(yscroll2), 'px')",
+                       paste0("knit_print(datatable(plot_peaks[[",
+                              i,
+                              "]]$haplo_df, class = 'cell-border stripe', rownames = FALSE,",
+                              "options = list(scrollY = yscroll2, scrollX = '300px')))"),
+                       "```",
+                       "  ",
+                       "#### Candidate gene list",
+                       "```{r echo = FALSE, message = FALSE, warning = FALSE}",
+                       paste0("yscroll3 <- nrow(plot_peaks[[", i, "]]$candidate) * 50"),
+                       "if(yscroll3 > 500){yscroll3 <- 500}",
+                       "if(yscroll3 < 250){yscroll3 <- 250}",
+                       "yscroll3 <- paste0(as.character(yscroll3), 'px')",
+                       paste0("knit_print(formatRound(datatable(plot_peaks[[",
+                              i,
+                              "]]$candidate, class = 'cell-border stripe', rownames = FALSE,",
+                              "options = list(scrollY = yscroll3, scrollX = '300px')),",
+                              " columns=c('Max_Pval', 'Min_Pval', 'Maf_Max', 'Maf_Min'), digits=3))"),
+                       "```"))
+    }
+
+    write.table(out_peaks, file = rmd_fn, sep = "\t",
+                row.names = FALSE, col.names = FALSE, quote = FALSE,
+                append = TRUE)
+  }
+}
+
+.summarizePeaks4HTML <- function(peakblock, geno, pheno, candidate, max_variants = 1){
+  peak_index <- match(unique(peakblock$Peak_variantID), peakblock$VariantID)
+  peakblock$peak_label <- peakblock$Peak_id
+  peakblock$peak_label[-peak_index] <- ""
+
+  if(is.null(peakblock$Cor_id)){
+    peakblock$plot_id <- peakblock$Peak_id
+  } else {
+    peakblock$plot_id <- peakblock$Cor_id
+  }
+
+  plot_peaks_out <- NULL
+  for(i in unique(peakblock$plot_id)){
+    peakblock_i <- subset(peakblock, subset = plot_id == i)
+    peak_summary <- .peakSummary4HTML(peakblock_i = peakblock_i)
+    peak_plot <-.peakPlot4HTML(peakblock = peakblock, peakblock_i = peakblock_i)
+    haplo_plot <-.haploPlot4HTML(peakblock_i = peakblock_i,
+                                 geno = geno,
+                                 pheno = pheno,
+                                 max_variants = max_variants)
+    haplo_df <- haplo_plot$df
+    haplo_plot <- haplo_plot$p
+    candidate_i <- subset(candidate,
+                          subset = Peak_id %in% peakblock_i$Peak_id)
+    out_list <- list(peak_plot = peak_plot,
+                     haplo_plot = haplo_plot,
+                     haplo_df = haplo_df,
+                     peak_summary = peak_summary,
+                     candidate = candidate_i)
+    plot_peaks_out <- c(plot_peaks_out, list(out_list))
+  }
+  return(plot_peaks_out)
+}
+
+.peakSummary4HTML <- function(peakblock_i){
+  peak_summary <- NULL
+  for(j in unique(peakblock_i$Peak_id)){
+    peakblock_ij <- peakblock_i[peakblock_i$Peak_id == j, ]
+    peak_pos <- peakblock_ij$VariantID == peakblock_ij$Peak_variantID[1]
+    b <- boxplot(peakblock_ij$negLog10P, plot = FALSE)
+    qtile <- quantile(peakblock_ij$negLog10P, c(0.90, 0.99))
+    top10 <- peakblock_ij$negLog10P >= qtile[1]
+    top1 <- peakblock_ij$negLog10P >= qtile[2]
+    tmp <- data.frame(Peak_start = min(peakblock_ij$Pos),
+                      Peak_end = max(peakblock_ij$Pos),
+                      Lowest_pval = min(peakblock_ij$negLog10P),
+                      Number_of_variants = nrow(peakblock_ij),
+                      Mean_of_observations = round(mean(peakblock_ij$N_obs), 1),
+                      Top1_start = min(peakblock_ij$Pos[top1]),
+                      Top1_end = max(peakblock_ij$Pos[top1]),
+                      Top10_start = min(peakblock_ij$Pos[top10]),
+                      Top10_end = max(peakblock_ij$Pos[top10]))
+    peak_summary <- rbind(peak_summary, tmp)
+  }
+  if(is.null(peakblock_i$Cor_id)){
+    peak_info <- subset(peakblock_i, subset = peak_label != "",
+                        select = c(Peak_id:Peak_pval, MAF, Est))
+  } else {
+    peak_info <- subset(peakblock_i, subset = peak_label != "",
+                        select = c(Cor_id:Peak_pval, MAF, Est))
+  }
+  peak_summary <- cbind(Peak_id = peak_info$Peak_id, peak_summary)
+  peak_summary <- left_join(peak_info, peak_summary, "Peak_id")
+  return(peak_summary)
+}
+
+.peakPlot4HTML <- function(peakblock, peakblock_i){
+  x_in_range <- sapply(unique(peakblock_i$Peak_id), function(id){
+    in_chr <- peakblock$Chr == peakblock_i$Chr[peakblock_i$Peak_id == id][1]
+    lower_pos <- peakblock$Pos > min(peakblock_i$Pos[peakblock_i$Peak_id == id]) - 5e05
+    upper_pos <- peakblock$Pos < max(peakblock_i$Pos[peakblock_i$Peak_id == id]) + 5e05
+    return(which(in_chr & lower_pos & upper_pos))
+  })
+  x_in_range <- subset(peakblock, subset = seq_along(peakblock$Peak_id) %in% unlist(x_in_range))
+  x_in_range <- subset(x_in_range, subset = !Peak_id %in% peakblock_i$Peak_id)
+  x_in_range <- subset(x_in_range, subset = Peak_id %in% as.numeric(peak_label))
+  p <- ggplot(data = peakblock_i, mapping = aes(x = Pos * 1e-06, y = negLog10P, group = plot_id)) +
+    geom_point(data = x_in_range,
+               mapping = aes(x = Pos * 1e-06, y = negLog10P,
+                             group = plot_id),
+               color = "gray60",
+               size = 2,
+               shape = 20) +
+    geom_line(data = x_in_range,
+              mapping = aes(x = Pos * 1e-06, y = negLog10P,
+                            group = plot_id),
+              color = "gray60",
+              size = 0.5) +
+    geom_text(data = x_in_range,
+              mapping = aes(x = Pos * 1e-06, y = negLog10P,
+                            label = peak_label),
+              nudge_y = 1,
+              color = "gray60") +
+    geom_point(color = "magenta",
+               size = 3,
+               shape = 20) +
+    geom_line(color = "magenta",
+              size = 0.5) +
+    geom_text(mapping = aes(label = peak_label), nudge_y = 1) +
+    facet_wrap(~ Chr,
+               scales = "free",
+               strip.position = "bottom") +
+    ylab("-log10(P)") +
+    xlab("Variant position (Mb)") +
+    scale_y_continuous(expand = expansion(mult = c(0, 0.1)), limits = c(0, NA)) +
+    theme(axis.text.x = element_text(size = 11),
+          axis.text.y = element_text(size = 11),
+          axis.title.y = element_text(size = 13),
+          axis.title.x = element_text(size = 13),
+          strip.text.x = element_text(size = 11),
+          plot.title = element_text(hjust = 0.5, size = 20),
+          legend.position = "none",
+          axis.line.x.bottom = element_line(colour = "black"),
+          panel.spacing.x = unit(0.2, "lines"),
+          panel.border = element_blank(),
+          panel.background = element_rect(fill = "gray90"),
+          panel.grid.major.x = element_blank(),
+          panel.grid.minor.x = element_blank(),
+          strip.placement = "outside",
+          strip.background = element_rect(fill = "white", colour = "white"))
+  return(p)
+}
+
+.haploPlot4HTML <- function(peakblock_i, geno, pheno, max_variants = 1){
+  haplo_df <- NULL
+  for(j in unique(peakblock_i$Peak_id)){
+    peakblock_ij <- peakblock_i[peakblock_i$Peak_id == j, ]
+    haplo_df <- rbind(haplo_df,
+                      cbind(.makeHaploDF(peakblock_i = peakblock_ij,
+                                         geno = geno,
+                                         pheno = pheno,
+                                         max_variants = max_variants),
+                            Chr = peakblock_ij$Chr[1],
+                            Peak_id = peakblock_ij$Peak_id[1]))
+  }
+  p <- ggplot(haplo_df) +
+    geom_boxplot(aes(x = hap, y = pheno)) +
+    labs(title = paste("Peak @",
+                       paste(peakblock_i$Peak_chr[1],
+                             peakblock_i$Peak_pos[1],
+                             sep = "_"))) +
+    facet_wrap(~ Chr,
+               scales = "free_x",
+               strip.position = "bottom") +
+    ylab("") +
+    xlab("Haplotype group") +
+    scale_y_continuous(expand = expansion(mult = c(0, 0.1))) +
+    theme(axis.text.x = element_text(size = 11),
+          axis.text.y = element_text(size = 11),
+          axis.title.y = element_text(size = 13),
+          axis.title.x = element_text(size = 13),
+          strip.text.x = element_text(size = 11),
+          plot.title = element_text(hjust = 0.5, size = 20),
+          legend.position = "none",
+          axis.line.x.bottom = element_line(colour = "black"),
+          panel.spacing.x = unit(0.2, "lines"),
+          panel.border = element_blank(),
+          panel.background = element_rect(fill = "gray90"),
+          panel.grid.major.x = element_blank(),
+          panel.grid.minor.x = element_blank(),
+          strip.placement = "outside",
+          strip.background = element_rect(fill = "white", colour = "white"))
+  haplo_df$pheno <- as.character(haplo_df$pheno)
+  df <- rbind(cbind(Data = "Haplo",
+                    pivot_wider(subset(haplo_df, select = c(sample_id, Peak_id, hap)),
+                                names_from = sample_id,
+                                values_from = hap)),
+              cbind(Data = "Pheno",
+                    pivot_wider(subset(haplo_df, select = c(sample_id, Peak_id, pheno)),
+                                names_from = sample_id,
+                                values_from = pheno)))
+  df <- df[order(df$Peak_id), ]
+  return(list(p = p, df = df))
+}
+
+.makeHaploDF <- function(peakblock_i, geno, pheno, max_variants = 1){
+  valid <- geno$VariantID %in% peakblock_i$VariantID
+  target_geno <- subset(geno, subset = valid)
+  valid <- peakblock_i$VariantID %in% geno$VariantID
+  peakblock_i <- subset(peakblock_i, subset = valid)
+  variant_pos <- subset(target_geno, select = VariantID:Pos)
+  target_geno <- subset(target_geno, select = -(VariantID:Pos))
+
+  if(nrow(target_geno) >= 2){
+    target_geno <- apply(target_geno, 2, function(x){
+      if(sum(is.na(x))/length(x) > 0.8){
+        return(x)
+      }
+      tmp_gt <- target_geno
+      while(any(is.na(x))){
+        hit <- apply(tmp_gt, 2, function(y){
+          sum(x == y, na.rm = TRUE)
+        })
+        hit_gt <- tmp_gt[, which.max(hit)]
+        x[is.na(x)] <- hit_gt[is.na(x)]
+        tmp_gt <- tmp_gt[, -which.max(hit)]
+      }
+      return(x)
+    })
+  }
+
+  if(nrow(target_geno) > max_variants){
+    valid <- apply(target_geno, 1, function(x){
+      return(sum(is.na(x))/length(x) < 0.2)
+    })
+    if(sum(valid) != 0){
+      peakblock_i <- subset(peakblock_i, subset = valid)
+      variant_pos <- subset(variant_pos, subset = valid)
+      target_geno <- subset(target_geno, subset = valid)
+    }
+  }
+
+  if(nrow(target_geno) > max_variants){
+    peak_index <- which(peakblock_i$VariantID == peakblock_i$Peak_variantID[1])
+    n_variants <- length(variant_pos$Pos)
+    if(peak_index < ceiling(max_variants / 2)){
+      sel_start <- 1
+    } else {
+      if(n_variants - peak_index < ceiling(max_variants / 2)){
+        sel_start <- n_variants - max_variants + 1
+      } else {
+        sel_start <- peak_index - floor(max_variants / 2)
+      }
+    }
+    sel_variants <- seq(sel_start, length.out = max_variants)
+    valid <- seq_len(nrow(target_geno)) %in% sel_variants
+    peakblock_i <- subset(peakblock_i, subset = valid)
+    variant_pos <- subset(variant_pos, subset = valid)
+    target_geno <- subset(target_geno, subset = valid)
+  }
+  hap <- unique(target_geno)
+  hap <- apply(hap, 2, paste, collapse = "")
+
+  df <- data.frame(sample_id = names(geno)[-(1:3)],
+                   pheno = pheno,
+                   hap = factor(hap, sort(unique(hap))))
+  return(df)
+}
+
+.deleteFiles <- function(tmp_fn, rmd_fn){
+  out_del <- c("```{r include = FALSE}",
+               paste0("unlink('", tmp_fn$pheno_fn, "')"),
+               paste0("unlink('", tmp_fn$geno_fn, "')"),
+               "```",
+               "```{r include = FALSE}",
+               paste0("unlink('", rmd_fn, "')"),
+               "```")
+  write.table(out_del, file = rmd_fn, sep = "\t",
+              row.names = FALSE, col.names = FALSE, quote = FALSE,
+              append = TRUE)
+}
+
+
+
+################################################################################
+
+#' @importFrom data.table fread
+#' @import rtracklayer
+#' @importFrom Biostrings readDNAStringSet writeXStringSet
+compareGenomes <- function(object, mummer_snp, ref_fa, alt_fa, ref_gff, alt_gff,
+                           rsquare = 0.9, n_threads = 1){
+  if(!exist.gdsn(node = object$root, path = "peakcall")){
+    stop("No peakcall data in the input LazyQTL object.\n",
+         "Run callPeakBlock() to call peaks.")
+  }
+  if(recalc){
+    if(!exist.gdsn(node = object$root, path = "recalc")){
+      stop("reclac = TRUE was specified but, \n",
+           "no recalculated scan data in the input LazyQTL object.\n",
+           "Run recalcAssoc() to recalculate associations.")
+    }
+    path <- "recalc"
+
+  } else {
+    path <- "peakcall"
+  }
+
+  snps <- fread(file = mummer_snp,
+                header = FALSE,
+                skip = 4,
+                sep = "\t",
+                colClasses = c("integer", "factor", "factor",
+                               "integer", "integer", "integer",
+                               "integer", "integer", "integer", "integer",
+                               "factor", "factor"),
+                select = c(1:4, 11:12),
+                col.names = c("ref_pos", "ref_allele", "alt_allele",
+                              "alt_pos", "ref_chr", "alt_chr"))
+  ref_gff <- import.gff(ref_gff)
+  ref_gff <- ref_gff[ref_gff$type %in% c("mRNA", "transcript")]
+  alt_gff <- import.gff(alt_gff)
+  alt_gff <- alt_gff[alt_gff$type %in% c("mRNA", "transcript")]
+  ref_cds <- readDNAStringSet(ref_fa)
+  alt_cds <- readDNAStringSet(alt_fa)
+  genes_node <- addfolder.gdsn(node = object$root, name = "genes", replace = TRUE)
+  chr <- .get_data(x = object, node = "snp.chromosome")
+  pos <- .get_data(x = object, node = "snp.position")
+  snp_id <- .get_data(x = object, node = "snp.id")
+  for(i in seq_along(x$pheno_names)){
+    pheno_name <- object@lazydata$pheno_names[i]
+    peaks <- .get_peakcall(x = object, pheno_name = pheno_name, recalc = recalc)
+    if(is.null(peaks)){
+      add.gdsn(node = genes_node, name = pheno_name,
+               storage = "string32", compress = "ZIP_RA")
+      next
+    }
+    peak_snp_pair <- .get_snp_pair(snp_id = snp_id, chr = chr, pos = pos,
+                                   snps = snps, peaks = peaks, rsquare = rsquare)
+    gene_list <- .get_gene_list(peak_snp_pair = peak_snp_pair,
+                                ref_gff = ref_gff, alt_gff = alt_gff)
+    .rbbh(gene_list = gene_list, ref_cds = ref_cds, alt_cds = alt_cds,
+          n_threads = n_threads)
+  }
+
+
+  gr <- lapply(object$marker_pairs, .makeGR)
+  genes <- lapply(gr, function(gr_i){
+    ref <- lapply(gr_i$ref, function(gr_iii){
+      ol <- findOverlaps(gr_iii, ref_gff)
+      ol <- ref_gff[subjectHits(ol)]
+      out <- ol[ol$type == "gene"]
+      return(out)
+    })
+    alt <- lapply(gr_i$alt, function(gr_iii){
+      ol <- findOverlaps(gr_iii, alt_gff)
+      ol <- alt_gff[subjectHits(ol)]
+      out <- ol[ol$type == "gene"]
+      return(out)
+    })
+    return(list(ref = ref, alt = alt))
+  })
+
+  rbh_out <- lapply(genes, .rbh)
+}
+
+#' @importFrom GenomicRanges GRanges
+#' @importFrom IRanges IRanges
+.get_snp_pair <- function(snp_id, chr, pos, snps, peaks, rsquare){
+  out <- tapply(seq_along(peaks$peakID), peaks$peakID, function(i){
+    sel_i <- peaks$peakID == peaks$peakID[i][1] & peaks$LD2peak >= rsquare
+    peak_id <- peaks$VariantID[sel_i]
+    min_id <- min(peak_id)
+    max_id <- max(peak_id)
+    if(chr[min_id] == chr[min_id - 1]){
+      up_id <- min_id - 1
+    } else {
+      up_id <- min_id
+    }
+    if(chr[max_id] == chr[max_id + 1]){
+      down_id <- max_id + 1
+    } else {
+      down_id <- max_id
+    }
+    up_snp <- snps[snps$ref_chr %in% chr[up_id] & snps$ref_pos %in% pos[up_id], ]
+    down_snp <- snps[snps$ref_chr %in% chr[down_id] & snps$ref_pos %in% pos[down_id], ]
+    return(rbind(up_snp, down_snp))
+  })
+  return(out)
+}
+
+#' @importFrom IRanges findOverlaps
+.get_gene_list <- function(peak_snp_pair, ref_gff, alt_gff){
+  out <- lapply(peak_snp_pair, function(x){
+    ref_gr <- GRanges(seqnames = x$ref_chr[1],
+                      ranges = IRanges(start = min(x$ref_pos[1]),
+                                       end = max(x$ref_pos[2])))
+    alt_gr <- GRanges(seqnames = x$alt_chr[1],
+                      ranges = IRanges(start = min(x$alt_pos[1]),
+                                       end = max(x$alt_pos[2])))
+    ref_ol <- findOverlaps(ref_gr, ref_gff)
+    ref_tx <- ref_gff$ID[subjectHits(ref_ol)]
+    alt_ol <- findOverlaps(alt_gr, alt_gff)
+    alt_tx <- alt_gff$ID[subjectHits(alt_ol)]
+    return(list(ref = ref_tx, alt = alt_tx))
+  })
+  return(out)
+}
+
+#' @import rBLAST
+.rbbh <- function(gene_list, ref_cds, alt_cds, n_threads){
+  out <- sapply(seq_along(gene_list), function(i){
+    ref_db <- tempfile(pattern = paste0("ref_db_", i, "_"), fileext = ".fa")
+    ref_cds_i <- ref_cds[names(ref_cds) %in% gene_list[[i]]$ref]
+    writeXStringSet(x = ref_cds_i, filepath = ref_db)
+    alt_db <- tempfile(pattern = paste0("alt_db_", i, "_"), fileext = ".fa")
+    alt_cds_i <- alt_cds[names(alt_cds) %in% gene_list[[i]]$alt]
+    writeXStringSet(x = alt_cds_i, filepath = alt_db)
+
+    makeblastdb(file = ref_db, dbtype = "nucl")
+    makeblastdb(file = alt_db, dbtype = "nucl")
+
+    ref_db <- blast(db = ref_db, type = "blastn")
+    alt_db <- blast(db = alt_db, type = "blastn")
+
+    task <- "-task blastn"
+    options(scipen = 10^6)
+    blast_out1 <- .blast_search(fa = ref_cds_i,
+                                db = alt_db,
+                                n_threads = n_threads)
+    blast_out2 <- .blast_search(fa = alt_cds_i,
+                                db = ref_db,
+                                n_threads = n_threads)
+    blast_out1 <- .blast_filter(x = blast_out1)
+    blast_out2 <- .blast_filter(x = blast_out2)
+    rbbh_out <- .find_reciprocal(x1 = blast_out1, x2 = blast_out2)
+    out <- .classify_hits(ref = ref_cds_i, alt = alt_cds_i, rbbh_out = rbbh_out)
+
+    options(scipen = 0)
+    return(rbbh_out)
+  })
+  return(out)
+}
+
+.blast_search <- function(fa,
+                          db,
+                          n_threads){
+  blast_args <- paste("-task blastn",
+                      "-best_hit_overhang 0.1",
+                      "-best_hit_score_edge 0.1",
+                      "-max_target_seqs 10000",
+                      "-evalue 1e-3",
+                      paste("-num_threads", n_threads))
+
+  out <- predict(db, fa,
+                 silent = TRUE,
+                 BLAST_args = blast_args,
+                 custom_format = "qseqid sseqid pident evalue qcovs")
+  return(out)
+}
+
+.blast_filter <- function(x){
+  n_hit <- unlist(tapply(x$qseqid, x$qseqid, length))
+  single_hit <- x$qseqid %in% names(n_hit)[n_hit == 1]
+  single_hit <- x[single_hit, ]
+  mult_hit <- x$qseqid %in% names(n_hit)[n_hit > 1]
+  mult_hit <- x[mult_hit, ]
+
+  filter <- tapply(mult_hit$evalue, mult_hit$qseqid, min)
+  hit <- match(mult_hit$qseqid, names(filter))
+  filter <- filter[hit]
+  mult_hit <- subset(mult_hit, subset = evalue == filter)
+
+  qcov_pident <- mult_hit$pident * mult_hit$qcovs * 1e-2
+
+  filter <- tapply(qcov_pident, mult_hit$qseqid, max)
+  hit <- match(mult_hit$qseqid, names(filter))
+  filter <- filter[hit]
+  mult_hit <- subset(mult_hit, subset = pident == filter)
+
+  out <- rbind(single_hit, mult_hit)
+
+  return(out)
+}
+
+.find_reciprocal <- function(x1, x2){
+  id1 <- paste(x1$qseqid, x1$sseqid, sep = "_")
+  id2 <- paste(x2$sseqid, x2$qseqid, sep = "_")
+  rhit <- id1 %in% id2
+  out <- subset(x1, subset = rhit, select = c(qseqid, sseqid))
+  out <- unique(out)
+  return(out)
+}
+
+.classify_hits <- function(ref, alt, rbbh_out){
+  gene_id_ref <- sub("\\..+|-.+", "", names(ref))
+  gene_id_alt <- sub("\\..+|-.+", "", names(alt))
+  gene_id_q <- sub("\\..+|-.+", "", rbbh_out$qseqid)
+  gene_id_s <- sub("\\..+|-.+", "", rbbh_out$sseqid)
+  orphan_ref <- unique(gene_id_ref[!gene_id_ref %in% gene_id_q])
+  orphan_alt <- unique(gene_id_alt[!gene_id_alt %in% gene_id_s])
+  rbbh_df <- data.frame(ref = gene_id_q, alt = gene_id_s)
+  rbbh_df <- unique(rbbh_df)
+  dup_ref <- rbbh_df$ref[duplicated(rbbh_df$ref)]
+  dup_alt <- rbbh_df$alt[duplicated(rbbh_df$alt)]
+  rbbh_df$class <- NA
+  check <- rbbh_df$ref %in% dup_ref & rbbh_df$alt %in% dup_alt
+  rbbh_df$class[check] <- "MtoM"
+  check <- rbbh_df$ref %in% dup_ref & !rbbh_df$alt %in% dup_alt
+  rbbh_df$class[check] <- "Mto1"
+  check <- !rbbh_df$ref %in% dup_ref & rbbh_df$alt %in% dup_alt
+  rbbh_df$class[check] <- "1toM"
+  check <- !rbbh_df$ref %in% dup_ref & !rbbh_df$alt %in% dup_alt
+  rbbh_df$class[check] <- "1to1"
+  out <- list(paired = rbbh_df,
+              orphan_ref = orphan_ref,
+              orphan_alt = orphan_alt)
+  return(out)
+}
+
+################################################################################
+evalModel <- function(object, recalc = TRUE, n_core = 1){
+  if(!exist.gdsn(node = object$root, path = "peakcall")){
+    stop("No peakcall data in the input LazyQTL object.\n",
+         "Run callPeakBlock() to call peaks.")
+  }
+  if(recalc){
+    if(!exist.gdsn(node = object$root, path = "recalc")){
+      stop("reclac = TRUE was specified but, \n",
+           "no recalculated scan data in the input LazyQTL object.\n",
+           "Run recalcAssoc() to recalculate associations.")
+    }
+    path <- "recalc"
+
+  } else {
+    path <- "peakcall"
+  }
+
+  eval_node <- addfolder.gdsn(node = object$root, name = "eval.model", replace = TRUE)
+
+  scan_node <- ls.gdsn(node = index.gdsn(node = object,
+                                         path = paste0(path, "/peaks")))
+  n_sample <- length(.get_data(x = object, node = "sample.id"))
+  snp_id <- .get_data(x = object, node = "snp.id")
+  makeDF_FUN <- eval(parse(text = .get_data(x = object, node = "makeDF_FUN")))
+  formula <- .get_data(x = object, node = "formula")
+  binary <- .get_data(x = object, node = "pheno_type/binary")
+  kruskal <- .get_data(x = object, node = "kruskal")
+  for(i in phe_index){
+    pheno_name <- object@lazydata$pheno_names[i]
+    dokruskal <- pheno_names %in% kruskal
+
+    pheno_node <- addfolder.gdsn(node = eval_node, name = pheno_name, replace = TRUE)
+
+    if(dokruskal){
+      message("Skip evalution for non-parametric data: ", pheno_name)
+      next
+    }
+    peaks <- .get_peakcall(x = object, pheno_name = scan_node[i], recalc = recalc)
+    if(!is.null(peaks)){
+      peaks <- subset(peaks, subset = peakVariantID == VariantID)
+      pheno <- .get_data(x = object, node = paste("pheno", pheno_name, sep = "/"))
+      glm_pred <- lapply(peaks$peakVariantID, .glm_pred, x = object, pheno = pheno,
+                         makeDF_FUN = makeDF_FUN, formula = formula,
+                         binary = binary[i], n_sample, snp_id)
+      glm_pred <- do.call("rbind", glm_pred)
+
+      glm_pred_all <- .glm_pred(x = object, pheno = pheno, peak = peaks$peakVariantID,
+                                makeDF_FUN = makeDF_FUN, formula = formula,
+                                binary = binary[i], n_sample = n_sample,
+                                snp_id = snp_id)
+
+      glassp_pred <- .glasso_pred(x = object, pheno = pheno, peak = peaks$peakVariantID,
+                                  makeDF_FUN = makeDF_FUN, formula = formula,
+                                  binary = binary[i], n_sample = n_sample,
+                                  snp_id = snp_id)
+
+      gk_pred <- .gk_pred(x = object, pheno = pheno, peak = peaks$peakVariantID,
+                          makeDF_FUN = makeDF_FUN, formula = formula,
+                          binary = binary[i], n_sample = n_sample,
+                          snp_id = snp_id, n_core = n_core)
+
+      rr_pred <- .rr_pred(x = object, pheno = pheno, peak = peaks$peakVariantID,
+                          makeDF_FUN = makeDF_FUN, formula = formula,
+                          binary = binary[i], n_sample = n_sample,
+                          snp_id = snp_id, n_core = n_core)
+
+      add.gdsn(node = pheno_node,
+               name = "glm_single",
+               val = as.matrix(glm_pred),
+               storage = "double",
+               replace = TRUE)
+      add.gdsn(node = pheno_node,
+               name = "glm_all",
+               val = as.matrix(glm_pred_all),
+               storage = "double",
+               replace = TRUE)
+      add.gdsn(node = pheno_node,
+               name = "glasso",
+               val = as.matrix(glassp_pred),
+               storage = "double",
+               replace = TRUE)
+      add.gdsn(node = pheno_node,
+               name = "gk",
+               val = as.matrix(gk_pred),
+               storage = "double",
+               replace = TRUE)
+      add.gdsn(node = pheno_node,
+               name = "rr",
+               val = as.matrix(rr_pred),
+               storage = "double",
+               replace = TRUE)
+
+    } else {
+      add.gdsn(node = pheno_node,
+               name = "glm_single",
+               storage = "double",
+               replace = TRUE)
+      add.gdsn(node = pheno_node,
+               name = "glm_all",
+               storage = "double",
+               replace = TRUE)
+      add.gdsn(node = pheno_node,
+               name = "glasso",
+               storage = "double",
+               replace = TRUE)
+      add.gdsn(node = pheno_node,
+               name = "gk",
+               storage = "double",
+               replace = TRUE)
+      add.gdsn(node = pheno_node,
+               name = "rr",
+               storage = "double",
+               replace = TRUE)
+    }
+  }
+}
+
+#' @importFrom rrBLUP kin.blup
+#' @importFrom pROC auc
+.gk_pred <- function(x, pheno, peak, makeDF_FUN, formula,
+                     binary, n_sample, snp_id, n_core){
+  sel <- list(rep(TRUE, n_sample), snp_id %in% peak)
+  g <- .get_data(x = x, node = "genotype", sel = sel)
+  g <- g - 1
+  rownames(g) <- seq_len(n_sample)
+  data <- data.frame(pheno = pheno, gid = seq_len(n_sample))
+  k <- dist(g)
+  blup <- kin.blup(data = data, geno = "gid", pheno = "pheno",
+                   GAUSS = TRUE, K = k, PEV = TRUE, n.core = n_core)
+  pred <- blup$pred
+  auc_out <- suppressMessages(auc(pheno, pred))
+  threthold <- seq(0, 1, 0.05)
+  out <- lapply(threthold, .pred_metrics, pred, pheno)
+  out <- do.call("rbind", out)
+  out$auc <- auc_out
+  out$best <- FALSE
+  out$best[which.max(out$f)] <- TRUE
+  out$pve <- blup$Vg / (blup$Vg + blup$Ve)
+  return(out)
+}
+
+#' @importFrom rrBLUP kin.blup
+#' @importFrom pROC auc
+.rr_pred <- function(x, pheno, peak, makeDF_FUN, formula,
+                     binary, n_sample, snp_id, n_core){
+  sel <- list(rep(TRUE, n_sample), snp_id %in% peak)
+  g <- .get_data(x = x, node = "genotype", sel = sel)
+  g <- g - 1
+  rownames(g) <- seq_len(n_sample)
+  data <- data.frame(pheno = pheno, gid = seq_len(n_sample))
+  k <- A.mat(g)
+  blup <- kin.blup(data = data, geno = "gid", pheno = "pheno",
+                   GAUSS = FALSE, K = k, PEV = TRUE, n.core = n_core)
+  pred <- blup$pred
+  auc_out <- suppressMessages(auc(pheno, pred))
+  threthold <- seq(0, 1, 0.05)
+  out <- lapply(threthold, .pred_metrics, pred, pheno)
+  out <- do.call("rbind", out)
+  out$auc <- auc_out
+  out$best <- FALSE
+  out$best[which.max(out$f)] <- TRUE
+  out$pve <- blup$Vg / (blup$Vg + blup$Ve)
+  return(out)
+}
+
+#' @importFrom gglasso gglasso cv.gglasso
+.glasso_pred <- function(x, pheno, peak, makeDF_FUN, formula,
+                         binary, n_sample, snp_id){
+  sel <- list(rep(TRUE, n_sample), snp_id %in% peak)
+  g <- .get_data(x = x, node = "genotype", sel = sel)
+  sel_snp_id <- snp_id[sel[[2]]]
+  df <- NULL
+  for(j in peak){
+    index <- sel_snp_id %in% j
+    tmp_df <- .makeDF(g = g[, index],
+                      phe = pheno,
+                      makeDF_FUN = makeDF_FUN,
+                      formula = formula)
+    if(is.null(df)){
+      names(tmp_df$df)[-1] <- paste(names(tmp_df$df)[-1], j, sep = "_")
+      df <- tmp_df
+
+    } else {
+      names(tmp_df$df)[-1] <- paste(names(tmp_df$df)[-1], j, sep = "_")
+      df$df <- cbind(df$df, subset(tmp_df$df, select = -phe))
+    }
+    df$fml <- paste0("phe ~ ",
+                     paste(names(df$df)[-1], collapse = " + "))
+  }
+
+  if(binary){
+    loss <- "logit"
+  } else {
+    loss <- "ls"
+  }
+
+  predictors <- as.matrix(subset(df$df, select = -phe))
+  response <- df$df$phe
+  response[response == 0] <- -1
+  grp <- rep(seq_along(peak), each = 2)
+  gl <- gglasso(x = predictors, y = response, group = grp, loss = loss)
+  cv_gl <- cv.gglasso(x = predictors, y = response, group = grp, loss = loss)
+  gl_coef <- coef(cv_gl, s = "lambda.min")
+  pred <- predict(gl, newx = predictors, s = cv_gl$lambda.min, type = "link")
+  pred <- as.vector(pred)
+  pred <- exp(pred) / (1 + exp(pred))
+  auc_out <- suppressMessages(auc(pheno, pred))
+  threthold <- seq(0, 1, 0.05)
+  out <- lapply(threthold, .pred_metrics, pred, pheno)
+  out <- do.call("rbind", out)
+  out$auc <- auc_out
+  out$best <- FALSE
+  out$best[which.max(out$f)] <- TRUE
+  return(out)
+}
+
+#' @importFrom rms lrm
+.glm_pred <- function(x, pheno, peak, makeDF_FUN, formula,
+                      binary, n_sample, snp_id){
+  sel <- list(rep(TRUE, n_sample), snp_id %in% peak)
+  g <- .get_data(x = x, node = "genotype", sel = sel)
+
+  if(length(peak) > 1){
+    sel_snp_id <- snp_id[sel[[2]]]
+    df <- NULL
+    for(j in peak){
+      index <- sel_snp_id %in% j
+      tmp_df <- .makeDF(g = g[, index],
+                        phe = pheno,
+                        makeDF_FUN = makeDF_FUN,
+                        formula = formula)
+      if(is.null(df)){
+        names(tmp_df$df)[-1] <- paste(names(tmp_df$df)[-1], j, sep = "_")
+        df <- tmp_df
+
+      } else {
+        names(tmp_df$df)[-1] <- paste(names(tmp_df$df)[-1], j, sep = "_")
+        df$df <- cbind(df$df, subset(tmp_df$df, select = -phe))
+      }
+      df$fml <- paste0("phe ~ ",
+                       paste(names(df$df)[-1], collapse = " + "))
+    }
+  } else {
+    df <- .makeDF(g = g,
+                  phe = pheno,
+                  makeDF_FUN = makeDF_FUN,
+                  formula = formula)
+  }
+
+  if(binary){
+    family <- "binomial"
+  } else {
+    family <- "gaussian"
+  }
+  lr <- lrm(formula = formula(df$fml), data = df$df)
+
+  if(binary){
+    pred <- predict(lr, type = "fitted")
+    auc_out <- suppressMessages(auc(pheno, pred))
+    if(length(peak) == 1){
+      pred <- as.numeric(factor(pred))
+      pred <- pred - 1
+      threthold <- 0:2
+    } else {
+      threthold <- seq(0, 1, 0.05)
+    }
+    out <- lapply(threthold, .pred_metrics, pred, pheno)
+    out <- do.call("rbind", out)
+    out$auc <- auc_out
+    out$best <- FALSE
+    out$best[which.max(out$f)] <- TRUE
+    if(length(peak) == 1){
+      out <- cbind(peakID = peak, out)
+    }
+  } else {
+
+  }
+
+  out$AIC <- model$aic
+  out$pR2 <- lr$stats["R2"]
+  return(out)
+}
+
+.pred_metrics <- function(threshold, pred, pheno){
+  pred_pheno <- as.integer(pred >= threshold)
+  pheno <- as.integer(pheno)
+  tp <- sum(pheno == 1 & pred_pheno == 1)
+  fp <- sum(pheno == 0 & pred_pheno == 1)
+  tn <- sum(pheno == 0 & pred_pheno == 0)
+  fn <- sum(pheno == 1 & pred_pheno == 0)
+  accuracy <- (tp + tn) / (tp + fp + tn + fn)
+  precision <- tp / (tp + fp)
+  recall <- tp / (tp + fn)
+  fpr <- fp / (tn + fp)
+  f <- 2 * precision * recall / (precision + recall)
+  out <- data.frame(threshold = threshold,
+                    tp = tp, fp = fp, tn = tn, fn = fn,
+                    accuracy = accuracy, precision = precision,
+                    recall = recall, fpr = fpr, f = f)
+  return(out)
+}

@@ -16,12 +16,6 @@ library(GBScleanR)
 library(ggplot2)
 ```
 
-## Setting Up the Working Directory
-Create a directory to store the results:
-```{r}
-dir.create("/home/ftom/hdd3/kosami/ponkan_ehime47/qtl")
-```
-
 ## Loading Input GDS File and Building a LazyGas Object
 Load the input GDS file and build a `LazyGas` class object:
 ```{r}
@@ -55,8 +49,8 @@ create_gds <-  list(genotype = genotype,
                     snp.allele = snp.allele,
                     haplotype = haplotype,
                     dosage = dosage)
-lg2 <- buildLazyGas(gds_fn = file.path(temp_dir, "sample.gds"), 
-                    create_gds = create_gds)
+lg <- buildLazyGas(gds_fn = file.path(temp_dir, "sample.gds"), 
+                   create_gds = create_gds)
 ```
 
 
