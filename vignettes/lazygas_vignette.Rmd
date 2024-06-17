@@ -19,7 +19,7 @@ library(ggplot2)
 ## Loading Input GDS File and Building a LazyGas Object
 Load the input GDS file and build a `LazyGas` class object:
 ```{r}
-gds_fn <- "inst/extdata/sample.gds"
+gds_fn <- system.file("extdata", "sample.gds", package = "lazyGas")
 lg <- buildLazyGas(gds_fn = gds_fn, load_filter = TRUE, overwrite = FALSE)
 ```
 
@@ -57,71 +57,45 @@ lg <- buildLazyGas(gds_fn = file.path(temp_dir, "sample.gds"),
 ## Loading and Preprocessing Phenotype Data
 Load the phenotype data:
 ```{r}
-pheno_fn <- "/home/ftom/hdd3/kosami/docs/2024/disease_resist_citrus.csv"
+pheno_fn <- system.file("extdata", "pheno.csv", package = "lazyGas")
 pheno <- read.csv(file = pheno_fn)
-```
-
-Reformat sample IDs to match those in the GDS file:
-```{r}
-sample_id <- getSamID(object = lg)
-pheno$ID <- paste0("Kosami23_", sprintf("%03d", pheno$ID))
-```
-
-Calculate the average disease resistance evaluation scores per sample and handle invalid scores:
-```{r}
-pheno$score <- rowMeans(pheno[, -1], na.rm = TRUE)
-pheno$score[pheno$rep4 <= 3 & !is.na(pheno$rep4)] <- NA
-```
-
-Load additional phenotype data and combine:
-```{r}
-pheno_fn <- "/home/ftom/hdd3/kosami/docs/2024/presence_needles.csv"
-pheno2 <- read.csv(file = pheno_fn)
-pheno <- cbind(pheno, pheno2[, -1])
 ```
 
 Assign phenotype data to the LazyGas object:
 ```{r}
 lg <- assignPheno(object = lg,
-                  pheno = subset(pheno, select = c(ID, score:needle.freq_1.4y)),
-                  rename = c("Canker resistant",
-                             "Leaf-to-top length (1Y)",
-                             "Node number (1Y)",
-                             "Needle number (1Y)",
-                             "Needle frequency (1Y)",
-                             "Node number (1.3Y)",
-                             "Needle number (1.3Y)",
-                             "Needle frequency (1.3Y)"))
+                  pheno = pheno,
+                  rename = "Fruite weight")
 ```
 
 ## Visualizing Phenotype Data
 Generate and save plots for phenotype data:
 ```{r}
 pheno <- getPheno(object = lg)
-pdf("/home/ftom/hdd3/kosami/ponkan_ehime47/qtl/phenotype_plot.pdf")
 for(i in seq_along(pheno$pheno_names)){
   p <- plotPheno(object = lg, pheno = i, xlab = pheno$pheno_names[i])
   print(p)
 }
-dev.off()
 ```
 
-## Confirming Haplotype Data
-Check haplotypes and sample IDs:
-```{r}
-hap <- getHaplotype(object = lg, valid = FALSE)
-all_sample_id <- getSamID(object = lg, valid = FALSE)
-valid_indices <- validSam(object = lg)
-all_sample_id[!valid_indices] # IDs of invalid (parental) samples
-hap[, !valid_indices, 1] # Assigned integers for the invalid (parental) samples
-```
+<!-- ## Confirming dosage Data -->
+<!-- Check dosage and sample IDs: -->
+<!-- ```{r} -->
+<!-- ds <- getGenotype(object = lg, node = "dosage", valid = FALSE) -->
+<!-- all_sample_id <- getSamID(object = lg, valid = FALSE) -->
+<!-- valid_indices <- validSam(object = lg) -->
+<!-- all_sample_id[!valid_indices] # IDs of invalid (parental) samples -->
+<!-- ds[!valid_indices, 1] # Assigned integers for the invalid (parental) samples -->
+<!-- ``` -->
 
 ## Conducting Association Analysis
-Define a function to convert haplotype data to a model matrix:
+Define a function to convert dosage data to a model matrix:
 ```{r}
-makeDF_FUN <- function(h){
-  out <- cbind(colSums(h == 1), colSums(h == 3))
-  colnames(out) <- c("hap1", "hap3")
+makeDF_FUN <- function(g){
+  add <- g
+  dom <- as.numeric(g == 1)
+  out <- data.frame(add = add, dom = dom)
+  colnames(out) <- c("add", "dom")
   return(out)
 }
 ```
@@ -129,9 +103,9 @@ makeDF_FUN <- function(h){
 Run the association scan:
 ```{r}
 scanAssoc(object = lg,
-          formula = "hap1 + hap3",
+          formula = "add + dom",
           makeDF_FUN = makeDF_FUN,
-          geno_format = "haplotype",
+          geno_format = "dosage",
           kruskal = NULL)
 ```
 
@@ -139,40 +113,34 @@ scanAssoc(object = lg,
 Generate Manhattan plots for association results:
 ```{r}
 pheno <- getPheno(object = lg)
-pdf("/home/ftom/hdd3/kosami/ponkan_ehime47/qtl/manhattan.pdf")
 for(i in seq_along(pheno$pheno_names)){
   p <- plotManhattan(object = lg, pheno = i)
   p <- p + labs(title = pheno$pheno_names[i])
   print(p)
 }
-dev.off()
 ```
 
 Call and visualize peak blocks:
 ```{r}
-callPeakBlock(object = lg, signif = 0.3, threshold = 0.4)
+callPeakBlock(object = lg, signif = 0.05, threshold = 0.8)
 
-pdf("/home/ftom/hdd3/kosami/ponkan_ehime47/qtl/peaks.pdf")
 for(i in seq_along(pheno$pheno_names)){
   p <- plotPeaks(object = lg, pheno = i, recalc = FALSE)
   p <- p + labs(title = pheno$pheno_names[i])
   print(p)
 }
-dev.off()
 ```
 
 ## Recalculating and Visualizing Peaks
 Recalculate and visualize peaks:
 ```{r}
-recalcAssoc(object = lg, signif = 0.3, threshold = 0.4)
+recalcAssoc(object = lg, signif = 0.05, threshold = 0.8)
 
-pdf("/home/ftom/hdd3/kosami/ponkan_ehime47/qtl/peaks_recalc.pdf")
 for(i in seq_along(pheno$pheno_names)){
   p <- plotPeaks(object = lg, pheno = i, recalc = TRUE)
   p <- p + labs(title = pheno$pheno_names[i])
   print(p)
 }
-dev.off()
 ```
 
 ## Visualizing Haplotype and Phenotype Data
