@@ -65,7 +65,7 @@ Assign phenotype data to the LazyGas object:
 ```{r}
 lg <- assignPheno(object = lg,
                   pheno = pheno,
-                  rename = "Fruite weight")
+                  rename = "Fruit weight")
 ```
 
 ## Visualizing Phenotype Data
@@ -146,28 +146,40 @@ for(i in seq_along(pheno$pheno_names)){
 ## Visualizing Haplotype and Phenotype Data
 Generate plots for haplotype and phenotype data:
 ```{r}
-pdf("/home/ftom/hdd3/kosami/ponkan_ehime47/qtl/pheno_haplo_plot.pdf")
 for(i in seq_along(pheno$pheno_names)){
   out <- haploPlot(object = lg, pheno = i, recalc = FALSE)
   print(out)
 }
-dev.off()
 
-pdf("/home/ftom/hdd3/kosami/ponkan_ehime47/qtl/pheno_haplo_plot_recalc.pdf")
 for(i in seq_along(pheno$pheno_names)){
   out <- haploPlot(object = lg, pheno = i, recalc = TRUE)
   print(out)
 }
-dev.off()
 ```
 
 ## Extracting Data
 Extract data for further analysis:
 ```{r}
 pheno <- getPheno(object = lg)
-scan_pheno_1 <- lazyData(object = lg, dataset = "scan", pheno = pheno$pheno_names[1])
-peakcall_pheno_5 <- lazyData(object = lg, dataset = "peakcall", pheno = pheno$pheno_names[5])
-recalc_pheno_2 <- lazyData(object = lg, dataset = "recalc", pheno = pheno$pheno_names[2])
+sapply(pheno, head)
+```
+
+
+```{r}
+scan <- lazyData(object = lg, dataset = "scan", pheno = pheno$pheno_names[1])
+head(scan)
+```
+
+
+```{r}
+peakcall <- lazyData(object = lg, dataset = "peakcall", pheno = pheno$pheno_names[1])
+head(peakcall)
+```
+
+
+```{r}
+recalc <- lazyData(object = lg, dataset = "recalc", pheno = pheno$pheno_names[1])
+head(recalc)
 ```
 
 ## List up candidate genes
