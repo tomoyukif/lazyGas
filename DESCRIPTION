@@ -10,9 +10,11 @@ Authors@R: person("Tomoyuki", "Furuta",
 Description: Genetic analysis pipeline for lazy guys.
 License: GPL-3 + file LICENSE
 Encoding: UTF-8
-Imports: stats, utils, methods, ggplot2, GBScleanR, gdsfmt
+Depends: GBScleanR
+Imports: stats, utils, methods, ggplot2, gdsfmt, GenomeInfoDb, GenomicRanges, IRanges,
+  S4Vectors, SNPRelate, SeqArray, cowplot, dplyr, parameters, rtracklayer, vcfR
 SystemRequirements: GNU make, C++11
-Suggests: knitr, rmarkdown
+Suggests: BiocStyle, knitr, rmarkdown
 VignetteBuilder: knitr
 Roxygen: list(markdown = TRUE)
 RoxygenNote: 7.3.1

@@ -7,7 +7,7 @@
 scanAssoc(
   object,
   formula,
-  makeDF_FUN = NULL,
+  conv_fun = NULL,
   geno_format = c("genotype", "dosage", "haplotype"),
   kruskal = NULL,
   ...
@@ -18,7 +18,7 @@ scanAssoc(
 
 \item{formula}{The formula of the regression model}
 
-\item{makeDF_FUN}{The function to modify model data for the regression}
+\item{conv_fun}{The function to convert genotype data to a model matrix for the regression}
 
 \item{out_fn}{Prefix of output file name}
 }

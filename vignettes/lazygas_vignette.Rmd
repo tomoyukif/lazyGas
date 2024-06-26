@@ -1,8 +1,19 @@
 ---
 title: "Genetic Association Study with LazyGas"
-author: "Your Name"
-date: "`r Sys.Date()`"
-output: html_document
+author: 
+  -name: "Tomoyuki Furuta"
+  affiliation: Institute of Plant Science and Resources, Okayama University, Okayama, Japan
+  email: f.tomoyuki@okayama-u.ac.jp
+date: "Jun 26, 2024"
+package: LazyGas
+output: 
+  BiocStyle::html_document:
+    toc: true
+    toc_float: true
+vignette: >
+  %\VignetteIndexEntry{Genetic Association Study with LazyGas}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
 ---
 
 ## Introduction
@@ -40,6 +51,9 @@ snp.allele <- getAllele(object = lg)
 sample.id <- getSamID(object = lg)
 snp.id <- getMarID(object = lg)
 
+# The following values can be NULL: snp.id, snp.rs.id, and snp.allele
+# Either of the following values should be specified at least: genotype, 
+# haplotype, or dosage.
 create_gds <-  list(genotype = genotype,
                     sample.id = sample.id,
                     snp.id = snp.id,
@@ -78,33 +92,96 @@ for(i in seq_along(pheno$pheno_names)){
 }
 ```
 
-<!-- ## Confirming dosage Data -->
-<!-- Check dosage and sample IDs: -->
-<!-- ```{r} -->
-<!-- ds <- getGenotype(object = lg, node = "dosage", valid = FALSE) -->
-<!-- all_sample_id <- getSamID(object = lg, valid = FALSE) -->
-<!-- valid_indices <- validSam(object = lg) -->
-<!-- all_sample_id[!valid_indices] # IDs of invalid (parental) samples -->
-<!-- ds[!valid_indices, 1] # Assigned integers for the invalid (parental) samples -->
-<!-- ``` -->
 
 ## Conducting Association Analysis
-Define a function to convert dosage data to a model matrix:
+
+### Prepare a function to make a model matrix.
+Confirming structure of genotype data to be used for the regression analysis
 ```{r}
-makeDF_FUN <- function(g){
+g <- getGenoPerMarker(object = lg, geno_format = "genotype")
+print(g)
+```
+
+```{r}
+g <- getGenoPerMarker(object = lg, geno_format = "haplotype")
+print(g)
+```
+
+```{r}
+g <- getGenoPerMarker(object = lg, geno_format = "dosage")
+print(g)
+```
+
+As shown above, genotype and haplotype data for each marker is a matrix with two
+rows if you have diploid samples, whereas dosage data is a vector.
+You need to prepare a function to convert those data into a model matrix for the 
+regression analysis.
+
+Although you can manually define a function for the data conversion, 
+the makeConvFun() function helps you create a data conversion function. 
+
+Manually define a function to convert genotype data to a model matrix:
+```{r}
+# Conversion function for dosage data assuming additive and dominant effects
+conv_fun <- function(g){
   add <- g
   dom <- as.numeric(g == 1)
   out <- data.frame(add = add, dom = dom)
-  colnames(out) <- c("add", "dom")
   return(out)
 }
+
+# For the model matrix above, the formula can be the following.
+formula <- "add + dom"
+
+# Conversion function for haplotype data assuming additive and interaction effects
+conv_fun <- function(g){
+  hap1 <- colSums(g == 1)
+  hap2 <- colSums(g == 2)
+  hap1_hap2 <- as.numeric(hap1 == 1 & hap2 == 1)
+  out <- data.frame(hap2 = hap2, hap1_hap2 = hap1_hap2)
+  return(out)
+}
+formula <- "hap2 + hap1_hap2"
+
 ```
+
+Define a conversion function by makeConvFun():
+```{r}
+conv_fun <- makeConvFun(geno_format = "dosage", n_levels = 3)
+```
+The current implementation of the makeConvFun() function does not support 
+to assume interaction effects of haplotypes. If necessary, please define a 
+conversion function manually as shown in the previous code chunk. When you have
+four haplotypes, the function definition can be the following.
+```{r eval-FALSE}
+# Do not run.
+conv_fun <- function(g){
+  hap1 <- colSums(g == 1)
+  hap2 <- colSums(g == 2)
+  hap3 <- colSums(g == 3)
+  hap4 <- colSums(g == 4)
+  hap1_hap2 <- as.numeric(hap1 == 1 & hap2 == 1)
+  hap1_hap3 <- as.numeric(hap1 == 1 & hap3 == 1)
+  hap1_hap4 <- as.numeric(hap1 == 1 & hap4 == 1)
+  hap2_hap3 <- as.numeric(hap2 == 1 & hap3 == 1)
+  hap2_hap4 <- as.numeric(hap2 == 1 & hap4 == 1)
+  hap3_hap4 <- as.numeric(hap3 == 1 & hap4 == 1)
+  out <- data.frame(hap2 = hap2, hap3 = hap3, hap4 = hap4, 
+                    hap1_hap2 = hap1_hap2, hap1_hap3 = hap1_hap3,
+                    hap1_hap4 = hap1_hap4, hap2_hap3 = hap2_hap3,
+                    hap2_hap4 = hap2_hap4, hap3_hap4 = hap3_hap4)
+  return(out)
+}
+formula <- paste0("hap2 + hap3 + hap4 + hap1_hap2 + hap1_hap3",
+                  " + hap1_hap4 + hap2_hap3 + hap2_hap4 + hap3_hap4")
+```
+
 
 Run the association scan:
 ```{r}
 scanAssoc(object = lg,
-          formula = "add + dom",
-          makeDF_FUN = makeDF_FUN,
+          formula = formula,
+          conv_fun = conv_fun,
           geno_format = "dosage",
           kruskal = NULL)
 ```
@@ -118,6 +195,9 @@ for(i in seq_along(pheno$pheno_names)){
   p <- p + labs(title = pheno$pheno_names[i])
   print(p)
 }
+
+scan <- lazyData(object = lg, dataset = "scan", pheno = pheno$pheno_names[1])
+scan[which.max(scan$negLog10P), ]
 ```
 
 Call and visualize peak blocks:
@@ -157,6 +237,26 @@ for(i in seq_along(pheno$pheno_names)){
 }
 ```
 
+## List up candidate genes
+You can list up candidate genes responsisble for the detected associations as 
+following. 
+```{r}
+# GFF file 
+gff_fn <- "path/to/gff/file.gff"
+
+# SNPEff output VCF file
+snpeff_fn <- "path/to/snpeff/file.vcf"
+
+# Any CSV format file for gene annotations
+# The given matrix stored in the CSV file must contain a column named "GeneID"
+# that should match the gene IDs in the GFF file.
+ann_fn <- "path/to/annotation/file.csv" 
+
+listCandidate(object = lg, gff = gff_fn, snpeff = snpeff_fn, 
+              ann = ann_fn, recalc = TRUE)
+```
+
+
 ## Extracting Data
 Extract data for further analysis:
 ```{r}
@@ -182,10 +282,7 @@ recalc <- lazyData(object = lg, dataset = "recalc", pheno = pheno$pheno_names[1]
 head(recalc)
 ```
 
-## List up candidate genes
-You can list up candidate genes responsisble for the detected associations as 
-following. 
 ```{r}
-
+candidate <- lazyData(object = lg, dataset = "candidate", pheno = pheno$pheno_names[1])
+head(candidate)
 ```
-

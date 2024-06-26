@@ -5,7 +5,12 @@
 \alias{lazyData,LazyGas-method}
 \title{Retrieve LazyGas Data}
 \usage{
-lazyData(object, dataset = c("scan", "peakcall", "recalc"), pheno, ...)
+lazyData(
+  object,
+  dataset = c("scan", "peakcall", "recalc", "candidate"),
+  pheno,
+  ...
+)
 
 \S4method{lazyData}{LazyGas}(object, dataset, pheno)
 }
