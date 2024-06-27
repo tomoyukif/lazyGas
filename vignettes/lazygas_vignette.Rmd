@@ -149,11 +149,16 @@ Define a conversion function by makeConvFun():
 ```{r}
 conv_fun <- makeConvFun(geno_format = "dosage", n_levels = 3)
 ```
+```{r}
+formula <- "add + dom"
+```
+
+
 The current implementation of the makeConvFun() function does not support 
 to assume interaction effects of haplotypes. If necessary, please define a 
 conversion function manually as shown in the previous code chunk. When you have
 four haplotypes, the function definition can be the following.
-```{r eval-FALSE}
+```{r eval=FALSE}
 # Do not run.
 conv_fun <- function(g){
   hap1 <- colSums(g == 1)
@@ -240,7 +245,7 @@ for(i in seq_along(pheno$pheno_names)){
 ## List up candidate genes
 You can list up candidate genes responsisble for the detected associations as 
 following. 
-```{r}
+```{r eval=FALSE}
 # GFF file 
 gff_fn <- "path/to/gff/file.gff"
 
@@ -282,7 +287,7 @@ recalc <- lazyData(object = lg, dataset = "recalc", pheno = pheno$pheno_names[1]
 head(recalc)
 ```
 
-```{r}
+```{r eval=FALSE}
 candidate <- lazyData(object = lg, dataset = "candidate", pheno = pheno$pheno_names[1])
 head(candidate)
 ```
