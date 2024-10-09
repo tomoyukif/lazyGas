@@ -219,7 +219,7 @@ for(i in seq_along(pheno$pheno_names)){
 ## Recalculating and Visualizing Peaks
 Recalculate and visualize peaks:
 ```{r}
-recalcAssoc(object = lg, signif = 0.05, threshold = 0.8)
+recalcAssoc(object = lg, signif = 0.05, threshold = 0.8, n_threads = 10)
 
 for(i in seq_along(pheno$pheno_names)){
   p <- plotPeaks(object = lg, pheno = i, recalc = TRUE)
@@ -235,7 +235,10 @@ for(i in seq_along(pheno$pheno_names)){
   out <- haploPlot(object = lg, pheno = i, recalc = FALSE)
   print(out)
 }
+```
 
+
+```{r}
 for(i in seq_along(pheno$pheno_names)){
   out <- haploPlot(object = lg, pheno = i, recalc = TRUE)
   print(out)
@@ -245,20 +248,29 @@ for(i in seq_along(pheno$pheno_names)){
 ## List up candidate genes
 You can list up candidate genes responsisble for the detected associations as 
 following. 
-```{r eval=FALSE}
+```{r}
 # GFF file 
-gff_fn <- "path/to/gff/file.gff"
+# gff_fn <- "path/to/gff/file.gff"
+gff_fn <- "~/hdd3/genomeData/rice/cultivar_sativa/nb_combined/version_2023/gff/nb_combined_all_annotated.gff"
 
 # SNPEff output VCF file
-snpeff_fn <- "path/to/snpeff/file.vcf"
+snpeff_fn <- "~/hdd5/ngsData/wgs/shufflingParents/snpeff/founder_wgs_on_bv_genome_snpeff.vcf.gz"
 
 # Any CSV format file for gene annotations
 # The given matrix stored in the CSV file must contain a column named "GeneID"
 # that should match the gene IDs in the GFF file.
-ann_fn <- "path/to/annotation/file.csv" 
-
-listCandidate(object = lg, gff = gff_fn, snpeff = snpeff_fn, 
-              ann = ann_fn, recalc = TRUE)
+# ann_fn <- "path/to/annotation/file.csv" 
+source("~/hdd3/genomeData/util_scripts/util08_orgAnnotation.R")
+gff <- rtracklayer::import.gff(gff_fn)
+ann <- rtracklayer::mcols(gff)
+ann <- ann[ann$type %in% c("gene", "mRNA", "transcript"), ]
+ann <- subset(ann, select = c(gene_id, RAP_Note, MSU_Note, MapMan_DESCRIPTION, Oryzabase_Trait_Ontology, RAPDB_geneSymbol, Oryzabase_geneSymbol, InterPro_Description))
+ann <- as.data.frame(ann)
+ann <- orgAnnotation(id = ann$gene_id, ann = ann)
+names(ann)[1] <- "Gene_ID"
+ann <- ann[, -2]
+listCandidate(object = lg, gff_fn = gff_fn, snpeff_fn = snpeff_fn, 
+              ann = ann, recalc = TRUE)
 ```
 
 
@@ -287,7 +299,12 @@ recalc <- lazyData(object = lg, dataset = "recalc", pheno = pheno$pheno_names[1]
 head(recalc)
 ```
 
-```{r eval=FALSE}
+```{r}
 candidate <- lazyData(object = lg, dataset = "candidate", pheno = pheno$pheno_names[1])
+head(candidate)
+```
+
+```{r}
+candidate <- lazyData(object = lg, dataset = "snpeff", pheno = pheno$pheno_names[1])
 head(candidate)
 ```

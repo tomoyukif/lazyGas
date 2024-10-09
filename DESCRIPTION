@@ -1,8 +1,8 @@
 Package: lazyGas
 Type: Package
 Title: Lazies' genetic association study (lazyGas): genetic association study pipeline for lazy guys
-Version: 0.1.1
-Date: 2024-06-06
+Version: 0.2.0
+Date: 2024-10-10
 Authors@R: person("Tomoyuki", "Furuta", 
            email = "f.tomoyuki@okayama-u.ac.jp",
            role = c("aut", "cre"),
@@ -17,6 +17,6 @@ SystemRequirements: GNU make, C++11
 Suggests: BiocStyle, knitr, rmarkdown
 VignetteBuilder: knitr
 Roxygen: list(markdown = TRUE)
-RoxygenNote: 7.3.1
+RoxygenNote: 7.3.2
 BugReports: https://github.com/tomoyukif/lazyGeno/issues
 URL: https://github.com/tomoyukif/lazyGeno

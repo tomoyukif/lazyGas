@@ -1,8 +1,11 @@
 library(genovisr)
 library(SNPRelate)
 library(SeqArray)
+library(Biostrings)
 
-df <- simGenovis(n_sample = 100)
+nb <- readDNAStringSet("~/hdd3/genomeData/rice/cultivar_sativa/os_nb_rapdb/IRGSP-1.0_genome.fasta")
+
+df <- simGenovis(n_sample = 100, n_chr = 12, chr_len = width(nb) * 1e-6)
 
 snpgdsCreateGeno(gds.fn = "inst/extdata/temp.gds",
                  genmat = df$genotype,
@@ -59,3 +62,7 @@ st <- 1^2 + 5^2 + 3^2 + 2^2
 pheno <- q1_add + q1_dom + q2_add + q2_dom + q3_add + q3_dom + e
 pheno <- data.frame(id = df$sample_info$id, pheno = pheno)
 write.csv(pheno, "inst/extdata/pheno.csv", row.names = FALSE)
+
+
+
+
