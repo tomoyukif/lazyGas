@@ -12,6 +12,7 @@ plotPheno(
   axis_text_size = 12,
   fill = "skyblue",
   color = "darkblue",
+  boxplot = TRUE,
   ...
 )
 }

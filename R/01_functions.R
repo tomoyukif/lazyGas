@@ -611,6 +611,7 @@ setGeneric("plotPheno", function(object,
                                  axis_text_size = 12,
                                  fill = "skyblue",
                                  color = "darkblue",
+                                 boxplot = TRUE,
                                  ...)
   standardGeneric("plotPheno"))
 
@@ -622,7 +623,8 @@ setMethod("plotPheno",
                    axis_title_size,
                    axis_text_size,
                    fill,
-                   color){
+                   color,
+                   boxplot){
             # Check if pheno is not NULL and process accordingly
             if(!is.null(pheno)){
               if(is.numeric(pheno)){
@@ -671,9 +673,13 @@ setMethod("plotPheno",
                     panel.grid = element_blank())
 
             # Combine the histogram and boxplot into a single plot
-            p <- plot_grid(p1, p2, ncol = 1,
-                           rel_heights = c(3, 1),
-                           align = 'v', axis = 'lr')
+            if(boxplot){
+              p <- plot_grid(p1, p2, ncol = 1,
+                             rel_heights = c(3, 1),
+                             align = 'v', axis = 'lr')
+            } else {
+              p <- p1
+            }
 
             # Return the combined plot
             return(p)
@@ -2239,10 +2245,12 @@ setMethod("lazyData",
                                                     pheno = pheno)
 
             # List the scan nodes in the specified dataset
-            scan_node <- ls.gdsn(node = index.gdsn(node = object,
-                                                   path = paste0("lazygas/",
-                                                                 dataset)))
-
+            check_node <- exist.gdsn(node = index.gdsn(node = object,
+                                                       path = "lazygas/"),
+                                     path = dataset)
+            if(!check_node){
+              return(NULL)
+            }
             # Retrieve the data based on the dataset type
             if(dataset == "scan"){
               out <- .get_scan(object = object,
@@ -2606,8 +2614,16 @@ setMethod("recalcAssoc",
     null_df <- NULL
     subject_peak <- peak_obj$peak_variant_id
     target_geno <- peak_obj$geno
-    target_geno <- apply(X = target_geno, MARGIN = 3, FUN = list)
-    target_geno <- lapply(X = target_geno, FUN = "[[", 1)
+
+    if(peak_obj$geno_format == "haplotype"){
+      target_geno <- apply(X = target_geno, MARGIN = 3, FUN = list)
+      target_geno <- lapply(X = target_geno, FUN = "[[", 1)
+
+    } else {
+      target_geno <- apply(X = target_geno, MARGIN = 2, FUN = list)
+      target_geno <- lapply(X = target_geno, FUN = "[[", 1)
+    }
+
 
   } else {
     if(length(query_peak) > 1){
@@ -3157,11 +3173,11 @@ setMethod("listCandidate",
   peak_ann <- snpeff_fix[target_chr & target_pos, ]
 
   if(nrow(peak_ann) == 0){
-    out <- data.frame(t(rep(NA, 16)))
+    out <- data.frame(t(rep(NA, 19)))
     names(out) <- c("Allele", "Annotation", "Annotation_Impact", "Gene_Name",
                     "Gene_ID", "Feature_Type", "Feature_ID", "Transcript_BioType",
                     "Rank", "HGVS.c", "HGVS.p", "Pos.in.tx", "Pos.in.CDS",
-                    "Pos.in.AA", "Distance", "INFO")
+                    "Pos.in.AA", "Distance", "INFO", "Chr", "Pos", "negLog10P")
 
   } else {
     var_id <- paste0(peak_ann$CHROM, "_", peak_ann$POS, "_")
@@ -3198,8 +3214,8 @@ setMethod("listCandidate",
 }
 
 .collapseSnpEff <- function(snpeff_out){
-  if(nrow(snpeff_out) == 0){
-    out <- data.frame(t(rep(NA, 5)))
+  if(all(is.na(snpeff_out[1, ]))){
+    out <- data.frame(t(rep(NA, 9)))
     names(out) <- c("Gene_ID", "HIGH", "MODERATE", "LOW", "MODIFIER",
                     "HIGH_at_var", "MODERATE_at_var", "LOW_at_var", "MODIFIER_at_var")
 
@@ -3251,7 +3267,7 @@ makeCanditeList <- function(object, pheno, out_fn, peak_id = NULL){
 #' @export
 #'
 makeInteractiveSummary <- function(object, pheno, out_fn){
-  plot_pheno <- plotPheno(object = object, pheno = pheno, xlab = pheno)
+  plot_pheno <- plotPheno(object = object, pheno = pheno, xlab = pheno, boxplot = FALSE)
   plot_pheno <- ggplotly(plot_pheno)
   plot_man <- plotManhattan(object = object, pheno = pheno) + labs(title = pheno)
   plot_man <- ggplotly(plot_man)
@@ -3259,21 +3275,39 @@ makeInteractiveSummary <- function(object, pheno, out_fn){
   plot_peak1 <- ggplotly(plot_peak1)
   plot_peak2 <- plotPeaks(object = object, pheno = pheno, recalc = TRUE) + labs(title = pheno)
   plot_peak2 <- ggplotly(plot_peak2)
-  plot_hap <- haploPlot(object = object, pheno = pheno, recalc = TRUE)
-  candidate <- lazyData(object = object, dataset = "candidate", pheno = pheno)
-  table <- reactable(data = candidate, sortable = TRUE,
-                     resizable = TRUE, filterable = TRUE,
-                     searchable = TRUE, showPageSizeOptions = TRUE,
-                     wrap = TRUE)
   tag_list <- tagList(div(plot_pheno, style = "margin:auto;width:80vw;"),
                       div(plot_man, style = "margin:auto;width:80vw;"),
                       div(plot_peak1, style = "margin:auto;width:80vw;"),
                       div(plot_peak2, style = "margin:auto;width:80vw;"))
-  for(i in seq_along(plot_hap)){
-    tag_list <- tagList(tag_list,
-                        div(ggplotly(plot_hap[[i]]), style = "margin:auto;width:60vw;"))
+
+  plot_hap <- haploPlot(object = object, pheno = pheno, recalc = TRUE)
+
+  if(is.null(plot_hap)){
+    for(i in seq_along(plot_hap)){
+      tag_list <- tagList(tag_list,
+                          div(ggplotly(plot_hap[[i]]), style = "margin:auto;width:60vw;"))
+    }
   }
-  save_html(tagList(tag_list,
-                    div(table, style = "margin:auto;width:90vw;")),
-            file = out_fn)
+
+  candidate <- lazyData(object = object, dataset = "candidate", pheno = pheno)
+  if(is.null(candidate)){
+    col_names <- colnames(candidate)
+    col_def <- NULL
+    for(i in seq_along(col_names)){
+      min_width <- nchar(col_names[i]) * 16
+      if(min_width < 100){
+        min_width <- 100
+      }
+      col_def <- c(col_def, list(colDef(minWidth = min_width)))
+    }
+    names(col_def) <- col_names
+    table <- reactable(data = candidate, columns = col_def, sortable = TRUE,
+                       resizable = TRUE, filterable = TRUE,
+                       searchable = TRUE, showPageSizeOptions = TRUE,
+                       wrap = TRUE, striped = TRUE, onClick = JS())
+    tag_list <- tagList(tag_list,
+                        div(table, style = "margin:auto;width:90vw;"))
+  }
+
+  save_html(tag_list, file = out_fn)
 }
