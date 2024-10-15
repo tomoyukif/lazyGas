@@ -129,15 +129,15 @@
   if(recalc){
     peaks_gdsn <- "lazygas/recalc/peaks"
     blocks_gdsn <- "lazygas/recalc/blocks"
+    peaks_col_names <- get.attr.gdsn(node = index.gdsn(node = object$root, path =  paste0(peaks_gdsn, "/", pheno_name)))
+    blocks_col_names <- get.attr.gdsn(node = index.gdsn(node = object$root, path =  paste0(blocks_gdsn, "/", pheno_name)))
 
   } else {
     peaks_gdsn <- "lazygas/peakcall/peaks"
     blocks_gdsn <- "lazygas/peakcall/blocks"
+    peaks_col_names <- get.attr.gdsn(node = index.gdsn(node = object$root, path = peaks_gdsn))
+    blocks_col_names <- get.attr.gdsn(node = index.gdsn(node = object$root, path = blocks_gdsn))
   }
-
-  # Get the attribute names from the peaks node
-  col_names <- get.attr.gdsn(node = index.gdsn(node = object$root, path = peaks_gdsn))
-  col_names <- col_names$col_names
 
   # Retrieve the peaks data for the specified phenotype
   peaks <- .get_data(object = object, node = paste0(peaks_gdsn, "/", pheno_name))
@@ -156,11 +156,7 @@
       peaks <- data.frame(t(peaks))
     }
   }
-  names(peaks) <- col_names
-
-  # Get the attribute names from the blocks node
-  col_names <- get.attr.gdsn(node = index.gdsn(node = object$root, path = blocks_gdsn))
-  col_names <- col_names$col_names
+  names(peaks) <- peaks_col_names$col_names
 
   # Retrieve the blocks data for the specified phenotype
   blocks <- .get_data(object = object, node = paste0(blocks_gdsn, "/", pheno_name))
@@ -176,7 +172,7 @@
       blocks <- data.frame(t(blocks))
     }
   }
-  names(blocks) <- col_names
+  names(blocks) <-blocks_col_names$col_names
 
   # Add variant_ID to peaks data
   peaks$variant_ID <- peaks$peak_variant_ID
@@ -2369,9 +2365,6 @@ setMethod("recalcAssoc",
   #                            target_node = "lazygas/recalc",
   #                            new_node = "group",
   #                            is_folder = TRUE)
-
-  put.attr.gdsn(node = peaks_gdsn, name = "col_names",
-                val = c("peak_ID", "peak_variant_ID"))
   # put.attr.gdsn(node = group_gdsn, name = "col_names",
   #               val = c("round", "peak_variant_ID", "member_peak", "new_peak"))
 }
@@ -2497,18 +2490,18 @@ setMethod("recalcAssoc",
                                      Dist2peak, LD2peak,
                                      P.model:negLog10P)))
 
-    .create_gdsn(root_node = object$root,
-                 target_node = "lazygas/recalc/peaks",
-                 new_node = pheno_name,
-                 val = as.matrix(out1),
-                 storage = "uint32",
-                 replace = TRUE)
-    .create_gdsn(root_node = object$root,
-                 target_node = "lazygas/recalc/blocks",
-                 new_node = pheno_name,
-                 val = as.matrix(out2),
-                 storage = "double",
-                 replace = TRUE)
+    out1_gdsn <- .create_gdsn(root_node = object$root,
+                              target_node = "lazygas/recalc/peaks",
+                              new_node = pheno_name,
+                              val = as.matrix(out1),
+                              storage = "uint32",
+                              replace = TRUE)
+    out2_gdsn <- .create_gdsn(root_node = object$root,
+                              target_node = "lazygas/recalc/blocks",
+                              new_node = pheno_name,
+                              val = as.matrix(out2),
+                              storage = "double",
+                              replace = TRUE)
     # .create_gdsn(root_node = object$root,
     #              target_node = "lazygas/recalc/group",
     #              new_node = pheno_name,
@@ -2516,8 +2509,10 @@ setMethod("recalcAssoc",
     #              storage = "uint32",
     #              replace = TRUE)
 
-    put.attr.gdsn(node = index.gdsn(node = object$root,
-                                    path = "lazygas/recalc/blocks"),
+    put.attr.gdsn(node = out1_gdsn,
+                  name = "col_names",
+                  val = names(out1))
+    put.attr.gdsn(node = out2_gdsn,
                   name = "col_names",
                   val = names(out2))
   }
@@ -2543,8 +2538,11 @@ setMethod("recalcAssoc",
       geno[, , order(peak_variant_id)] <- geno
     }
 
-  } else {
+  } else if(length(dim(geno)) == 2) {
     geno[, order(peak_variant_id)] <- geno
+
+  } else {
+    geno <- matrix(data = geno, ncol = 1)
   }
 
   out <- list(
@@ -2927,6 +2925,7 @@ setGeneric("listCandidate", function(object,
                                      snpeff_fn = NULL,
                                      ann = NULL,
                                      recalc = FALSE,
+                                     numerize_chr = FALSE,
                                      ...)
   standardGeneric("listCandidate"))
 
@@ -2936,7 +2935,8 @@ setMethod("listCandidate",
                    gff_fn,
                    snpeff_fn = NULL,
                    ann = NULL,
-                   recalc = FALSE){
+                   recalc = FALSE,
+                   numerize_chr = FALSE){
             if(recalc){
               if(!exist.gdsn(node = object$root, path = "lazygas/recalc")){
                 stop("No peakcall data in the input LazyGas object.\n",
@@ -2950,8 +2950,9 @@ setMethod("listCandidate",
               }
             }
 
-            gff <- .loadGFF(gff_fn = gff_fn)
-            snpeff <- .loadSNPEff(snpeff_fn = snpeff_fn)
+            gff <- .loadGFF(gff_fn = gff_fn, numerize_chr = numerize_chr)
+            snpeff <- .loadSNPEff(snpeff_fn = snpeff_fn,
+                                  numerize_chr = numerize_chr)
 
             ## Function to create the necessary folders in the GDS object
             .create_candidate_folders(object = object)
@@ -2987,31 +2988,37 @@ setMethod("listCandidate",
 
 #' @importFrom rtracklayer import.gff
 #' @importFrom GenomeInfoDb seqlevels seqlevels<-
-.loadGFF <- function(gff_fn){
+.loadGFF <- function(gff_fn, numerize_chr){
   if(!file.exists(gff_fn)){
     stop("The specified GFF file does not exist!",
          call. = FALSE)
   }
   gff <- import.gff(gff_fn)
-  seq_lev <- seqlevels(gff)
-  num_seq_lev <- suppressWarnings(as.numeric(seq_lev))
-  if(!all(!is.na(num_seq_lev))){
-    seq_lev <- gsub("[^0-9]", "", seq_lev)
-    missing <- seq_lev == ""
+
+  if(numerize_chr){
+    seq_lev <- seqlevels(gff)
+    num_seq_lev <- suppressWarnings(as.numeric(seq_lev))
+    if(!all(!is.na(num_seq_lev))){
+      seq_lev <- gsub("[^0-9]", "", seq_lev)
+      missing <- seq_lev == ""
+    }
+    num_seq_lev <- suppressWarnings(as.numeric(seq_lev))
+    if(!all(!is.na(num_seq_lev[!missing]))){
+      seq_lev <- gsub("[^0-9]", "", seq_lev)
+    }
+    new_seq_lev <- as.numeric(seq_lev)
+    new_seq_lev[missing] <- seqlevels(gff)[missing]
+    seqlevels(gff) <- new_seq_lev
   }
-  num_seq_lev <- suppressWarnings(as.numeric(seq_lev))
-  if(!all(!is.na(num_seq_lev[!missing]))){
-    seq_lev <- gsub("[^0-9]", "", seq_lev)
-  }
-  new_seq_lev <- as.numeric(seq_lev)
-  new_seq_lev[missing] <- seqlevels(gff)[missing]
-  seqlevels(gff) <- new_seq_lev
+
   return(gff)
 }
 
 #' @importFrom vcfR read.vcfR
-.loadSNPEff <- function(snpeff_fn){
-  if(!is.null(snpeff_fn)){
+.loadSNPEff <- function(snpeff_fn, numerize_chr){
+  if(is.null(snpeff_fn)){
+    return(NULL)
+  } else {
     if(!file.exists(snpeff_fn)){
       stop("The specified SNPEff file does not exist!",
            call. = FALSE)
@@ -3019,23 +3026,25 @@ setMethod("listCandidate",
     snpeff <- read.vcfR(snpeff_fn)
   }
 
-  snpeff_fix <- as.data.frame(snpeff@fix)
-  seq_lev <- unique(snpeff_fix$CHROM)
-  num_seq_lev <- suppressWarnings(as.numeric(seq_lev))
-  if(!all(!is.na(num_seq_lev))){
-    seq_lev <- gsub("[^0-9]", "", seq_lev)
-    missing <- seq_lev == ""
+  if(numerize_chr){
+    snpeff_fix <- as.data.frame(snpeff@fix)
+    seq_lev <- unique(snpeff_fix$CHROM)
+    num_seq_lev <- suppressWarnings(as.numeric(seq_lev))
+    if(!all(!is.na(num_seq_lev))){
+      seq_lev <- gsub("[^0-9]", "", seq_lev)
+      missing <- seq_lev == ""
+    }
+    num_seq_lev <- suppressWarnings(as.numeric(seq_lev))
+    if(!all(!is.na(num_seq_lev[!missing]))){
+      seq_lev <- gsub("[^0-9]", "", seq_lev)
+    }
+    new_seq_lev <- as.numeric(seq_lev)
+    new_seq_lev[missing] <- seqlevels(gff)[missing]
+    seq_lev <- unique(snpeff_fix$CHROM)
+    hit <- match(snpeff_fix$CHROM, seq_lev)
+    snpeff_fix$CHROM <- new_seq_lev[hit]
+    snpeff@fix <- as.matrix(snpeff_fix)
   }
-  num_seq_lev <- suppressWarnings(as.numeric(seq_lev))
-  if(!all(!is.na(num_seq_lev[!missing]))){
-    seq_lev <- gsub("[^0-9]", "", seq_lev)
-  }
-  new_seq_lev <- as.numeric(seq_lev)
-  new_seq_lev[missing] <- seqlevels(gff)[missing]
-  seq_lev <- unique(snpeff_fix$CHROM)
-  hit <- match(snpeff_fix$CHROM, seq_lev)
-  snpeff_fix$CHROM <- new_seq_lev[hit]
-  snpeff@fix <- as.matrix(snpeff_fix)
   return(snpeff)
 }
 
@@ -3072,7 +3081,7 @@ setMethod("listCandidate",
 
   if(is.null(peakcall)){
     .create_gdsn(root_node = object$root,
-                 target_node = "lazygas/cadidate",
+                 target_node = "lazygas/candidate",
                  new_node = pheno_name,
                  storage = "string",
                  replace = TRUE)
@@ -3089,11 +3098,12 @@ setMethod("listCandidate",
       snpeff_list <- rbind(snpeff_list, tmp$snpeff_out)
     }
 
-    if(!is.null(out)){
+    if(!is.null(candidate_list)){
       if(!is.null(ann)){
         candidate_list <- left_join(candidate_list, ann, by = "Gene_ID")
 
       }
+      candidate_list[is.na(candidate_list)] <- ""
     }
 
     .create_gdsn(root_node = object$root,
@@ -3111,6 +3121,8 @@ setMethod("listCandidate",
     readmode.gdsn(node = index.gdsn(node = object$root,
                                     path = paste0("lazygas/candidate/", pheno_name)))
     if(!is.null(snpeff_list)){
+      snpeff_list[is.na(snpeff_list)] <- ""
+
       .create_gdsn(root_node = object$root,
                    target_node = "lazygas/snpeff",
                    new_node = pheno_name,
@@ -3271,18 +3283,25 @@ makeInteractiveSummary <- function(object, pheno, out_fn){
   plot_pheno <- ggplotly(plot_pheno)
   plot_man <- plotManhattan(object = object, pheno = pheno) + labs(title = pheno)
   plot_man <- ggplotly(plot_man)
-  plot_peak1 <- plotPeaks(object = object, pheno = pheno, recalc = FALSE) + labs(title = pheno)
-  plot_peak1 <- ggplotly(plot_peak1)
-  plot_peak2 <- plotPeaks(object = object, pheno = pheno, recalc = TRUE) + labs(title = pheno)
-  plot_peak2 <- ggplotly(plot_peak2)
   tag_list <- tagList(div(plot_pheno, style = "margin:auto;width:80vw;"),
-                      div(plot_man, style = "margin:auto;width:80vw;"),
-                      div(plot_peak1, style = "margin:auto;width:80vw;"),
-                      div(plot_peak2, style = "margin:auto;width:80vw;"))
+                      div(plot_man, style = "margin:auto;width:80vw;"))
+
+  peak1 <- lazyData(object = object, dataset = "peakcall", pheno = pheno)
+  if(!is.null(peak1)){
+    plot_peak1 <- plotPeaks(object = object, pheno = pheno, recalc = FALSE) + labs(title = pheno)
+    tagList(tag_list,
+            div(ggplotly(plot_peak1), style = "margin:auto;width:80vw;"))
+  }
+
+  peak2 <- lazyData(object = object, dataset = "recalc", pheno = pheno)
+  if(!is.null(peak2)){
+    plot_peak2 <- plotPeaks(object = object, pheno = pheno, recalc = TRUE) + labs(title = pheno)
+    tagList(tag_list,
+            div(ggplotly(plot_peak2), style = "margin:auto;width:80vw;"))
+  }
 
   plot_hap <- haploPlot(object = object, pheno = pheno, recalc = TRUE)
-
-  if(is.null(plot_hap)){
+  if(!is.null(plot_hap)){
     for(i in seq_along(plot_hap)){
       tag_list <- tagList(tag_list,
                           div(ggplotly(plot_hap[[i]]), style = "margin:auto;width:60vw;"))
@@ -3290,7 +3309,10 @@ makeInteractiveSummary <- function(object, pheno, out_fn){
   }
 
   candidate <- lazyData(object = object, dataset = "candidate", pheno = pheno)
-  if(is.null(candidate)){
+  if(length(candidate) == 0){
+    candidate <- NULL
+  }
+  if(!is.null(candidate)){
     col_names <- colnames(candidate)
     col_def <- NULL
     for(i in seq_along(col_names)){
