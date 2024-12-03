@@ -348,11 +348,11 @@ buildLazyGas <- function(gds_fn = "",
          call. = FALSE)
 
   } else {
-    if(check["genotype"]){
+    if(!check["genotype"]){
       n_sample <- nrow(create_gds$genotype)
       n_snp <- ncol(create_gds$genotype)
 
-    } else if(check["dosage"]){
+    } else if(!check["dosage"]){
       n_sample <- nrow(create_gds$dosage)
       n_snp <- ncol(create_gds$dosage)
 
@@ -2240,28 +2240,49 @@ setMethod("lazyData",
             pheno_name <- .determine_phenotype_name(object = object,
                                                     pheno = pheno)
 
-            # List the scan nodes in the specified dataset
-            check_node <- exist.gdsn(node = index.gdsn(node = object,
-                                                       path = "lazygas/"),
-                                     path = dataset)
-            if(!check_node){
-              return(NULL)
-            }
             # Retrieve the data based on the dataset type
             if(dataset == "scan"){
+              check_node <- exist.gdsn(node = index.gdsn(node = object,
+                                                         path = "lazygas/scan"),
+                                       path = pheno_name)
+              if(!check_node){
+                return(NULL)
+              }
               out <- .get_scan(object = object,
                                pheno_name = pheno_name)
 
             } else if(dataset %in% c("candidate", "snpeff")){
+              check_node <- exist.gdsn(node = index.gdsn(node = object,
+                                                         path = paste0("lazygas/",
+                                                                       dataset)),
+                                       path = pheno_name)
+              if(!check_node){
+                return(NULL)
+              }
               out <- .get_data(object = object,
                                node = paste0("lazygas/",
                                              dataset, "/",
                                              pheno_name))
+              if(length(out) == 0){
+                return(NULL)
+              }
+              if(!is.matrix(out)){
+                out <- matrix(out, nrow = 1)
+              }
+
               col_names <- get.attr.gdsn(node = index.gdsn(node = object$root,
                                                            path = paste0("lazygas/", dataset)))
               colnames(out) <- col_names$col_names
 
             } else {
+              check_node <- exist.gdsn(node = index.gdsn(node = object,
+                                                         path = paste0("lazygas/",
+                                                                       dataset,
+                                                                       "/peaks")),
+                                       path = pheno_name)
+              if(!check_node){
+                return(NULL)
+              }
               out <- .get_peakcall(object = object,
                                    pheno_name = pheno_name,
                                    recalc = (dataset == "recalc"))
@@ -2422,7 +2443,8 @@ setMethod("recalcAssoc",
       cov_scan <- lapply(X = peak_obj$peak_variant_id,
                          FUN = .composite,
                          peak_obj = peak_obj,
-                         n_threads = n_threads)
+                         n_threads = n_threads,
+                         mode = "excl")
 
       peak_grp <- .group_peaks(cov_scan = cov_scan,
                                peak_variant_id = peak_obj$peak_variant_id)
@@ -2605,10 +2627,12 @@ setMethod("recalcAssoc",
 }
 
 .composite <- function(query_peak,
+                       subject_peak = NULL,
                        peak_obj,
                        output_all = FALSE,
-                       n_threads){
-  if(length(query_peak) == 0){
+                       n_threads,
+                       mode){
+  if(mode == "all"){
     null_df <- NULL
     subject_peak <- peak_obj$peak_variant_id
     target_geno <- peak_obj$geno
@@ -2623,64 +2647,68 @@ setMethod("recalcAssoc",
     }
 
 
-  } else {
-    if(length(query_peak) > 1){
-      null_df <- NULL
-      for(j in query_peak){
-        index <- peak_obj$peak_variant_id %in% j
-        tmp_df <- .makeDF(g = peak_obj$geno[, index],
-                          phe = peak_obj$pheno,
-                          conv_fun = peak_obj$conv_fun,
-                          formula = peak_obj$formula)
-        if(is.null(null_df)){
-          names(tmp_df$df)[-1] <- paste(names(tmp_df$df)[-1], j, sep = "_")
-          null_df <- tmp_df
+  } else if(mode == "composite"){
+    null_df <- NULL
+    for(j in query_peak){
+      index <- peak_obj$peak_variant_id %in% j
+      tmp_df <- .makeDF(g = peak_obj$geno[, index],
+                        phe = peak_obj$pheno,
+                        conv_fun = peak_obj$conv_fun,
+                        formula = peak_obj$formula)
+      if(is.null(null_df)){
+        names(tmp_df$df)[-1] <- paste(names(tmp_df$df)[-1], j, sep = "_")
+        null_df <- tmp_df
 
-        } else {
-          names(tmp_df$df)[-1] <- paste(names(tmp_df$df)[-1], j, sep = "_")
-          null_df$df <- cbind(null_df$df, subset(tmp_df$df, select = -phe))
-        }
-        null_df$fml <- paste0("phe ~ ",
-                              paste(names(null_df$df)[-1], collapse = " + "))
+      } else {
+        names(tmp_df$df)[-1] <- paste(names(tmp_df$df)[-1], j, sep = "_")
+        null_df$df <- cbind(null_df$df, subset(tmp_df$df, select = -phe))
       }
+      null_df$fml <- paste0("phe ~ ",
+                            paste(names(null_df$df)[-1], collapse = " + "))
+    }
 
+    if(is.null(subject_peak)){
       index <- peak_obj$peak_variant_id %in% query_peak
       subject_peak <- peak_obj$peak_variant_id[!index]
 
     } else {
-      index <- peak_obj$peak_variant_id %in% query_peak
-      subject_peak <- peak_obj$peak_variant_id[!index]
-      if(length(subject_peak) == 0){
-        return(data.frame(variant_ID = NA, FDR = NA))
-      }
+      index <- !peak_obj$peak_variant_id %in% subject_peak
+    }
 
-      if(peak_obj$geno_format == "haplotype"){
-        g <- peak_obj$geno[, , index]
-      } else {
-        g <- peak_obj$geno[, index]
-      }
-      null_df <- .makeDF(g = g,
-                         phe = peak_obj$pheno,
-                         conv_fun = peak_obj$conv_fun,
-                         formula = peak_obj$formula)
+  }  else if(mode == "excl")  {
+    index <- peak_obj$peak_variant_id %in% query_peak
+    subject_peak <- peak_obj$peak_variant_id[!index]
+
+    if(length(subject_peak) == 0){
+      return(data.frame(variant_ID = NA, FDR = NA))
     }
 
     if(peak_obj$geno_format == "haplotype"){
-      target_geno <- peak_obj$geno[, , !index]
-      if(is.vector(target_geno)){
-        target_geno <- matrix(data = target_geno, ncol = 1)
-      }
-      target_geno <- apply(X = target_geno, MARGIN = 3, FUN = list)
-      target_geno <- lapply(X = target_geno, FUN = "[[", 1)
-
+      g <- peak_obj$geno[, , index]
     } else {
-      target_geno <- peak_obj$geno[, !index]
-      if(is.vector(target_geno)){
-        target_geno <- matrix(data = target_geno, ncol = 1)
-      }
-      target_geno <- apply(X = target_geno, MARGIN = 2, FUN = list)
-      target_geno <- lapply(X = target_geno, FUN = "[[", 1)
+      g <- peak_obj$geno[, index]
     }
+    null_df <- .makeDF(g = g,
+                       phe = peak_obj$pheno,
+                       conv_fun = peak_obj$conv_fun,
+                       formula = peak_obj$formula)
+  }
+
+  if(peak_obj$geno_format == "haplotype"){
+    target_geno <- peak_obj$geno[, , !index]
+    if(is.vector(target_geno)){
+      target_geno <- matrix(data = target_geno, ncol = 1)
+    }
+    target_geno <- apply(X = target_geno, MARGIN = 3, FUN = list)
+    target_geno <- lapply(X = target_geno, FUN = "[[", 1)
+
+  } else {
+    target_geno <- peak_obj$geno[, !index]
+    if(is.vector(target_geno)){
+      target_geno <- matrix(data = target_geno, ncol = 1)
+    }
+    target_geno <- apply(X = target_geno, MARGIN = 2, FUN = list)
+    target_geno <- lapply(X = target_geno, FUN = "[[", 1)
   }
 
   # Parallel processing setup
@@ -2767,7 +2795,10 @@ setMethod("recalcAssoc",
                                 peak_obj = peak_obj,
                                 peak_variant_id = subject_peak)
 
-    peak_scan <- .composite(query_peak = query_peak, peak_obj = peak_obj, n_threads = n_threads)
+    peak_scan <- .composite(query_peak = query_peak,
+                            peak_obj = peak_obj,
+                            n_threads = n_threads,
+                            mode = "composite")
 
     near_peak <- peak_obj$peakcall$peak_variant_ID == query_peak
     max_cor <- max(peak_obj$peakcall$LD2peak[near_peak], na.rm = TRUE)
@@ -2793,7 +2824,8 @@ setMethod("recalcAssoc",
 }
 
 .remake_peakobj <- function(object, peak_obj, peak_variant_id){
-  peak_obj$peak_variant_id <- peak_variant_id
+  peak_variant_id <- unique(peak_variant_id)
+  peak_obj$peak_variant_id <- unique(peak_variant_id)
 
   selection <- .set_selection_criteria_for_recalc(object = object,
                                                   geno_format = peak_obj$geno_format,
@@ -2884,15 +2916,15 @@ setMethod("recalcAssoc",
   query_peak <- peak_obj$peak_variant_id[-i]
   hit_id <- peak_obj$peakcall$variant_ID %in% peak_obj$peak_variant_id[i]
   i_peak <- peak_obj$peakcall[hit_id, ]
-  hit_subject <- peak_obj$peakcall$peak_variant_ID %in% i_peak$peak_variant_ID
-  subject_id <- unique(peak_obj$peakcall$variant_ID[hit_subject])
+  variant_id <- getMarID(object = object, valid = TRUE, chr = i_peak$peak_Chr)
   peak_obj <- .remake_peakobj(object = object,
                               peak_obj = peak_obj,
-                              peak_variant_id = c(query_peak, subject_id))
+                              peak_variant_id = sort(c(variant_id, query_peak)))
   peakcall <- .composite(query_peak = query_peak,
                          peak_obj = peak_obj,
                          output_all = TRUE,
-                         n_threads = n_threads)
+                         n_threads = n_threads,
+                         mode = "composite")
   peak_id <- peakcall$variant_ID[which.min(peakcall$P.model)]
   peakcall$peak_ID <- i
   recall_peak <- .recallPeak(peak_id = peak_id,
@@ -2906,9 +2938,11 @@ setMethod("recalcAssoc",
                               peak_variant_id = c(query_peak,
                                                   recall_peak$variant_ID))
   peakcall <- .composite(query_peak = query_peak,
+                         subject_peak = recall_peak$variant_ID,
                          peak_obj = peak_obj,
                          output_all = TRUE,
-                         n_threads = n_threads)
+                         n_threads = n_threads,
+                         mode = "composite")
   peakcall$negLog10P <- -log10(peakcall$P.model)
   out <- data.frame(peak_ID = i,
                     peak_variant_ID = peak_id,
@@ -3106,20 +3140,22 @@ setMethod("listCandidate",
       candidate_list[is.na(candidate_list)] <- ""
     }
 
-    .create_gdsn(root_node = object$root,
-                 target_node = "lazygas/candidate",
-                 new_node = pheno_name,
-                 val = as.matrix(candidate_list),
-                 storage = "string",
-                 replace = TRUE)
+    if(!is.null(candidate_list)){
+      .create_gdsn(root_node = object$root,
+                   target_node = "lazygas/candidate",
+                   new_node = pheno_name,
+                   val = as.matrix(candidate_list),
+                   storage = "string",
+                   replace = TRUE)
 
-    put.attr.gdsn(node = index.gdsn(node = object$root,
-                                    path = "lazygas/candidate"),
-                  name = "col_names",
-                  val = colnames(candidate_list))
+      put.attr.gdsn(node = index.gdsn(node = object$root,
+                                      path = "lazygas/candidate"),
+                    name = "col_names",
+                    val = colnames(candidate_list))
 
-    readmode.gdsn(node = index.gdsn(node = object$root,
-                                    path = paste0("lazygas/candidate/", pheno_name)))
+      readmode.gdsn(node = index.gdsn(node = object$root,
+                                      path = paste0("lazygas/candidate/", pheno_name)))
+    }
     if(!is.null(snpeff_list)){
       snpeff_list[is.na(snpeff_list)] <- ""
 
@@ -3159,18 +3195,24 @@ setMethod("listCandidate",
   nearest_p <- sapply(start(hit), function(x){
     return(peakblock$negLog10P[which.min(abs(peakblock$Pos - x))])
   })
-  out <- data.frame(peak_ID = peakblock$peak_ID[1],
-                    Gene_ID = hit$ID,
-                    Gene_chr = as.character(seqnames(hit)),
-                    Gene_start = start(hit),
-                    Dist2peak = hit$dist2peak,
-                    negLog10P = nearest_p)
+  if(length(hit) == 0){
+    out <- NULL
+
+  } else {
+    out <- data.frame(peak_ID = peakblock$peak_ID[1],
+                      Gene_ID = hit$ID,
+                      Gene_chr = as.character(seqnames(hit)),
+                      Gene_start = start(hit),
+                      Dist2peak = hit$dist2peak,
+                      negLog10P = nearest_p)
+  }
 
   if(!is.null(snpeff)){
     snpeff_out <- .addSnpEff(snpeff = snpeff, peakblock = peakblock)
     collapse_snpeff_out <- .collapseSnpEff(snpeff_out = snpeff_out)
     out <- left_join(out, collapse_snpeff_out, by ="Gene_ID")
     out <- list(candidate_list = out, snpeff_out = snpeff_out)
+
   } else {
     out <- list(candidate_list = out, snpeff_out = NULL)
   }
@@ -3289,15 +3331,15 @@ makeInteractiveSummary <- function(object, pheno, out_fn){
   peak1 <- lazyData(object = object, dataset = "peakcall", pheno = pheno)
   if(!is.null(peak1)){
     plot_peak1 <- plotPeaks(object = object, pheno = pheno, recalc = FALSE) + labs(title = pheno)
-    tagList(tag_list,
-            div(ggplotly(plot_peak1), style = "margin:auto;width:80vw;"))
+    tag_list <- tagList(tag_list,
+                        div(ggplotly(plot_peak1), style = "margin:auto;width:80vw;"))
   }
 
   peak2 <- lazyData(object = object, dataset = "recalc", pheno = pheno)
   if(!is.null(peak2)){
     plot_peak2 <- plotPeaks(object = object, pheno = pheno, recalc = TRUE) + labs(title = pheno)
-    tagList(tag_list,
-            div(ggplotly(plot_peak2), style = "margin:auto;width:80vw;"))
+    tag_list <- tagList(tag_list,
+                        div(ggplotly(plot_peak2), style = "margin:auto;width:80vw;"))
   }
 
   plot_hap <- haploPlot(object = object, pheno = pheno, recalc = TRUE)

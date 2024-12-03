@@ -1,17 +1,17 @@
 ---
-title: "Genetic Association Study with LazyGas"
+title: "Genetic Association Study with lazyGa"
 author: 
   -name: "Tomoyuki Furuta"
   affiliation: Institute of Plant Science and Resources, Okayama University, Okayama, Japan
   email: f.tomoyuki@okayama-u.ac.jp
 date: "Jun 26, 2024"
-package: LazyGas
+package: lazyGas
 output: 
   BiocStyle::html_document:
     toc: true
     toc_float: true
 vignette: >
-  %\VignetteIndexEntry{Genetic Association Study with LazyGas}
+  %\VignetteIndexEntry{Genetic Association Study with lazyGa}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 ---
@@ -29,7 +29,7 @@ library(ggplot2)
 
 ## Create sample genotype and phenotype data
 ```{r}
-library(genovisr)
+library(GenovisR)
 library(SNPRelate)
 library(SeqArray)
 library(Biostrings)
@@ -337,7 +337,7 @@ ann <- orgAnnotation(id = ann$gene_id, ann = ann)
 names(ann)[1] <- "Gene_ID"
 ann <- ann[, -2]
 listCandidate(object = lg, gff_fn = gff_fn, snpeff_fn = snpeff_fn, 
-              ann = ann, recalc = TRUE)
+              ann = ann, recalc = TRUE, numerize_chr = TRUE)
 ```
 
 
