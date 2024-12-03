@@ -2243,7 +2243,14 @@ setMethod("lazyData",
             # Retrieve the data based on the dataset type
             if(dataset == "scan"){
               check_node <- exist.gdsn(node = index.gdsn(node = object,
-                                                         path = "lazygas/scan"),
+                                                         path = "lazygas"),
+                                       path = dataset)
+              if(!check_node){
+                return(NULL)
+              }
+              check_node <- exist.gdsn(node = index.gdsn(node = object,
+                                                         path = paste0("lazygas/",
+                                                                       dataset)),
                                        path = pheno_name)
               if(!check_node){
                 return(NULL)
@@ -2252,6 +2259,12 @@ setMethod("lazyData",
                                pheno_name = pheno_name)
 
             } else if(dataset %in% c("candidate", "snpeff")){
+              check_node <- exist.gdsn(node = index.gdsn(node = object,
+                                                         path = "lazygas"),
+                                       path = dataset)
+              if(!check_node){
+                return(NULL)
+              }
               check_node <- exist.gdsn(node = index.gdsn(node = object,
                                                          path = paste0("lazygas/",
                                                                        dataset)),
@@ -2275,6 +2288,12 @@ setMethod("lazyData",
               colnames(out) <- col_names$col_names
 
             } else {
+              check_node <- exist.gdsn(node = index.gdsn(node = object,
+                                                         path = "lazygas"),
+                                       path = dataset)
+              if(!check_node){
+                return(NULL)
+              }
               check_node <- exist.gdsn(node = index.gdsn(node = object,
                                                          path = paste0("lazygas/",
                                                                        dataset,
