@@ -2485,7 +2485,7 @@ setMethod("recalcAssoc",
       peak_obj$peak_block <- peak_block
     }
 
-    new_peak_blocks <- lapply(X = seq_along(peak_obj$peak_variant_id)[1],
+    new_peak_blocks <- lapply(X = seq_along(peak_obj$peak_variant_id),
                               FUN = .make_newblocks,
                               object = object,
                               peak_obj = peak_obj,
