@@ -2749,6 +2749,9 @@ setMethod("recalcAssoc",
                          if(all(is.na(g))){
                            return(NA)
                          }
+                         if(length(unique(na.omit(as.vector(g)))) == 1){
+                           return(NA)  # Return NA if there is no variability in the genotype data
+                         }
                          df <- .makeDF(g = g,
                                        phe = peak_obj$pheno,
                                        conv_fun = peak_obj$conv_fun,
