@@ -1128,6 +1128,9 @@ setMethod("scanAssoc",
                         formula,
                         dokruskal){
     g[g == na_val] <- NA
+    if(all(is.na(g))){
+      return(NA)
+    }
 
   # Check if the genotype data has only one unique value after removing NAs
   if(length(unique(na.omit(as.vector(g)))) == 1){
