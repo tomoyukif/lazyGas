@@ -296,15 +296,7 @@ setMethod("closeGDS",
 buildLazyGas <- function(gds_fn = "",
                          load_filter = TRUE,
                          overwrite = FALSE,
-                         create_gds = list(genotype = NULL,
-                                           sample.id = NULL,
-                                           snp.id = NULL,
-                                           snp.rs.id = NULL,
-                                           snp.chromosome = NULL,
-                                           snp.position = NULL,
-                                           snp.allele = NULL,
-                                           haplotype = NULL,
-                                           dosage = NULL)){
+                         create_gds = NULL){
   if(!all(sapply(X = create_gds, FUN = is.null))){
     .createGbsrGDS(gds_fn = gds_fn, create_gds = create_gds)
   }
@@ -341,18 +333,23 @@ buildLazyGas <- function(gds_fn = "",
 #' @importFrom SeqArray seqSNP2GDS
 #' @importFrom gdsfmt openfn.gds closefn.gds addfolder.gdsn add.gdsn index.gdsn
 .createGbsrGDS <- function(gds_fn, create_gds){
-  check <- sapply(X = create_gds, FUN = is.null)
+  check <- list(genotype = TRUE,
+                haplotype = TRUE,
+                dosage = TRUE)
+  check$genotype <- is.null(create_gds$genotype)
+  check$haplotype <- is.null(create_gds$haplotype)
+  check$dosage <- is.null(create_gds$dosage)
 
-  if(check["genotype"] & check["haplotype"] & check["dosage"]){
+  if(check$genotype & check$haplotype & check$dosage){
     stop("Either genotype, haplotype, or dosage should be supplied at least.",
          call. = FALSE)
 
   } else {
-    if(!check["genotype"]){
+    if(!check$genotype){
       n_sample <- nrow(create_gds$genotype)
       n_snp <- ncol(create_gds$genotype)
 
-    } else if(!check["dosage"]){
+    } else if(!check$dosage){
       n_sample <- nrow(create_gds$dosage)
       n_snp <- ncol(create_gds$dosage)
 
@@ -368,35 +365,35 @@ buildLazyGas <- function(gds_fn = "",
     }
   }
 
-  if(check["sample.id"]){
+  if(is.null(create_gds$sample.id)){
     message("No sample ID was supplied. ",
             "Assign serial numbers to samples as sample IDs")
     create_gds$sample.id <- seq_len(n_sample)
   }
 
-  if(check["snp.id"]){
+  if(is.null(create_gds$snp.id)){
     message("No SNP ID was supplied. ",
             "Assign serial numbers to SNPs as SNP IDs")
     create_gds$snp.id <- seq_len(n_snp)
   }
 
-  if(check["snp.rs.id"]){
+  if(is.null(create_gds$snp.rs.id)){
     message("No SNP RS ID was supplied. ",
             "Assign serial numbers to SNPs as SNP RS IDs")
     create_gds$snp.rs.id <- seq_len(n_snp)
   }
 
-  if(check["snp.chromosome"]){
+  if(is.null(create_gds$snp.chromosome)){
     stop("Chromosomes in which SNPs locate should be supplied as snp.chromosome.",
          call. = FALSE)
   }
 
-  if(check["snp.position"]){
+  if(is.null(create_gds$snp.position)){
     stop("SNP positions should be supplied as snp.position.",
          call. = FALSE)
   }
 
-  if(check["snp.allele"]){
+  if(is.null(create_gds$snp.allele)){
     message("No SNP allele was supplied. ",
             "Assign random alleles to SNPs.")
     nuc <- c("A", "T", "G", "C")
@@ -428,7 +425,7 @@ buildLazyGas <- function(gds_fn = "",
 
   gds <- openfn.gds(gds_fn, readonly = FALSE)
 
-  if(!check["haplotype"]){
+  if(!check$haplotype){
     if(length(dim(create_gds$haplotype)) == 2){
       rep_row <- rep(seq_len(nrow(create_gds$haplotype)), each = 2)
       create_gds$haplotype <- create_gds$haplotype[rep_row, ]
@@ -445,7 +442,7 @@ buildLazyGas <- function(gds_fn = "",
              compress = "LZMA_RA")
   }
 
-  if(!check["dosage"]){
+  if(!check$dosage){
     addfolder.gdsn(node = index.gdsn(gds, "annotation/format"), name = "EDS")
     add.gdsn(index.gdsn(gds, "annotation/format/EDS"), name = "data",
              val = create_gds$dosage,
