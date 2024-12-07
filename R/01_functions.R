@@ -408,6 +408,7 @@ buildLazyGas <- function(gds_fn = "",
     create_gds$snp.allele <- sub(",", "/",  create_gds$snp.allele)
   }
 
+  create_gds$genotype[is.na(create_gds$genotype)] <- 3
   snpgdsCreateGeno(gds.fn = paste0(gds_fn, ".temp"),
                    genmat = create_gds$genotype,
                    sample.id = create_gds$sample.id,
@@ -426,6 +427,7 @@ buildLazyGas <- function(gds_fn = "",
   gds <- openfn.gds(gds_fn, readonly = FALSE)
 
   if(!check$haplotype){
+    create_gds$haplotype[is.na(create_gds$haplotype)] <- 63
     if(length(dim(create_gds$haplotype)) == 2){
       rep_row <- rep(seq_len(nrow(create_gds$haplotype)), each = 2)
       create_gds$haplotype <- create_gds$haplotype[rep_row, ]
@@ -443,6 +445,7 @@ buildLazyGas <- function(gds_fn = "",
   }
 
   if(!check$dosage){
+    create_gds$dosage[is.na(create_gds$dosage)] <- 63
     addfolder.gdsn(node = index.gdsn(gds, "annotation/format"), name = "EDS")
     add.gdsn(index.gdsn(gds, "annotation/format/EDS"), name = "data",
              val = create_gds$dosage,
@@ -2482,7 +2485,7 @@ setMethod("recalcAssoc",
       peak_obj$peak_block <- peak_block
     }
 
-    new_peak_blocks <- lapply(X = seq_along(peak_obj$peak_variant_id),
+    new_peak_blocks <- lapply(X = seq_along(peak_obj$peak_variant_id)[1],
                               FUN = .make_newblocks,
                               object = object,
                               peak_obj = peak_obj,
@@ -2571,6 +2574,20 @@ setMethod("recalcAssoc",
     geno <- matrix(data = geno, ncol = 1)
   }
 
+  if(geno_format == "haplotype"){
+    na_val <- 0
+
+  } else if(geno_format == "corrected"){
+    na_val <- 3
+
+
+  } else if(geno_format == "dosage"){
+    na_val <- 63
+
+  } else {
+    na_val <- 2
+  }
+
   out <- list(
     geno = geno,
     geno_format = geno_format,
@@ -2580,6 +2597,7 @@ setMethod("recalcAssoc",
     conv_fun = eval(parse(text = .get_data(object,
                                            node = "lazygas/scan/conv_fun"))),
     formula = .get_data(object, node = "lazygas/scan/formula"),
+    na_val = na_val,
     peakcall = peakcall,
     peak_variant_id = peak_variant_id,
     peak_block = tapply(peakcall$variant_ID, peakcall$peak_variant_ID, c),
@@ -2723,8 +2741,14 @@ setMethod("recalcAssoc",
     }
   }
 
+  na_val <- peak_obj$na_val
+
   p_values <- mclapply(X = target_geno, mc.cores = n_threads, mc.preschedule = TRUE,
                        function(g){
+                         g[g == na_val] <- NA
+                         if(all(is.na(g))){
+                           return(NA)
+                         }
                          df <- .makeDF(g = g,
                                        phe = peak_obj$pheno,
                                        conv_fun = peak_obj$conv_fun,
