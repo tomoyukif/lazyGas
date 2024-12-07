@@ -1127,12 +1127,7 @@ setMethod("scanAssoc",
                         conv_fun,
                         formula,
                         dokruskal){
-  if(geno_format == "haplotype"){
     g[g == na_val] <- NA
-
-  } else {
-    g[g > na_val] <- NA
-  }
 
   # Check if the genotype data has only one unique value after removing NAs
   if(length(unique(na.omit(as.vector(g)))) == 1){
@@ -1656,7 +1651,8 @@ setMethod("callPeakBlock",
                     peak_ld = peak_ld)
 
     # Update pvalues by removing the variants that are in the peak block
-    pvalues <- subset(pvalues, subset = !variant_ID %in% peak_block$ids)
+    rm_ids <- seq(min(peak_block$ids), max(peak_block$ids))
+    pvalues <- subset(pvalues, subset = !variant_ID %in% rm_ids)
   }
 
   # Finalize GDS nodes by setting them to read mode
