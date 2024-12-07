@@ -1025,16 +1025,15 @@ setMethod("scanAssoc",
   if(geno_format == "haplotype"){
     na_val <- 0
 
-  } else if(geno_format %in% c("corrected", "dosage")){
-    if(exist.gdsn(node = object$root, path = "annotation/format/HAP/data")){
-      hap_node <- index.gdsn(node = object,
-                             path = "annotation/format/HAP/data")
-      obj_desp <- objdesp.gdsn(node = hap_node)
-      na_val <- obj_desp$dim[1]
+  } else if(geno_format == "corrected"){
+    na_val <- 3
 
-    } else {
-      na_val <- 2
-    }
+
+  } else if(geno_format == "dosage"){
+    na_val <- 63
+
+  } else {
+    na_val <- 2
   }
 
   # Perform regression analysis on genotype data
@@ -1745,21 +1744,11 @@ setMethod("callPeakBlock",
     }
     out[out == 0] <- NA
 
-  } else {
-    if(geno_format %in% c("corrected", "genotype")){
-      out <- apply(X = out, MARGIN = c(2, 3), FUN = sum)
-    }
+  } else if(geno_format %in% c("corrected", "genotype")){
+    out[out == 2] <- NA
 
-    if(exist.gdsn(node = object$root, path = "annotation/format/CGT/data")){
-      cgt_node <- index.gdsn(node = object,
-                             path = "annotation/format/CGT/data")
-      obj_desp <- objdesp.gdsn(node = cgt_node)
-      n_max <- obj_desp$dim[1]
-
-    } else {
-      n_max <- 2
-    }
-    out[out > n_max] <- NA
+  } else if(geno_format == "dosage"){
+    out[out == 63] <- NA
   }
   return(out)
 }
