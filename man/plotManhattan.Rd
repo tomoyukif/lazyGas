@@ -10,7 +10,7 @@ plotManhattan(
   chr = NULL,
   start = NULL,
   end = NULL,
-  signif = "FDR<0.05",
+  signif = 0.05,
   out_fn = "",
   ...
 )
