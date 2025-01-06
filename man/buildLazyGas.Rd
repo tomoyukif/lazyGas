@@ -8,9 +8,7 @@ buildLazyGas(
   gds_fn = "",
   load_filter = TRUE,
   overwrite = FALSE,
-  create_gds = list(genotype = NULL, sample.id = NULL, snp.id = NULL, snp.rs.id = NULL,
-    snp.chromosome = NULL, snp.position = NULL, snp.allele = NULL, haplotype = NULL,
-    dosage = NULL)
+  create_gds = NULL
 )
 }
 \arguments{

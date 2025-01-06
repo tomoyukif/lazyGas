@@ -80,11 +80,11 @@ q2_add <- qtl_ds[, 2] * 2
 q2_dom <- as.numeric(qtl_ds[, 2] == 1) * 0
 q3_add <- qtl_ds[, 3] * 1
 q3_dom <- as.numeric(qtl_ds[, 3] == 1) * 2
-# 
-# st <- 1^2 + 3^2 + 2^2 + 1^2
-# 3^2/st
-# 2^2/st
-# 1^2/st
+
+st <- 1^2 + 3^2 + 2^2 + 1^2
+3^2/st
+2^2/st
+1^2/st
 
 sample_pheno <- tempfile("pheno", temp_dir, ".csv")
 pheno <- q1_add + q1_dom + q2_add + q2_dom + q3_add + q3_dom + e

@@ -1703,7 +1703,7 @@ setMethod("callPeakBlock",
     selection <- list(validSam(object = object),
                       validMar(object = object) & valid_chr)
     node <- "annotation/format/EDS/data"
-    is_categorical <- FALSE
+    is_categorical <- TRUE
 
   } else {
     # Identify valid chromosomes
@@ -1753,7 +1753,7 @@ setMethod("callPeakBlock",
 }
 
 #' @import parallel
-.calculate_ld <- function(geno, peak_variant_idx, is_categorical, n_threads) {
+.calculate_ld <- function(geno, peak_variant_idx, is_categorical, n_threads = NULL) {
   n <- ncol(geno)
   peak_ld <- numeric(n)
 
@@ -1770,31 +1770,34 @@ setMethod("callPeakBlock",
       }
     }
 
-    chi_sq_values <- mclapply(X = 1:n, mc.cores = n_threads, mc.preschedule = TRUE,
+    geno_identity <- mclapply(X = 1:n, mc.cores = n_threads, mc.preschedule = TRUE,
                               FUN = function(j) {
                                 geno_col_j <- as.integer(geno[, j])
-                                cont_table <- matrix(0, num_levels, num_levels)
-
-                                for (k in seq_len(nrow(geno))) {
-                                  row_idx <- match(geno_col[k], levels)
-                                  col_idx <- match(geno_col_j[k], levels)
-                                  cont_table[row_idx, col_idx] <- cont_table[row_idx, col_idx] + 1
-                                }
-
-                                chi_sq <- 0
-                                row_sums <- rowSums(cont_table)
-                                col_sums <- colSums(cont_table)
-                                total_sum <- sum(cont_table)
-
-                                for (r in seq_len(num_levels)) {
-                                  for (c in seq_len(num_levels)) {
-                                    expected <- (row_sums[r] * col_sums[c]) / total_sum
-                                    chi_sq <- chi_sq + ((cont_table[r, c] - expected) ^ 2) / expected
-                                  }
-                                }
-                                return(chi_sq / nrow(geno))
+                                geno_match <- geno_col == geno_col_j
+                                geno_identity <- sum(geno_match, na.rm = TRUE) / sum(!is.na(geno_match))
+                                return(geno_identity)
+                                # cont_table <- matrix(0, num_levels, num_levels)
+                                #
+                                # for (k in seq_len(nrow(geno))) {
+                                #   row_idx <- match(geno_col[k], levels)
+                                #   col_idx <- match(geno_col_j[k], levels)
+                                #   cont_table[row_idx, col_idx] <- cont_table[row_idx, col_idx] + 1
+                                # }
+                                #
+                                # chi_sq <- 0
+                                # row_sums <- rowSums(cont_table)
+                                # col_sums <- colSums(cont_table)
+                                # total_sum <- sum(cont_table)
+                                #
+                                # for (r in seq_len(num_levels)) {
+                                #   for (c in seq_len(num_levels)) {
+                                #     expected <- (row_sums[r] * col_sums[c]) / total_sum
+                                #     chi_sq <- chi_sq + ((cont_table[r, c] - expected) ^ 2) / expected
+                                #   }
+                                # }
+                                # return(chi_sq / nrow(geno))
                               })
-    peak_ld <- unlist(chi_sq_values)
+    peak_ld <- unlist(geno_identity)
 
   } else {
     # Parallel processing setup
@@ -2480,9 +2483,13 @@ setMethod("recalcAssoc",
                            peak_obj = peak_obj,
                            object = object,
                            peakcall = peakcall,
-                           values = FALSE)
+                           values = FALSE,
+                           n_threads = n_threads)
       names(peak_block) <- peak_obj$peak_variant_id
       peak_obj$peak_block <- peak_block
+      if(length(new_peaks) == 1){
+        break
+      }
     }
 
     new_peak_blocks <- lapply(X = seq_along(peak_obj$peak_variant_id),
@@ -2884,7 +2891,7 @@ setMethod("recalcAssoc",
   return(peak_obj)
 }
 
-.recallPeak <- function(peak_id, peak_obj, object, peakcall, values){
+.recallPeak <- function(peak_id, peak_obj, object, peakcall, values, n_threads){
   target_variants <- peakcall$peak_ID %in% peakcall$peak_ID[peakcall$variant_ID %in% peak_id]
   out <- target_variants <- sort(peakcall$variant_ID[target_variants])
 
@@ -2922,7 +2929,8 @@ setMethod("recalcAssoc",
     # Calculate linkage disequilibrium (LD) for the identified peak
     peak_ld <- .calculate_ld(geno = as.matrix(geno),
                              peak_variant_idx = peak_info$peak_index_in_chr,
-                             is_categorical = selection$is_categorical)
+                             is_categorical = selection$is_categorical,
+                             n_threads = n_threads)
 
     # Identify the peak block based on the LD values
     peak_block <- .identify_peak_block(peak_ld = peak_ld,
@@ -2962,7 +2970,8 @@ setMethod("recalcAssoc",
                              peak_obj = peak_obj,
                              object = object,
                              peakcall = peakcall,
-                             values = TRUE)
+                             values = TRUE,
+                             n_threads = n_threads)
 
   peak_obj <- .remake_peakobj(object = object,
                               peak_obj = peak_obj,
