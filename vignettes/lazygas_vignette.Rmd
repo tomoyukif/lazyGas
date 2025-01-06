@@ -286,7 +286,7 @@ for(i in seq_along(pheno$pheno_names)){
 ## Recalculating and Visualizing Peaks
 Recalculate and visualize peaks:
 ```{r}
-recalcAssoc(object = lg, signif = 0.05, threshold = 0.8, n_threads = 10)
+recalcAssoc(object = lg, n_threads = 10)
 
 for(i in seq_along(pheno$pheno_names)){
   p <- plotPeaks(object = lg, pheno = i, recalc = TRUE)
