@@ -2480,7 +2480,7 @@ setMethod("recalcAssoc",
                                  n_threads = n_threads)
       new_peaks <- unique(unlist(new_peaks))
 
-      if(length(new_peaks) == 1 | setequal(new_peaks, peak_obj$peak_variant_id)){
+      if(length(new_peaks) == 1){
         peak_obj$peak_variant_id <- new_peaks
         break
       }
@@ -2976,6 +2976,8 @@ setMethod("recalcAssoc",
                          output_all = TRUE,
                          n_threads = n_threads,
                          mode = "composite")
+  peakcall$P.model <- peakcall$P.model
+  peakcall$P.model[peakcall$P.model %in% c(0, 1)] <- NA
   peak_id <- peakcall$variant_ID[which.min(peakcall$P.model)]
   peakcall$peak_ID <- i
   recall_peak <- .recallPeak(peak_id = peak_id,
