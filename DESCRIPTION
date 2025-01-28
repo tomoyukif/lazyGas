@@ -1,8 +1,8 @@
 Package: lazyGas
 Type: Package
 Title: Lazies' genetic association study (lazyGas): genetic association study pipeline for lazy guys
-Version: 0.3.1
-Date: 2025-01-08
+Version: 0.3.2
+Date: 2025-01-27
 Authors@R: person("Tomoyuki", "Furuta", 
            email = "f.tomoyuki@okayama-u.ac.jp",
            role = c("aut", "cre"),

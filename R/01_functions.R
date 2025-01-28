@@ -1209,7 +1209,11 @@ setMethod("scanAssoc",
     p <- pchisq(res$null.deviance - res$deviance,
                 res$df.null - res$df.residual,
                 lower.tail = FALSE)
-
+    # Calculate the proportion of variance explained by the model
+    tss <- res$null.residuals
+    rss <- sum(res$residuals^2)
+    pervar <- 1 - rss / tss
+    
   } else {
     # If a null model is provided, fit the null model and calculate p-value
     null_res <- try(glm(formula = null_df$fml,
@@ -1218,10 +1222,13 @@ setMethod("scanAssoc",
     p <- pchisq(null_res$deviance - res$deviance,
                 null_res$df.residual - res$df.residual,
                 lower.tail = FALSE)
+    # Calculate the proportion of variance explained by the model
+    tss <- res$null.residuals
+    rss1 <- sum(res$residuals^2)
+    rss2 <- sum(null_res$residuals^2)
+    pervar <- 1 - (rss2 - rss1) / tss
   }
 
-  # Calculate the proportion of variance explained by the model
-  pervar <- 1 - res$deviance / res$null.deviance
   s <- summary(res)
   coef <- s$coefficients
 
