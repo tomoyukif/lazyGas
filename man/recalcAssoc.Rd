@@ -5,12 +5,16 @@
 \alias{recalcAssoc,LazyGas-method}
 \title{Recalculate Associations}
 \usage{
-recalcAssoc(object, n_threads = NULL, ...)
+recalcAssoc(object, n_threads = NULL, refine_position = FALSE, ...)
 
-\S4method{recalcAssoc}{LazyGas}(object, n_threads)
+\S4method{recalcAssoc}{LazyGas}(object, n_threads, refine_position)
 }
 \arguments{
 \item{object}{A LazyGas object.}
+
+\item{n_threads}{description}
+
+\item{refine_position}{}
 }
 \value{
 None. The function modifies the LazyGas object in place.

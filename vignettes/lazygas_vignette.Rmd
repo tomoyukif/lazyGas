@@ -33,71 +33,71 @@ library(GenovisR)
 library(SNPRelate)
 library(SeqArray)
 library(Biostrings)
-
-nb <- readDNAStringSet("~/hdd3/genomeData/rice/cultivar_sativa/os_nb_rapdb/IRGSP-1.0_genome.fasta")
-
-df <- simGenovis(n_sample = 100, n_chr = 12, chr_len = width(nb) * 1e-6)
-temp_dir <- tempdir()
-temp_gds <- tempfile("temp", temp_dir, ".gds")
-snpgdsCreateGeno(gds.fn = temp_gds,
-                 genmat = df$genotype,
-                 sample.id = df$sample_info$id,
-                 snp.id = seq_along(df$marker_info$id),
-                 snp.rs.id = seq_along(df$marker_info$id),
-                 snp.chromosome = df$marker_info$chr,
-                 snp.position = df$marker_info$pos,
-                 snp.allele = paste(df$marker_info$ref_allele,
-                                    df$marker_info$alt_allele, sep = "/"),
-                 snpfirstdim = FALSE, compress.annotation = "LZMA_RA",
-                 compress.geno = "LZMA_RA",
-                 other.vars = list(HAP = df$haplotype,
-                                   EDS = df$dosage))
-
-sample_gds <- tempfile("sample", temp_dir, ".gds")
-seqSNP2GDS(gds.fn = temp_gds,
-           out.fn = sample_gds)
-
-gds <- openfn.gds(sample_gds, readonly = FALSE)
-
-addfolder.gdsn(node = index.gdsn(gds, "annotation/format"), name = "HAP")
-addfolder.gdsn(node = index.gdsn(gds, "annotation/format"), name = "EDS")
-add.gdsn(index.gdsn(gds, "annotation/format/HAP"), name = "data",
-         val = df$haplotype, storage = "bit2", compress = "LZMA_RA")
-add.gdsn(index.gdsn(gds, "annotation/format/EDS"), name = "data",
-         val = df$dosage, storage = "bit2", compress = "LZMA_RA")
-closefn.gds(gds)
-unlink(temp_gds)
-
-qtl <- sample(x = df$marker_info$id, size = 3)
-qtl_index <- which(df$marker_info$id %in% qtl)
-df$marker_info[qtl_index, ]
-qtl_ds <- df$dosage[, qtl_index]
-
-e <- rnorm(n = nrow(qtl_ds), mean = 0, sd = 1)
-q1_add <- qtl_ds[, 1] * 3
-q1_dom <- as.numeric(qtl_ds[, 1] == 1) * 3
-q2_add <- qtl_ds[, 2] * 2
-q2_dom <- as.numeric(qtl_ds[, 2] == 1) * 0
-q3_add <- qtl_ds[, 3] * 1
-q3_dom <- as.numeric(qtl_ds[, 3] == 1) * 2
-
-st <- 1^2 + 3^2 + 2^2 + 1^2
-3^2/st
-2^2/st
-1^2/st
-
-sample_pheno <- tempfile("pheno", temp_dir, ".csv")
-pheno <- q1_add + q1_dom + q2_add + q2_dom + q3_add + q3_dom + e
-pheno <- data.frame(id = df$sample_info$id, pheno = pheno)
-write.csv(pheno, sample_pheno, row.names = FALSE)
+# 
+# nb <- readDNAStringSet("~/hdd3/genomeData/rice/cultivar_sativa/os_nb_rapdb/IRGSP-1.0_genome.fasta")
+# 
+# df <- simGenovis(n_sample = 100, n_chr = 12, chr_len = width(nb) * 1e-6)
+# temp_dir <- tempdir()
+# temp_gds <- tempfile("temp", temp_dir, ".gds")
+# snpgdsCreateGeno(gds.fn = temp_gds,
+#                  genmat = df$genotype,
+#                  sample.id = df$sample_info$id,
+#                  snp.id = seq_along(df$marker_info$id),
+#                  snp.rs.id = seq_along(df$marker_info$id),
+#                  snp.chromosome = df$marker_info$chr,
+#                  snp.position = df$marker_info$pos,
+#                  snp.allele = paste(df$marker_info$ref_allele,
+#                                     df$marker_info$alt_allele, sep = "/"),
+#                  snpfirstdim = FALSE, compress.annotation = "LZMA_RA",
+#                  compress.geno = "LZMA_RA",
+#                  other.vars = list(HAP = df$haplotype,
+#                                    EDS = df$dosage))
+# 
+# sample_gds <- tempfile("sample", temp_dir, ".gds")
+# seqSNP2GDS(gds.fn = temp_gds,
+#            out.fn = sample_gds)
+# 
+# gds <- openfn.gds(sample_gds, readonly = FALSE)
+# 
+# addfolder.gdsn(node = index.gdsn(gds, "annotation/format"), name = "HAP")
+# addfolder.gdsn(node = index.gdsn(gds, "annotation/format"), name = "EDS")
+# add.gdsn(index.gdsn(gds, "annotation/format/HAP"), name = "data",
+#          val = df$haplotype, storage = "bit2", compress = "LZMA_RA")
+# add.gdsn(index.gdsn(gds, "annotation/format/EDS"), name = "data",
+#          val = df$dosage, storage = "bit2", compress = "LZMA_RA")
+# closefn.gds(gds)
+# unlink(temp_gds)
+# 
+# qtl <- sample(x = df$marker_info$id, size = 3)
+# qtl_index <- which(df$marker_info$id %in% qtl)
+# df$marker_info[qtl_index, ]
+# qtl_ds <- df$dosage[, qtl_index]
+# 
+# e <- rnorm(n = nrow(qtl_ds), mean = 0, sd = 1)
+# q1_add <- qtl_ds[, 1] * 3
+# q1_dom <- as.numeric(qtl_ds[, 1] == 1) * 3
+# q2_add <- qtl_ds[, 2] * 2
+# q2_dom <- as.numeric(qtl_ds[, 2] == 1) * 0
+# q3_add <- qtl_ds[, 3] * 1
+# q3_dom <- as.numeric(qtl_ds[, 3] == 1) * 2
+# 
+# st <- 1^2 + 3^2 + 2^2 + 1^2
+# 3^2/st
+# 2^2/st
+# 1^2/st
+# 
+# sample_pheno <- tempfile("pheno", temp_dir, ".csv")
+# pheno <- q1_add + q1_dom + q2_add + q2_dom + q3_add + q3_dom + e
+# pheno <- data.frame(id = df$sample_info$id, pheno = pheno)
+# write.csv(pheno, sample_pheno, row.names = FALSE)
 ```
 
 
 ## Loading Input GDS File and Building a LazyGas Object
 Load the input GDS file and build a `LazyGas` class object:
 ```{r}
-# gds_fn <- system.file("extdata", "sample.gds", package = "lazyGas")
-lg <- buildLazyGas(gds_fn = sample_gds, load_filter = TRUE, overwrite = FALSE)
+gds_fn <- system.file("extdata", "sample.gds", package = "lazyGas")
+lg <- buildLazyGas(gds_fn = gds_fn, load_filter = TRUE, overwrite = FALSE)
 ```
 
 If you have genotype information that are not stored in a GDS file, you can build 
@@ -138,8 +138,8 @@ lg <- buildLazyGas(gds_fn = sample_gds2,
 ## Loading and Preprocessing Phenotype Data
 Load the phenotype data:
 ```{r}
-# pheno_fn <- system.file("extdata", "pheno.csv", package = "lazyGas")
-pheno <- read.csv(file = sample_pheno)
+pheno_fn <- system.file("extdata", "pheno.csv", package = "lazyGas")
+pheno <- read.csv(file = pheno_fn)
 ```
 
 Assign phenotype data to the LazyGas object:
@@ -286,7 +286,7 @@ for(i in seq_along(pheno$pheno_names)){
 ## Recalculating and Visualizing Peaks
 Recalculate and visualize peaks:
 ```{r}
-recalcAssoc(object = lg, n_threads = 10)
+recalcAssoc(object = lg, n_threads = 10, refine_position = FALSE)
 
 for(i in seq_along(pheno$pheno_names)){
   p <- plotPeaks(object = lg, pheno = i, recalc = TRUE)
@@ -318,16 +318,16 @@ following.
 ```{r}
 # GFF file 
 # gff_fn <- "path/to/gff/file.gff"
-gff_fn <- "~/hdd3/genomeData/rice/cultivar_sativa/nb_combined/version_2023/gff/nb_combined_all_annotated.gff"
+gff_fn <- "~/01_wd/genomeData/rice/cultivar_sativa/nb_combined/version_2023/gff/nb_combined_all_annotated.gff"
 
 # SNPEff output VCF file
-snpeff_fn <- "~/hdd5/ngsData/wgs/shufflingParents/snpeff/founder_wgs_on_bv_genome_snpeff.vcf.gz"
+snpeff_fn <- "/home/ftom/01_wd/yamamoto/shufle/snpeff/founder_wgs_on_bv_genome_snpeff.vcf.gz"
 
 # Any CSV format file for gene annotations
 # The given matrix stored in the CSV file must contain a column named "GeneID"
 # that should match the gene IDs in the GFF file.
 # ann_fn <- "path/to/annotation/file.csv" 
-source("~/hdd3/genomeData/util_scripts/util08_orgAnnotation.R")
+source("~/01_wd/genomeData/util_scripts/util08_orgAnnotation.R")
 gff <- rtracklayer::import.gff(gff_fn)
 ann <- rtracklayer::mcols(gff)
 ann <- ann[ann$type %in% c("gene", "mRNA", "transcript"), ]
@@ -336,8 +336,8 @@ ann <- as.data.frame(ann)
 ann <- orgAnnotation(id = ann$gene_id, ann = ann)
 names(ann)[1] <- "Gene_ID"
 ann <- ann[, -2]
-listCandidate(object = lg, gff_fn = gff_fn, snpeff_fn = snpeff_fn, 
-              ann = ann, recalc = TRUE, numerize_chr = TRUE)
+# listCandidate(object = lg, gff_fn = gff_fn, snpeff_fn = snpeff_fn, 
+#               ann = ann, recalc = TRUE, numerize_chr = TRUE)
 ```
 
 
@@ -364,6 +364,11 @@ head(peakcall)
 ```{r}
 recalc <- lazyData(object = lg, dataset = "recalc", pheno = pheno$pheno_names[1])
 head(recalc)
+```
+
+```{r}
+groups <- lazyData(object = lg, dataset = "groups", pheno = pheno$pheno_names[1])
+head(groups)
 ```
 
 ```{r}

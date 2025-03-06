@@ -177,12 +177,17 @@
   # Add variant_ID to peaks data
   peaks$variant_ID <- peaks$peak_variant_ID
 
-  # Retrieve the scan results for the specified phenotype
-  pvalues <- .get_scan(object = object, pheno_name = pheno_name, sel = c("FDR", "negLog10P"))
-
   if(recalc){
     # For recalculated data, join peaks and pvalues data
-    pvalues <- subset(pvalues, select = variant_ID:Pos)
+    if(is.null(blocks$negLog10P)){
+      # Retrieve the scan results for the specified phenotype
+      pvalues <- .get_scan(object = object, pheno_name = pheno_name, sel = c("FDR", "negLog10P"))
+      pvalues <- subset(pvalues, select = variant_ID:Pos)
+
+    } else {
+      pvalues <- subset(blocks, select = c(variant_ID, Chr:Pos))
+      blocks <- subset(blocks, select = -c(Chr:Pos))
+    }
     peaks_join <- left_join(x = peaks, y = pvalues, "variant_ID")
     names(peaks_join)[-(1:3)] <- paste0("peak_", names(peaks_join)[-(1:3)])
     peaks_join <- subset(peaks_join, select = -variant_ID)
@@ -194,7 +199,11 @@
 
     # Right join peaks and blocks data
     out <- right_join(x = peaks_join, y = blocks_join, by = "peak_ID")
+
   } else {
+    # Retrieve the scan results for the specified phenotype
+    pvalues <- .get_scan(object = object, pheno_name = pheno_name, sel = c("FDR", "negLog10P"))
+
     # For non-recalculated data, join peaks and pvalues data
     peaks_join <- left_join(x = peaks, y = pvalues, "variant_ID")
     names(peaks_join)[-(1:3)] <- paste0("peak_", names(peaks_join)[-(1:3)])
@@ -486,7 +495,6 @@ setMethod("assignPheno",
               stop("The input `pheno` data.frame has an invalid structure.",
                    "\n It must contain a sample id column named `id` or `ID`.")
             }
-
             # Extract sample IDs from the phenotype data
             sampleID_pheno <- pheno[, sampleID_pheno_index]
 
@@ -1210,10 +1218,10 @@ setMethod("scanAssoc",
                 res$df.null - res$df.residual,
                 lower.tail = FALSE)
     # Calculate the proportion of variance explained by the model
-    tss <- res$null.residuals
+    tss <- res$null.deviance
     rss <- sum(res$residuals^2)
     pervar <- 1 - rss / tss
-    
+
   } else {
     # If a null model is provided, fit the null model and calculate p-value
     null_res <- try(glm(formula = null_df$fml,
@@ -1223,10 +1231,10 @@ setMethod("scanAssoc",
                 null_res$df.residual - res$df.residual,
                 lower.tail = FALSE)
     # Calculate the proportion of variance explained by the model
-    tss <- res$null.residuals
+    tss <- res$null.deviance
     rss1 <- sum(res$residuals^2)
     rss2 <- sum(null_res$residuals^2)
-    pervar <- 1 - (rss2 - rss1) / tss
+    pervar <- (rss2 - rss1) / tss
   }
 
   s <- summary(res)
@@ -2241,8 +2249,7 @@ setMethod("lazyData",
           function(object, dataset, pheno){
             # Match the dataset argument to one of the allowed choices
             dataset <- match.arg(arg = dataset,
-                                 choices = c("scan", "peakcall", "recalc", "candidate", "snpeff"))
-
+                                 choices = c("scan", "peakcall", "recalc", "groups", "candidate", "snpeff"))
             # Determine phenotype index based on input
             pheno_name <- .determine_phenotype_name(object = object,
                                                     pheno = pheno)
@@ -2265,7 +2272,11 @@ setMethod("lazyData",
               out <- .get_scan(object = object,
                                pheno_name = pheno_name)
 
-            } else if(dataset %in% c("candidate", "snpeff")){
+            } else if(dataset %in% c("candidate", "snpeff", "groups")){
+              if(dataset == "groups"){
+                dataset <- "recalc/groups"
+              }
+
               check_node <- exist.gdsn(node = index.gdsn(node = object,
                                                          path = "lazygas"),
                                        path = dataset)
@@ -2290,8 +2301,14 @@ setMethod("lazyData",
                 out <- matrix(out, nrow = 1)
               }
 
-              col_names <- get.attr.gdsn(node = index.gdsn(node = object$root,
-                                                           path = paste0("lazygas/", dataset)))
+              if(dataset == "recalc/groups"){
+                col_names <- get.attr.gdsn(node = index.gdsn(node = object$root,
+                                                             path = file.path("lazygas", dataset, pheno_name)))
+
+              } else {
+                col_names <- get.attr.gdsn(node = index.gdsn(node = object$root,
+                                                             path = paste0("lazygas/", dataset)))
+              }
               colnames(out) <- col_names$col_names
 
             } else {
@@ -2324,12 +2341,15 @@ setMethod("lazyData",
 #' Recalculate associations using the LazyGas object and specified r-square threshold.
 #'
 #' @param object A LazyGas object.
+#' @param n_threads description
+#' @param refine_position
 #'
 #' @return None. The function modifies the LazyGas object in place.
 #' @export
 #'
 setGeneric("recalcAssoc", function(object,
                                    n_threads = NULL,
+                                   refine_position = FALSE,
                                    ...)
   standardGeneric("recalcAssoc"))
 
@@ -2340,7 +2360,7 @@ setGeneric("recalcAssoc", function(object,
 #'
 setMethod("recalcAssoc",
           "LazyGas",
-          function(object, n_threads){
+          function(object, n_threads, refine_position){
             if(!exist.gdsn(node = object$root, path = "lazygas/peakcall")){
               stop("No peakcall data in the input LazyGas object.\n",
                    "Run callPeakBlock() to scan associations.")
@@ -2377,13 +2397,19 @@ setMethod("recalcAssoc",
                              new_node = pheno_name,
                              storage = "double",
                              replace = TRUE)
+                .create_gdsn(root_node = object$root,
+                             target_node = "lazygas/recalc/groups",
+                             new_node = pheno_name,
+                             storage = "double",
+                             replace = TRUE)
 
               } else {
                 .peakrecalculator(object = object,
                                   pheno = pheno,
                                   pheno_name = pheno_name,
                                   binary = pheno$pheno_type$binary[i],
-                                  n_threads = n_threads)
+                                  n_threads = n_threads,
+                                  refine_position = refine_position)
               }
 
               .finalize_gdsn_recalc(object = object, pheno_name = pheno_name)
@@ -2403,6 +2429,10 @@ setMethod("recalcAssoc",
   blocks_gdsn <- .create_gdsn(root_node = object$root,
                               target_node = "lazygas/recalc",
                               new_node = "blocks",
+                              is_folder = TRUE)
+  groups_gdsn <- .create_gdsn(root_node = object$root,
+                              target_node = "lazygas/recalc",
+                              new_node = "groups",
                               is_folder = TRUE)
 
   att <- get.attr.gdsn(node = index.gdsn(object$root, path = "lazygas/peakcall/peaks"))
@@ -2426,13 +2456,15 @@ setMethod("recalcAssoc",
                                   path = paste0("lazygas/recalc/peaks/", pheno_name)))
   readmode.gdsn(node = index.gdsn(node = object$root,
                                   path = paste0("lazygas/recalc/blocks/", pheno_name)))
+  readmode.gdsn(node = index.gdsn(node = object$root,
+                                  path = paste0("lazygas/recalc/groups/", pheno_name)))
   # readmode.gdsn(node = index.gdsn(node = object$root,
   #                                 path = paste0("lazygas/recalc/group/", pheno_name)))
 }
 
 # Recalculate peaks for a given phenotype.
 #' @importFrom dplyr setequal
-.peakrecalculator <- function(object, pheno, pheno_name, binary, n_threads){
+.peakrecalculator <- function(object, pheno, pheno_name, binary, n_threads, refine_position){
   message("Processing: ", pheno_name)
 
   peakcall <- .get_peakcall(object = object, pheno_name = pheno_name)
@@ -2447,6 +2479,11 @@ setMethod("recalcAssoc",
                  replace = TRUE)
     .create_gdsn(root_node = object$root,
                  target_node = "lazygas/recalc/blocks",
+                 new_node = pheno_name,
+                 storage = "double",
+                 replace = TRUE)
+    .create_gdsn(root_node = object$root,
+                 target_node = "lazygas/recalc/groups",
                  new_node = pheno_name,
                  storage = "double",
                  replace = TRUE)
@@ -2465,85 +2502,91 @@ setMethod("recalcAssoc",
                               pheno_name = pheno_name,
                               peakcall = peakcall,
                               binary = binary)
-    message("Recalculating associations...")
-    count <- 0
+    message("Grouping associations...")
+    # count <- 0
 
-    while(TRUE){
-      count <- count + 1
-      message("Round ", count)
+    # while(TRUE){
+    #   count <- count + 1
+    #   message("Round ", count)
 
-      cov_scan <- lapply(X = peak_obj$peak_variant_id,
-                         FUN = .composite,
-                         peak_obj = peak_obj,
-                         n_threads = n_threads,
-                         mode = "excl")
+    cov_scan <- lapply(X = peak_obj$peak_variant_id,
+                       FUN = .composite,
+                       peak_obj = peak_obj,
+                       n_threads = n_threads,
+                       mode = "excl")
 
-      peak_grp <- .group_peaks(cov_scan = cov_scan,
-                               peak_variant_id = peak_obj$peak_variant_id)
+    peak_grp <- .group_peaks(cov_scan = cov_scan,
+                             peak_variant_id = peak_obj$peak_variant_id)
 
-      new_peaks <- .get_newpeaks(object = object,
-                                 peak_grp = peak_grp,
-                                 peak_obj = peak_obj,
-                                 n_threads = n_threads)
-      new_peaks <- unique(unlist(new_peaks))
+    new_peaks <- .get_newpeaks(object = object,
+                               peak_grp = peak_grp,
+                               peak_obj = peak_obj,
+                               n_threads = n_threads)
 
-      if(length(new_peaks) == 1){
-        peak_obj$peak_variant_id <- new_peaks
-        break
-      }
-
-      if(setequal(new_peaks, peak_obj$peak_variant_id)){
-        break
-      }
-
-      peak_obj <- .remake_peakobj(object = object,
-                                  peak_obj = peak_obj,
-                                  peak_variant_id = new_peaks)
-
-      peak_block <- lapply(X = peak_obj$peak_variant_id,
-                           FUN = .recallPeak,
-                           peak_obj = peak_obj,
-                           object = object,
-                           peakcall = peakcall,
-                           values = FALSE,
-                           n_threads = n_threads)
-      names(peak_block) <- peak_obj$peak_variant_id
-      peak_obj$peak_block <- peak_block
+    if(length(new_peaks$newpeaks) == 1){
+      peak_obj$peak_variant_id <- new_peaks$newpeaks
+      break
     }
 
-    new_peak_blocks <- lapply(X = seq_along(peak_obj$peak_variant_id),
-                              FUN = .make_newblocks,
-                              object = object,
-                              peak_obj = peak_obj,
-                              n_threads = n_threads)
+    if(setequal(new_peaks$newpeaks, peak_obj$peak_variant_id)){
+      break
+    }
 
-    peak_order <- sapply(new_peak_blocks, function(x) {max(x$peakNegLog10P)})
-    new_peak_blocks <- new_peak_blocks[order(peak_order, decreasing = TRUE)]
-    header <- sapply(new_peak_blocks, names)
-    common <- apply(header, 1, function(x){length(unique(x)) == 1})
-    common_header <- header[common]
-    uncommon_header <- sort(unique(header[!common]))
-    uncommon_header <- c(uncommon_header[grepl("^P.", uncommon_header)],
-                         uncommon_header[grepl("^Coef.", uncommon_header)])
-    new_peak_blocks <- lapply(seq_along(new_peak_blocks), function(k){
-      new_peak_blocks[[k]]$peak_ID <- k
-      common_df <- subset(new_peak_blocks[[k]], select = common_header)
-      not_exist <- uncommon_header[!uncommon_header %in% names(new_peak_blocks[[k]])]
-      not_exist_df <- matrix(NA, nrow = nrow(new_peak_blocks[[k]]), ncol = length(not_exist))
-      not_exist_df <- data.frame(not_exist_df)
-      names(not_exist_df) <- not_exist
-      new_peak_blocks[[k]] <- cbind(new_peak_blocks[[k]], not_exist_df)
-      uncommon_df <- subset(new_peak_blocks[[k]], select = uncommon_header)
-      new_peak_blocks[[k]] <- cbind(common_df, uncommon_df)
-      return(new_peak_blocks[[k]])
-    })
-    new_peak_blocks <- do.call("rbind", new_peak_blocks)
-    out1 <- unique(subset(new_peak_blocks,
-                          select = c(peak_ID, peak_variant_ID)))
-    out2 <- unique(subset(new_peak_blocks,
-                          select = c(peak_ID, variant_ID,
-                                     Dist2peak, LD2peak,
-                                     P.model:negLog10P)))
+    peak_obj <- .remake_peakobj(object = object,
+                                peak_obj = peak_obj,
+                                peak_variant_id = new_peaks$newpeaks)
+
+    peak_block <- lapply(X = peak_obj$peak_variant_id,
+                         FUN = .recallPeak,
+                         peak_obj = peak_obj,
+                         object = object,
+                         peakcall = peakcall,
+                         values = FALSE,
+                         n_threads = n_threads)
+    names(peak_block) <- peak_obj$peak_variant_id
+    peak_obj$peak_block <- peak_block
+    # }
+
+    if(refine_position){
+      message("Refine peakpositions...")
+      new_peak_blocks <- .refine_peakpositions(peak_obj = peak_obj)
+      out1 <- unique(subset(new_peak_blocks,
+                            select = c(peak_ID, peak_variant_ID)))
+      out2 <- unique(subset(new_peak_blocks,
+                            select = c(peak_ID, variant_ID,
+                                       dist2peak, LD2peak,
+                                       P.model:negLog10P)))
+      out3 <- subset(peak_obj$peakcall,
+                     subset = variant_ID %in% unlist(new_peaks$member),
+                     select = c(peak_ID, variant_ID,
+                                Chr:negLog10P))
+      grouped_with <- lapply(seq_along(new_peaks$member), function(i){
+        return(data.frame(new_peak = new_peaks$newpeaks[i], member = new_peaks$member[[i]]))
+      })
+      grouped_with <- do.call("rbind", grouped_with)
+      hit <- match(out3$variant_ID, grouped_with$member)
+      out3$grouped_with <- grouped_with$new_peak[hit]
+
+    } else {
+      out1 <- unique(subset(peak_obj$peakcall,
+                            subset = peak_variant_ID %in% new_peaks$newpeaks,
+                            select = c(peak_ID, peak_variant_ID)))
+      out2 <- unique(subset(peak_obj$peakcall,
+                            subset = peak_variant_ID %in% new_peaks$newpeaks,
+                            select = c(peak_ID, variant_ID,
+                                       dist2peak, LD2peak,
+                                       Chr:negLog10P)))
+      out3 <- subset(peak_obj$peakcall,
+                     subset = variant_ID %in% unlist(new_peaks$member),
+                     select = c(peak_ID, variant_ID,
+                                Chr:negLog10P))
+      grouped_with <- lapply(seq_along(new_peaks$member), function(i){
+        return(data.frame(new_peak = new_peaks$newpeaks[i], member = new_peaks$member[[i]]))
+      })
+      grouped_with <- do.call("rbind", grouped_with)
+      hit <- match(out3$variant_ID, grouped_with$member)
+      out3$grouped_with <- grouped_with$new_peak[hit]
+    }
 
     out1_gdsn <- .create_gdsn(root_node = object$root,
                               target_node = "lazygas/recalc/peaks",
@@ -2555,6 +2598,12 @@ setMethod("recalcAssoc",
                               target_node = "lazygas/recalc/blocks",
                               new_node = pheno_name,
                               val = as.matrix(out2),
+                              storage = "double",
+                              replace = TRUE)
+    out3_gdsn <- .create_gdsn(root_node = object$root,
+                              target_node = "lazygas/recalc/groups",
+                              new_node = pheno_name,
+                              val = as.matrix(out3),
                               storage = "double",
                               replace = TRUE)
     # .create_gdsn(root_node = object$root,
@@ -2570,6 +2619,9 @@ setMethod("recalcAssoc",
     put.attr.gdsn(node = out2_gdsn,
                   name = "col_names",
                   val = names(out2))
+    put.attr.gdsn(node = out3_gdsn,
+                  name = "col_names",
+                  val = names(out3))
   }
 }
 
@@ -2680,22 +2732,23 @@ setMethod("recalcAssoc",
                        output_all = FALSE,
                        n_threads,
                        mode){
-  if(mode == "all"){
-    null_df <- NULL
-    subject_peak <- peak_obj$peak_variant_id
-    target_geno <- peak_obj$geno
-
-    if(peak_obj$geno_format == "haplotype"){
-      target_geno <- apply(X = target_geno, MARGIN = 3, FUN = list)
-      target_geno <- lapply(X = target_geno, FUN = "[[", 1)
-
-    } else {
-      target_geno <- apply(X = target_geno, MARGIN = 2, FUN = list)
-      target_geno <- lapply(X = target_geno, FUN = "[[", 1)
-    }
-
-
-  } else if(mode == "composite"){
+  # if(mode == "all"){
+  #   null_df <- NULL
+  #   subject_peak <- peak_obj$peak_variant_id
+  #   target_geno <- peak_obj$geno
+  #
+  #   if(peak_obj$geno_format == "haplotype"){
+  #     target_geno <- apply(X = target_geno, MARGIN = 3, FUN = list)
+  #     target_geno <- lapply(X = target_geno, FUN = "[[", 1)
+  #
+  #   } else {
+  #     target_geno <- apply(X = target_geno, MARGIN = 2, FUN = list)
+  #     target_geno <- lapply(X = target_geno, FUN = "[[", 1)
+  #   }
+  #
+  #
+  # } else if(mode == "composite"){
+  if(mode == "composite"){
     null_df <- NULL
     for(j in query_peak){
       index <- peak_obj$peak_variant_id %in% j
@@ -2809,13 +2862,13 @@ setMethod("recalcAssoc",
   } else {
     p_values <- data.frame(t(p_values))
   }
-  p_values$FDR <- p.adjust(p_values$P.model, "fdr")
 
   if(output_all){
+    p_values$FDR <- p.adjust(p_values$P.model, "fdr")
     return(data.frame(variant_ID = subject_peak, p_values))
 
   } else {
-    return(data.frame(variant_ID = subject_peak, FDR = p_values$FDR))
+    return(data.frame(variant_ID = subject_peak, p_values = p_values$P.model))
   }
 }
 
@@ -2827,7 +2880,7 @@ setMethod("recalcAssoc",
       next
     }
     grp <- c(peak_variant_id[j],
-             cov_scan[[j]]$variant_ID[cov_scan[[j]]$FDR > 0.05])
+             cov_scan[[j]]$variant_ID[cov_scan[[j]]$p_values > 0.05])
     grp <- grp[grp %in% peak_list]
     out <- c(out, list(grp))
     peak_list <- peak_list[!peak_list %in% grp]
@@ -2836,48 +2889,15 @@ setMethod("recalcAssoc",
 }
 
 .get_newpeaks <- function(object, peak_grp, peak_obj, n_threads){
-  out <- NULL
+  out1 <- NULL
+  out2 <- NULL
   for(j in seq_along(peak_grp)){
     grp <- peak_grp[[j]]
     query_peak <- grp[1]
-    out <- c(out, list(query_peak))
-    # subject_peak <- as.numeric(names(peak_obj$peak_block)) %in% grp
-    # subject_peak <- sort(unique(unlist(peak_obj$peak_block[subject_peak])))
-    #
-    # if(length(subject_peak) == 0){
-    #   next
-    # }
-    #
-    # peak_obj <- .remake_peakobj(object = object,
-    #                             peak_obj = peak_obj,
-    #                             peak_variant_id = subject_peak)
-    #
-    # peak_scan <- .composite(query_peak = query_peak,
-    #                         peak_obj = peak_obj,
-    #                         n_threads = n_threads,
-    #                         mode = "composite")
-    #
-    # near_peak <- peak_obj$peakcall$peak_variant_ID == query_peak
-    # max_cor <- max(peak_obj$peakcall$LD2peak[near_peak], na.rm = TRUE)
-    # near_peak_cor <- peak_obj$peakcall$LD2peak[near_peak] == max_cor
-    # cor1 <- peak_obj$peakcall$variant_ID[near_peak][near_peak_cor]
-    # peak_scan$FDR[peak_scan$variant_ID %in% cor1] <- 1
-    #
-    # other_peaks <- peak_scan[peak_scan$FDR < peak_obj$signif, ]
-    # other_peaks_hit <- peak_obj$peakcall$variant_ID %in% other_peaks$variant_ID
-    # other_peaks_id <- unique(peak_obj$peakcall$peak_variant_ID[other_peaks_hit])
-    # if(query_peak %in% other_peaks_id){
-    #   query_peak_member <- peak_obj$peakcall$peak_variant_ID %in% query_peak
-    #   in_query_peak <- other_peaks$variant_ID %in% peak_obj$peakcall$variant_ID[query_peak_member]
-    #   in_query_peak <- other_peaks[in_query_peak, ]
-    #   in_query_peak_id <- in_query_peak$variant_ID[which.min(in_query_peak$FDR)]
-    #   other_peaks_id[other_peaks_id %in% query_peak] <- in_query_peak_id
-    # }
-    # if(length(other_peaks_id) != 0){
-    #   out <- c(out, list(other_peaks_id))
-    # }
+    out1 <- c(out1, query_peak)
+    out2 <- c(out2, list(grp))
   }
-  return(out)
+  return(list(newpeaks = out1, member = out2))
 }
 
 .remake_peakobj <- function(object, peak_obj, peak_variant_id){
@@ -2916,7 +2936,7 @@ setMethod("recalcAssoc",
 
   if(length(target_variants) == 1){
     if(values){
-      out <- data.frame(Dist2peak = 0,
+      out <- data.frame(dist2peak = 0,
                         LD2peak = 1,
                         variant_ID = out)
     }
@@ -2958,7 +2978,7 @@ setMethod("recalcAssoc",
                                        threshold = peak_obj$threshold,
                                        geno_format = peak_obj$geno_format)
     if(values){
-      out <- data.frame(Dist2peak = peak_block$dist,
+      out <- data.frame(dist2peak = peak_block$dist,
                         LD2peak = peak_block$ld,
                         variant_ID = peak_block$ids)
 
@@ -3010,6 +3030,37 @@ setMethod("recalcAssoc",
                     peakNegLog10P = peakcall$negLog10P[peakcall$variant_ID == peak_id],
                     recall_peak, subset(peakcall, select = -variant_ID))
   return(out)
+}
+
+.refine_peakpositions <- function(peak_obj){
+  new_peak_blocks <- lapply(X = seq_along(peak_obj$peak_variant_id),
+                            FUN = .make_newblocks,
+                            object = object,
+                            peak_obj = peak_obj,
+                            n_threads = n_threads)
+
+  peak_order <- sapply(new_peak_blocks, function(x) {max(x$peakNegLog10P)})
+  new_peak_blocks <- new_peak_blocks[order(peak_order, decreasing = TRUE)]
+  header <- sapply(new_peak_blocks, names)
+  common <- apply(header, 1, function(x){length(unique(x)) == 1})
+  common_header <- header[common]
+  uncommon_header <- sort(unique(header[!common]))
+  uncommon_header <- c(uncommon_header[grepl("^P.", uncommon_header)],
+                       uncommon_header[grepl("^Coef.", uncommon_header)])
+  new_peak_blocks <- lapply(seq_along(new_peak_blocks), function(k){
+    new_peak_blocks[[k]]$peak_ID <- k
+    common_df <- subset(new_peak_blocks[[k]], select = common_header)
+    not_exist <- uncommon_header[!uncommon_header %in% names(new_peak_blocks[[k]])]
+    not_exist_df <- matrix(NA, nrow = nrow(new_peak_blocks[[k]]), ncol = length(not_exist))
+    not_exist_df <- data.frame(not_exist_df)
+    names(not_exist_df) <- not_exist
+    new_peak_blocks[[k]] <- cbind(new_peak_blocks[[k]], not_exist_df)
+    uncommon_df <- subset(new_peak_blocks[[k]], select = uncommon_header)
+    new_peak_blocks[[k]] <- cbind(common_df, uncommon_df)
+    return(new_peak_blocks[[k]])
+  })
+  new_peak_blocks <- do.call("rbind", new_peak_blocks)
+  return(new_peak_blocks)
 }
 
 ################################################################################
@@ -3264,7 +3315,7 @@ setMethod("listCandidate",
                       Gene_ID = hit$ID,
                       Gene_chr = as.character(seqnames(hit)),
                       Gene_start = start(hit),
-                      Dist2peak = hit$dist2peak,
+                      dist2peak = hit$dist2peak,
                       negLog10P = nearest_p)
   }
 
