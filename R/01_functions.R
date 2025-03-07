@@ -742,6 +742,69 @@ setMethod("show",
           }
 )
 
+#' Assign phenotype data to a LazyGas object
+#'
+#' @param object A LazyGas object.
+#' @param pheno_name A character vector.
+#' @param p_values A numeric matrix or data.frame with the number of rows matching the number of markers.
+#' @importMethodsFrom GBScleanR nmar getMarID getChromosome getPosition
+#'
+#' @export
+#'
+setGeneric("assignPvalues", function(object, pheno_name, p_values, ...)
+  standardGeneric("assignPvalues"))
+
+setMethod("assignPvalues",
+          "LazyGas",
+          function(object, pheno_name, p_values){
+            hit <- pheno_name %in% object@lazydata$pheno_names
+            if(any(!hit)){
+              stop('Following phenotype name(s) was not found in the input LazyGas object: ',
+                   pheno_name[is.na(hit)],
+                   call. = FALSE)
+            }
+            if(is.vector(p_values)){
+              p_values <- matrix(p_values, ncol = 1)
+            }
+
+            nrow_p_values <- nrow(p_values)
+            lg_nmar <- nmar(object)
+            if(lg_nmar != nrow_p_values){
+              stop('The input p_values has ',
+                   nrow_p_values, ' rows',
+                   ', but the marker number assigned in the lazyGas object is ',
+                   lg_nmar)
+            }
+
+            # Add a folder to store scan results in the GDS object
+            .create_scan_folder(object)
+
+            # Loop through each phenotype name and perform analysis
+            for(i in seq_along(pheno_name)){
+              i_pheno_names <- pheno_name[i]
+
+              p_values_i <- p_values[, i]
+              p_values_i <- cbind(variant_ID = getMarID(object),
+                                  Chr = getChromosome(object),
+                                  Pos = getPosition(object),
+                                  P.model = p_values_i,
+                                  FDR = p.adjust(p = p_values_i, method = "fdr"),
+                                  negLog10P = -log10(p_values_i))
+
+              # Add results to the scan node in the GDS object
+              .create_gdsn(root_node = object$root,
+                           target_node = "lazygas/scan",
+                           new_node = i_pheno_names,
+                           val = p_values_i,
+                           storage = "float",
+                           valdim = dim(p_values_i),
+                           attr = list(colnames = colnames(p_values_i)))
+            }
+
+            return(object)
+          }
+)
+
 ################################################################################
 #' Confirm data structure of genotype data per marker
 #' @export
@@ -933,6 +996,7 @@ setGeneric("scanAssoc", function(object,
                                  conv_fun = NULL,
                                  geno_format = c("genotype", "dosage", "haplotype"),
                                  kruskal = NULL,
+                                 method = c("glm", "mlm"),
                                  ...)
   standardGeneric("scanAssoc"))
 
@@ -942,8 +1006,24 @@ setMethod("scanAssoc",
           function(object,
                    formula,
                    conv_fun = NULL,
-                   geno_format = c("genotype", "dosage", "haplotype"),
-                   kruskal = NULL){
+                   geno_format = c("genotype", "corrected", "dosage", "haplotype"),
+                   kruskal = NULL,
+                   method = c("glm", "mlm")){
+
+            method <- match.arg(arg = method, choices = c("glm", "mlm"))
+            geno_format <- match.arg(arg = geno_format, choices = c("genotype", "dosage", "haplotype"))
+
+            if(method == "mlm"){
+              if(geno_format %in% c("dosage", "haplotype")){
+                stop('When method = "mlm", geno_format can only be "genotype" or "corrected".',
+                     call. = FALSE)
+              }
+              conv_fun <- NULL
+            }
+
+            if(is.null(conv_fun)){
+              formula <- formula("phe ~ add")  # Define the formula for regression
+            }
 
             # Notify the user of the phenotypes being analyzed
             message("Going to analyze the following phenotypes: \n",
@@ -974,7 +1054,8 @@ setMethod("scanAssoc",
                                   formula = formula,
                                   dokruskal = dokruskal,
                                   i_pheno_names = i_pheno_names,
-                                  binary = binary)
+                                  binary = binary,
+                                  method = method)
             }
 
             # Add additional information to the root node in the GDS object
@@ -1003,6 +1084,7 @@ setMethod("scanAssoc",
 
 ## Sub-function to perform regression analysis and store results
 #' @importFrom gdsfmt apply.gdsn
+#' @importFrom gaston as.bed.matrix GRM association.test
 .perform_regression <- function(object,
                                 i_pheno,
                                 geno_format,
@@ -1010,9 +1092,8 @@ setMethod("scanAssoc",
                                 formula,
                                 dokruskal,
                                 i_pheno_names,
-                                binary) {
-  geno_format <- match.arg(arg = geno_format, c("genotype", "corrected", "dosage", "haplotype"))
-
+                                binary,
+                                method) {
   margin <- switch(geno_format,
                    "genotype" = 3,
                    "corrected" = 3,
@@ -1047,19 +1128,52 @@ setMethod("scanAssoc",
     na_val <- 2
   }
 
-  # Perform regression analysis on genotype data
-  p_values <- apply.gdsn(node = target_node_index,
-                         margin = margin,
-                         as.is = "list",
-                         selection = selection,
-                         FUN = .regression,
-                         pheno = i_pheno,
-                         binary = binary,
-                         na_val = na_val,
-                         geno_format = geno_format,
-                         conv_fun = conv_fun,
-                         formula = formula,
-                         dokruskal = dokruskal)
+  if(method == "glm"){
+    # Perform regression analysis on genotype data
+    p_values <- apply.gdsn(node = target_node_index,
+                           margin = margin,
+                           as.is = "list",
+                           selection = selection,
+                           FUN = .regression,
+                           pheno = i_pheno,
+                           binary = binary,
+                           na_val = na_val,
+                           geno_format = geno_format,
+                           conv_fun = conv_fun,
+                           formula = formula,
+                           dokruskal = dokruskal)
+
+  } else {
+    sample_id <- getSamID(object)
+
+    if(genotype == "genotype"){
+      gen <- getGenotype(object, "raw")
+
+    } else {
+      gen <- getGenotype(object, "cor")
+    }
+    snp_id <- getMarID(object)
+    chr <- as.numeric(factor(getChromosome(object)))
+    pos <- getPosition(object)
+    allele <- getAllele(object)
+    fam <- data.frame(famid = sample_id, id = sample_id, father = 0, mother = 0,
+                      sex = 0, pheno = i_pheno)
+    bim <- data.frame(chr = chr, id = snp_id, dist = 0,
+                      pos = pos, A1 = sub(",.+", "", allele),
+                      A2 = sub(".+,", "", allele))
+    bed_mat <- as.bed.matrix(x = gen, fam = fam, bim = bim)
+    k <- GRM(x = bed_mat)
+    p_values <- association.test(x = bed_mat, Y = i_pheno, K = k, p = 2,
+                                 eigenK = eigen(k), test = "wald",
+                                 method = "lmm", response = "quantitative")
+    p_values <- cbind(variant_ID = p_values$id,
+                      Chr = p_values$chr,
+                      Pos = p_values$pos,
+                      P.model = p_values$p,
+                      P.add = p_values$p,
+                      Coef.add = p_values$beta,
+                      PVE = p_values$h2)
+  }
 
   # Fill NA values
   p_values <- .fill.na(p_values = p_values)
@@ -2519,7 +2633,7 @@ setMethod("recalcAssoc",
                              peak_variant_id = peak_obj$peak_variant_id)
 
     new_peaks <- .get_newpeaks(object = object,
-                               peak_grp = peak_grp,
+                               peak_grp = peak_grp$group,
                                peak_obj = peak_obj,
                                n_threads = n_threads)
 
@@ -2566,6 +2680,8 @@ setMethod("recalcAssoc",
       grouped_with <- do.call("rbind", grouped_with)
       hit <- match(out3$variant_ID, grouped_with$member)
       out3$grouped_with <- grouped_with$new_peak[hit]
+      hit <- match(out3$variant_ID, peak_grp$pvalue$variant_ID)
+      out3$full_vs_reduce_pvalue <- peak_grp$pvalue$p_values[hit]
 
     } else {
       out1 <- unique(subset(peak_obj$peakcall,
@@ -2586,6 +2702,8 @@ setMethod("recalcAssoc",
       grouped_with <- do.call("rbind", grouped_with)
       hit <- match(out3$variant_ID, grouped_with$member)
       out3$grouped_with <- grouped_with$new_peak[hit]
+      hit <- match(out3$variant_ID, peak_grp$pvalue$variant_ID)
+      out3$full_vs_reduce_pvalue <- peak_grp$pvalue$p_values[hit]
     }
 
     out1_gdsn <- .create_gdsn(root_node = object$root,
@@ -2874,7 +2992,7 @@ setMethod("recalcAssoc",
 
 .group_peaks <- function(cov_scan, peak_variant_id){
   peak_list <- peak_variant_id
-  out <- NULL
+  out2 <- out1 <- NULL
   for(j in seq_along(cov_scan)){
     if(!peak_variant_id[j] %in% peak_list){
       next
@@ -2882,10 +3000,11 @@ setMethod("recalcAssoc",
     grp <- c(peak_variant_id[j],
              cov_scan[[j]]$variant_ID[cov_scan[[j]]$p_values > 0.05])
     grp <- grp[grp %in% peak_list]
-    out <- c(out, list(grp))
+    out1 <- c(out1, list(grp))
+    out2 <- rbind(out2, data.frame(cov_scan[[j]][cov_scan[[j]]$variant_ID %in% grp, ]))
     peak_list <- peak_list[!peak_list %in% grp]
   }
-  return(out)
+  return(list(group = out1, pvalue = out2))
 }
 
 .get_newpeaks <- function(object, peak_grp, peak_obj, n_threads){

@@ -1,5 +1,5 @@
 ---
-title: "Genetic Association Study with lazyGa"
+title: "Genetic Association Study with lazyGas"
 author: 
   -name: "Tomoyuki Furuta"
   affiliation: Institute of Plant Science and Resources, Okayama University, Okayama, Japan
@@ -33,63 +33,63 @@ library(GenovisR)
 library(SNPRelate)
 library(SeqArray)
 library(Biostrings)
-# 
-# nb <- readDNAStringSet("~/hdd3/genomeData/rice/cultivar_sativa/os_nb_rapdb/IRGSP-1.0_genome.fasta")
-# 
-# df <- simGenovis(n_sample = 100, n_chr = 12, chr_len = width(nb) * 1e-6)
-# temp_dir <- tempdir()
-# temp_gds <- tempfile("temp", temp_dir, ".gds")
-# snpgdsCreateGeno(gds.fn = temp_gds,
-#                  genmat = df$genotype,
-#                  sample.id = df$sample_info$id,
-#                  snp.id = seq_along(df$marker_info$id),
-#                  snp.rs.id = seq_along(df$marker_info$id),
-#                  snp.chromosome = df$marker_info$chr,
-#                  snp.position = df$marker_info$pos,
-#                  snp.allele = paste(df$marker_info$ref_allele,
-#                                     df$marker_info$alt_allele, sep = "/"),
-#                  snpfirstdim = FALSE, compress.annotation = "LZMA_RA",
-#                  compress.geno = "LZMA_RA",
-#                  other.vars = list(HAP = df$haplotype,
-#                                    EDS = df$dosage))
-# 
-# sample_gds <- tempfile("sample", temp_dir, ".gds")
-# seqSNP2GDS(gds.fn = temp_gds,
-#            out.fn = sample_gds)
-# 
-# gds <- openfn.gds(sample_gds, readonly = FALSE)
-# 
-# addfolder.gdsn(node = index.gdsn(gds, "annotation/format"), name = "HAP")
-# addfolder.gdsn(node = index.gdsn(gds, "annotation/format"), name = "EDS")
-# add.gdsn(index.gdsn(gds, "annotation/format/HAP"), name = "data",
-#          val = df$haplotype, storage = "bit2", compress = "LZMA_RA")
-# add.gdsn(index.gdsn(gds, "annotation/format/EDS"), name = "data",
-#          val = df$dosage, storage = "bit2", compress = "LZMA_RA")
-# closefn.gds(gds)
-# unlink(temp_gds)
-# 
-# qtl <- sample(x = df$marker_info$id, size = 3)
-# qtl_index <- which(df$marker_info$id %in% qtl)
-# df$marker_info[qtl_index, ]
-# qtl_ds <- df$dosage[, qtl_index]
-# 
-# e <- rnorm(n = nrow(qtl_ds), mean = 0, sd = 1)
-# q1_add <- qtl_ds[, 1] * 3
-# q1_dom <- as.numeric(qtl_ds[, 1] == 1) * 3
-# q2_add <- qtl_ds[, 2] * 2
-# q2_dom <- as.numeric(qtl_ds[, 2] == 1) * 0
-# q3_add <- qtl_ds[, 3] * 1
-# q3_dom <- as.numeric(qtl_ds[, 3] == 1) * 2
-# 
-# st <- 1^2 + 3^2 + 2^2 + 1^2
-# 3^2/st
-# 2^2/st
-# 1^2/st
-# 
-# sample_pheno <- tempfile("pheno", temp_dir, ".csv")
-# pheno <- q1_add + q1_dom + q2_add + q2_dom + q3_add + q3_dom + e
-# pheno <- data.frame(id = df$sample_info$id, pheno = pheno)
-# write.csv(pheno, sample_pheno, row.names = FALSE)
+
+nb <- readDNAStringSet("~/hdd3/genomeData/rice/cultivar_sativa/os_nb_rapdb/IRGSP-1.0_genome.fasta")
+
+df <- simGenovis(n_sample = 100, n_chr = 12, chr_len = width(nb) * 1e-6)
+temp_dir <- tempdir()
+temp_gds <- tempfile("temp", temp_dir, ".gds")
+snpgdsCreateGeno(gds.fn = temp_gds,
+                 genmat = df$genotype,
+                 sample.id = df$sample_info$id,
+                 snp.id = seq_along(df$marker_info$id),
+                 snp.rs.id = seq_along(df$marker_info$id),
+                 snp.chromosome = df$marker_info$chr,
+                 snp.position = df$marker_info$pos,
+                 snp.allele = paste(df$marker_info$ref_allele,
+                                    df$marker_info$alt_allele, sep = "/"),
+                 snpfirstdim = FALSE, compress.annotation = "LZMA_RA",
+                 compress.geno = "LZMA_RA",
+                 other.vars = list(HAP = df$haplotype,
+                                   EDS = df$dosage))
+
+sample_gds <- tempfile("sample", temp_dir, ".gds")
+seqSNP2GDS(gds.fn = temp_gds,
+           out.fn = sample_gds)
+
+gds <- openfn.gds(sample_gds, readonly = FALSE)
+
+addfolder.gdsn(node = index.gdsn(gds, "annotation/format"), name = "HAP")
+addfolder.gdsn(node = index.gdsn(gds, "annotation/format"), name = "EDS")
+add.gdsn(index.gdsn(gds, "annotation/format/HAP"), name = "data",
+         val = df$haplotype, storage = "bit2", compress = "LZMA_RA")
+add.gdsn(index.gdsn(gds, "annotation/format/EDS"), name = "data",
+         val = df$dosage, storage = "bit2", compress = "LZMA_RA")
+closefn.gds(gds)
+unlink(temp_gds)
+
+qtl <- sample(x = df$marker_info$id, size = 3)
+qtl_index <- which(df$marker_info$id %in% qtl)
+df$marker_info[qtl_index, ]
+qtl_ds <- df$dosage[, qtl_index]
+
+e <- rnorm(n = nrow(qtl_ds), mean = 0, sd = 1)
+q1_add <- qtl_ds[, 1] * 3
+q1_dom <- as.numeric(qtl_ds[, 1] == 1) * 3
+q2_add <- qtl_ds[, 2] * 2
+q2_dom <- as.numeric(qtl_ds[, 2] == 1) * 0
+q3_add <- qtl_ds[, 3] * 1
+q3_dom <- as.numeric(qtl_ds[, 3] == 1) * 2
+
+st <- 1^2 + 3^2 + 2^2 + 1^2
+3^2/st
+2^2/st
+1^2/st
+
+sample_pheno <- tempfile("pheno", temp_dir, ".csv")
+pheno <- q1_add + q1_dom + q2_add + q2_dom + q3_add + q3_dom + e
+pheno <- data.frame(id = df$sample_info$id, pheno = pheno)
+write.csv(pheno, sample_pheno, row.names = FALSE)
 ```
 
 
@@ -107,7 +107,8 @@ information to the `create_gds` argument of the `buildLazyGas()` function.
 temp_dir <- tempdir()
 
 # Now we assume genotype and marker data were provided as a matrix or 
-# data.frame that have been loaded from CSV files.
+# data.frame that have been loaded from CSV files, although here we use data 
+# obtained from the GDS file for ease of handling.
 genotype <- getGenotype(object = lg, node = "raw")
 dosage <- getGenotype(object = lg, node = "dosage")
 haplotype <- getHaplotype(object = lg)
@@ -129,8 +130,8 @@ create_gds <-  list(genotype = genotype,
                     snp.allele = snp.allele,
                     haplotype = haplotype,
                     dosage = dosage)
-sample_gds2 <- tempfile("sample", temp_dir, ".gds")
-lg <- buildLazyGas(gds_fn = sample_gds2, 
+sample_gds <- tempfile("sample", temp_dir, ".gds")
+lg <- buildLazyGas(gds_fn = sample_gds, 
                    create_gds = create_gds)
 ```
 
@@ -254,8 +255,22 @@ Run the association scan:
 scanAssoc(object = lg,
           formula = formula,
           conv_fun = conv_fun,
-          geno_format = "dosage",
-          kruskal = NULL)
+          geno_format = "dosage")
+```
+
+For GWAS, set `method = "mlm"`.
+```{r}
+scanAssoc(object = lg,
+          geno_format = "genotype",
+          method = "mlm")
+```
+
+If you conducted association tests using another tool and have p values,
+you can assign those p values to the input lazyGas class object.
+```{r}
+# As an example, extract p values from the lazyGas object and assign them to the object again.
+scan <- lazyData(object = lg, dataset = "scan", pheno = "Fruit weight")
+lg <- assignPvalues(object = lg, pheno_name = "Fruit weight", p_values = scan$P.model)
 ```
 
 ## Visualizing Results

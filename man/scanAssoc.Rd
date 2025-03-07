@@ -10,6 +10,7 @@ scanAssoc(
   conv_fun = NULL,
   geno_format = c("genotype", "dosage", "haplotype"),
   kruskal = NULL,
+  method = c("glm", "mlm"),
   ...
 )
 }
