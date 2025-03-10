@@ -6,7 +6,7 @@
 \usage{
 scanAssoc(
   object,
-  formula,
+  formula = "phe ~ add",
   conv_fun = NULL,
   geno_format = c("genotype", "dosage", "haplotype"),
   kruskal = NULL,

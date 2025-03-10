@@ -81,6 +81,7 @@
     # If selection criteria is provided, read the node with the selection criteria
     out <- readex.gdsn(node = index.gdsn(node = object$root, path = node), sel = sel)
   }
+
   # Return the retrieved data
   return(out)
 }
@@ -177,17 +178,12 @@
   # Add variant_ID to peaks data
   peaks$variant_ID <- peaks$peak_variant_ID
 
+  # Retrieve the scan results for the specified phenotype
+  pvalues <- .get_scan(object = object, pheno_name = pheno_name, sel = c("FDR", "negLog10P"))
   if(recalc){
     # For recalculated data, join peaks and pvalues data
-    if(is.null(blocks$negLog10P)){
-      # Retrieve the scan results for the specified phenotype
-      pvalues <- .get_scan(object = object, pheno_name = pheno_name, sel = c("FDR", "negLog10P"))
-      pvalues <- subset(pvalues, select = variant_ID:Pos)
-
-    } else {
-      pvalues <- subset(blocks, select = c(variant_ID, Chr:Pos))
-      blocks <- subset(blocks, select = -c(Chr:Pos))
-    }
+    pvalues <- .get_scan(object = object, pheno_name = pheno_name, sel = c("FDR", "negLog10P"))
+    pvalues <- subset(pvalues, select = variant_ID:Pos)
     peaks_join <- left_join(x = peaks, y = pvalues, "variant_ID")
     names(peaks_join)[-(1:3)] <- paste0("peak_", names(peaks_join)[-(1:3)])
     peaks_join <- subset(peaks_join, select = -variant_ID)
@@ -201,9 +197,6 @@
     out <- right_join(x = peaks_join, y = blocks_join, by = "peak_ID")
 
   } else {
-    # Retrieve the scan results for the specified phenotype
-    pvalues <- .get_scan(object = object, pheno_name = pheno_name, sel = c("FDR", "negLog10P"))
-
     # For non-recalculated data, join peaks and pvalues data
     peaks_join <- left_join(x = peaks, y = pvalues, "variant_ID")
     names(peaks_join)[-(1:3)] <- paste0("peak_", names(peaks_join)[-(1:3)])
@@ -223,6 +216,51 @@
   return(out)
 }
 
+
+################################################################################
+#'
+#' @importFrom SeqArray seqVCF2GDS
+#' @export
+snpeff2gds <- function(vcf_fn, out_fn, verbose = TRUE){
+  # Check if the out_fn already exists and whether it can be overwritten.
+  if (file.exists(out_fn)) {
+    message(out_fn, ' exists!')
+    while (TRUE) {
+      user <- readline("Are you sure to overwirte?(y/n)")
+      if (user == "y") {
+        file.remove(out_fn)
+        break()
+      } else if (user == "n") {
+        message('Stopped by user.')
+        return(out_fn)
+      }
+    }
+  }
+
+  # Create GDS file formatted in the SeqArray style.
+  fmt.import <- ""
+  info.import <- "ANN"
+  out_fn <- seqVCF2GDS(vcf_fn, out_fn, ignore.chr.prefix = "",
+                       info.import = info.import,
+                       fmt.import = fmt.import,
+                       verbose = verbose)
+  return(out_fn)
+}
+
+#'
+#' @importFrom gdsfmt exist.gdsn delete.gdsn objdesp.gdsn setdim.gdsn add.gdsn
+#' @export
+open_snpeff <- function(gds_fn) {
+  # Check input data type
+  if(file.exists(gds_fn)){
+    gds <- openfn.gds(filename = gds_fn, readonly = FALSE, allow.duplicate = TRUE)
+
+  } else {
+    stop("gds_fn must be a valid file path", call. = FALSE)
+  }
+  class(gds) <- c(class(gds), "snpeff_gds")
+  return(gds)
+}
 
 ################################################################################
 # Define the LazyGas class object
@@ -751,12 +789,24 @@ setMethod("show",
 #'
 #' @export
 #'
-setGeneric("assignPvalues", function(object, pheno_name, p_values, ...)
+setGeneric("assignPvalues", function(object, pheno_name, p_values,
+                                     geno_format = c("genotype", "dosage", "haplotype"),
+                                     conv_fun = NULL,
+                                     formula = "phe ~ add",
+                                     kruskal = NULL, ...)
   standardGeneric("assignPvalues"))
 
 setMethod("assignPvalues",
           "LazyGas",
-          function(object, pheno_name, p_values){
+          function(object, pheno_name, p_values,
+                   geno_format = c("genotype", "dosage", "haplotype"),
+                   conv_fun = NULL, formula = "phe ~ add", kruskal = NULL){
+            geno_format <- match.arg(arg = geno_format, choices = c("genotype", "dosage", "haplotype"))
+
+            if(is.null(conv_fun)){
+              formula <- formula("phe ~ add")  # Define the formula for regression
+            }
+
             hit <- pheno_name %in% object@lazydata$pheno_names
             if(any(!hit)){
               stop('Following phenotype name(s) was not found in the input LazyGas object: ',
@@ -801,6 +851,12 @@ setMethod("assignPvalues",
                            attr = list(colnames = colnames(p_values_i)))
             }
 
+            # Add additional information to the root node in the GDS object
+            .store_additional_info(object = object,
+                                   kruskal = kruskal,
+                                   formula = formula,
+                                   conv_fun = conv_fun,
+                                   geno_format = geno_format)
             return(object)
           }
 )
@@ -992,7 +1048,7 @@ makeConvFun <-  function(geno_format = c("genotype", "corrected", "dosage", "hap
 #' @export
 #'
 setGeneric("scanAssoc", function(object,
-                                 formula,
+                                 formula = "phe ~ add",
                                  conv_fun = NULL,
                                  geno_format = c("genotype", "dosage", "haplotype"),
                                  kruskal = NULL,
@@ -1004,7 +1060,7 @@ setGeneric("scanAssoc", function(object,
 setMethod("scanAssoc",
           "LazyGas",
           function(object,
-                   formula,
+                   formula = "phe ~ add",
                    conv_fun = NULL,
                    geno_format = c("genotype", "corrected", "dosage", "haplotype"),
                    kruskal = NULL,
@@ -1117,10 +1173,6 @@ setMethod("scanAssoc",
   if(geno_format == "haplotype"){
     na_val <- 0
 
-  } else if(geno_format == "corrected"){
-    na_val <- 3
-
-
   } else if(geno_format == "dosage"){
     na_val <- 63
 
@@ -1142,11 +1194,16 @@ setMethod("scanAssoc",
                            conv_fun = conv_fun,
                            formula = formula,
                            dokruskal = dokruskal)
+    # Fill NA values
+    p_values <- .fill.na(p_values = p_values)
+
+    # Combine results into a single data frame
+    p_values <- do.call("rbind", p_values)
 
   } else {
     sample_id <- getSamID(object)
 
-    if(genotype == "genotype"){
+    if(geno_format == "genotype"){
       gen <- getGenotype(object, "raw")
 
     } else {
@@ -1156,6 +1213,10 @@ setMethod("scanAssoc",
     chr <- as.numeric(factor(getChromosome(object)))
     pos <- getPosition(object)
     allele <- getAllele(object)
+
+    sample_id <- sample_id[!is.na(i_pheno)]
+    gen <- gen[!is.na(i_pheno), ]
+    i_pheno <- i_pheno[!is.na(i_pheno)]
     fam <- data.frame(famid = sample_id, id = sample_id, father = 0, mother = 0,
                       sex = 0, pheno = i_pheno)
     bim <- data.frame(chr = chr, id = snp_id, dist = 0,
@@ -1175,11 +1236,6 @@ setMethod("scanAssoc",
                       PVE = p_values$h2)
   }
 
-  # Fill NA values
-  p_values <- .fill.na(p_values = p_values)
-
-  # Combine results into a single data frame
-  p_values <- do.call("rbind", p_values)
 
   # Calculate FDR and -log10(p-values)
   p_values <- cbind(p_values,
@@ -1224,6 +1280,14 @@ setMethod("scanAssoc",
                storage = "string32",
                valdim = dim(kruskal))
 
+  if(!is.character(conv_fun)){
+    conv_fun <- deparse(conv_fun)
+  }
+
+  if(!is.character(formula)){
+    formula <- deparse(formula)
+  }
+
   .create_gdsn(root_node = object$root,
                target_node = "lazygas/scan",
                new_node = "formula",
@@ -1234,7 +1298,7 @@ setMethod("scanAssoc",
   .create_gdsn(root_node = object$root,
                target_node = "lazygas/scan",
                new_node = "conv_fun",
-               val = deparse(conv_fun),
+               val = conv_fun,
                storage = "string32",
                valdim = dim(deparse(conv_fun)))
 
@@ -1832,10 +1896,9 @@ setMethod("callPeakBlock",
 
 # Function to set the selection criteria based on the genotype format
 .set_selection_criteria_for_peakcall <- function(object, geno_format, chr) {
-  if (geno_format == "dosage"){
-    # Identify valid chromosomes
-    valid_chr <- getChromosome(object = object, valid = FALSE) %in% chr
+  valid_chr <- getChromosome(object = object, valid = FALSE) %in% chr
 
+  if (geno_format == "dosage"){
     # Set selection criteria for genotype or dosage data
     selection <- list(validSam(object = object),
                       validMar(object = object) & valid_chr)
@@ -1843,29 +1906,27 @@ setMethod("callPeakBlock",
     is_categorical <- FALSE
 
   } else {
-    # Identify valid chromosomes
-    valid_chr <- getChromosome(object = object, valid = FALSE) %in% chr
-
-    # Get the dimensions of the haplotype data
-    obj_desp <- objdesp.gdsn(node = index.gdsn(node = object,
-                                               path = "annotation/format/HAP/data"))
-
-    # Set selection criteria for haplotype data
-    selection <- list(rep(TRUE, obj_desp$dim[1]),
-                      validSam(object = object),
-                      validMar(object = object) & valid_chr)
-
     if(geno_format == "haplotype"){
+      # Get the dimensions of the genotype data
       node <- "annotation/format/HAP/data"
       is_categorical <- TRUE
 
+    } else if(geno_format == "corrected"){
+      node <- "annotation/format/CGT/data"
+      is_categorical <- FALSE
+
     } else {
-      node <- ifelse(geno_format == "corrected",
-                     "annotation/format/CGT/data",
-                     "genotype/data")
+      node <- "genotype/data"
       is_categorical <- FALSE
     }
+
+    # Set selection criteria for genotype data
+    obj_desp <- objdesp.gdsn(node = index.gdsn(node = object, path = node))
+    selection <- list(rep(TRUE, obj_desp$dim[1]),
+                      validSam(object = object),
+                      validMar(object = object) & valid_chr)
   }
+
   return(list(node = node, selection = selection, is_categorical = is_categorical))
 }
 
@@ -1881,7 +1942,11 @@ setMethod("callPeakBlock",
     out[out == 0] <- NA
 
   } else if(geno_format %in% c("corrected", "genotype")){
-    out[out == 2] <- NA
+    out[out == 3] <- NA
+    for(i in seq_len(dim(out)[1])[-1]){
+      out[1,,] <- out[1,,] + out[i,,]
+    }
+    out <- out[1,,]
 
   } else if(geno_format == "dosage"){
     out[out == 63] <- NA
@@ -2637,14 +2702,14 @@ setMethod("recalcAssoc",
                                peak_obj = peak_obj,
                                n_threads = n_threads)
 
-    if(length(new_peaks$newpeaks) == 1){
-      peak_obj$peak_variant_id <- new_peaks$newpeaks
-      break
-    }
-
-    if(setequal(new_peaks$newpeaks, peak_obj$peak_variant_id)){
-      break
-    }
+    # if(length(new_peaks$newpeaks) == 1){
+    #   peak_obj$peak_variant_id <- new_peaks$newpeaks
+    #   break
+    # }
+    #
+    # if(setequal(new_peaks$newpeaks, peak_obj$peak_variant_id)){
+    #   break
+    # }
 
     peak_obj <- .remake_peakobj(object = object,
                                 peak_obj = peak_obj,
@@ -2673,7 +2738,7 @@ setMethod("recalcAssoc",
       out3 <- subset(peak_obj$peakcall,
                      subset = variant_ID %in% unlist(new_peaks$member),
                      select = c(peak_ID, variant_ID,
-                                Chr:negLog10P))
+                                P.model:negLog10P))
       grouped_with <- lapply(seq_along(new_peaks$member), function(i){
         return(data.frame(new_peak = new_peaks$newpeaks[i], member = new_peaks$member[[i]]))
       })
@@ -2691,11 +2756,11 @@ setMethod("recalcAssoc",
                             subset = peak_variant_ID %in% new_peaks$newpeaks,
                             select = c(peak_ID, variant_ID,
                                        dist2peak, LD2peak,
-                                       Chr:negLog10P)))
+                                       FDR:negLog10P)))
       out3 <- subset(peak_obj$peakcall,
                      subset = variant_ID %in% unlist(new_peaks$member),
                      select = c(peak_ID, variant_ID,
-                                Chr:negLog10P))
+                                FDR:negLog10P))
       grouped_with <- lapply(seq_along(new_peaks$member), function(i){
         return(data.frame(new_peak = new_peaks$newpeaks[i], member = new_peaks$member[[i]]))
       })
@@ -2773,15 +2838,11 @@ setMethod("recalcAssoc",
   if(geno_format == "haplotype"){
     na_val <- 0
 
-  } else if(geno_format == "corrected"){
-    na_val <- 3
-
-
   } else if(geno_format == "dosage"){
     na_val <- 63
 
   } else {
-    na_val <- 2
+    na_val <- 3
   }
 
   out <- list(
@@ -2817,25 +2878,24 @@ setMethod("recalcAssoc",
     is_categorical <- FALSE
 
   } else {
-    # Get the dimensions of the haplotype data
-    obj_desp <- objdesp.gdsn(node = index.gdsn(node = object,
-                                               path = "annotation/format/HAP/data"))
-
-    # Set selection criteria for haplotype data
-    selection <- list(rep(TRUE, obj_desp$dim[1]),
-                      validSam(object = object),
-                      snp_id %in% peak_variant_id)
-
     if(geno_format == "haplotype"){
       node <- "annotation/format/HAP/data"
       is_categorical <- TRUE
 
+    } else if(geno_format == "corrected"){
+      node <- "annotation/format/CGT/data"
+      is_categorical <- FALSE
+
     } else {
-      node <- ifelse(geno_format == "corrected",
-                     "annotation/format/CGT/data",
-                     "genotype/data")
+      node <- "genotype/data"
       is_categorical <- FALSE
     }
+
+    # Set selection criteria for haplotype data
+    obj_desp <- objdesp.gdsn(node = index.gdsn(node = object, path = node))
+    selection <- list(rep(TRUE, obj_desp$dim[1]),
+                      validSam(object = object),
+                      snp_id %in% peak_variant_id)
   }
 
   return(list(node = node,
@@ -3186,22 +3246,20 @@ setMethod("recalcAssoc",
 
 #' @export
 setGeneric("listCandidate", function(object,
-                                     gff_fn,
-                                     snpeff_fn = NULL,
+                                     gff,
+                                     snpeff = NULL,
                                      ann = NULL,
                                      recalc = FALSE,
-                                     numerize_chr = FALSE,
                                      ...)
   standardGeneric("listCandidate"))
 
 setMethod("listCandidate",
           "LazyGas",
           function(object,
-                   gff_fn,
-                   snpeff_fn = NULL,
+                   gff,
+                   snpeff = NULL,
                    ann = NULL,
-                   recalc = FALSE,
-                   numerize_chr = FALSE){
+                   recalc = FALSE){
             if(recalc){
               if(!exist.gdsn(node = object$root, path = "lazygas/recalc")){
                 stop("No peakcall data in the input LazyGas object.\n",
@@ -3215,9 +3273,10 @@ setMethod("listCandidate",
               }
             }
 
-            gff <- .loadGFF(gff_fn = gff_fn, numerize_chr = numerize_chr)
-            snpeff <- .loadSNPEff(snpeff_fn = snpeff_fn,
-                                  numerize_chr = numerize_chr)
+            chr <- unique(getChromosome(object))
+            .validateGFF(chr = chr, gff = gff)
+            .validateSnpEff(chr = chr, snpeff = snpeff)
+            .validateANN(gff = gff, ann = ann)
 
             ## Function to create the necessary folders in the GDS object
             .create_candidate_folders(object = object)
@@ -3234,10 +3293,66 @@ setMethod("listCandidate",
                                pheno_name = pheno_name,
                                recalc = recalc)
 
-              # .finalize_gdsn_candidate(object = object,
-              #                          pheno_name = pheno_name)
+              .finalize_gdsn_candidate(object = object, pheno_name = pheno_name)
             }
           })
+
+.validateGFF <- function(chr, gff){
+  if(!inherits(gff, "GRanges")){
+    stop("The input gff must be a GRanges class object imported by rtracklayer::import.gff3().",
+         call. = FALSE)
+  }
+
+  hit <- chr %in% seqlevels(gff)
+  if(all(!hit)){
+    stop("Any of chromosome IDs do not match the chromosomes IDs in the given GFF data.",
+         call. = FALSE)
+  }
+  if(!all(hit)){
+    warning("The following chromosome IDs do not appeare in the given GFF data: ",
+            chr[!hit])
+  }
+}
+
+.validateSnpEff <- function(chr, snpeff){
+  if(!inherits(snpeff, "snpeff_gds")){
+    stop("The input snpeff must be a snpeff_gds class object loaded by lazyGas::open_snpeff().",
+         call. = FALSE)
+  }
+
+  snpeff_chr <- unique(read.gdsn(index.gdsn(snpeff$root, "chromosome")))
+  hit <- chr %in% snpeff_chr
+  if(all(!hit)){
+    stop("Any of chromosome IDs do not match the chromosomes IDs in the given snpeff GDS data.",
+         call. = FALSE)
+  }
+  if(!all(hit)){
+    warning("The following chromosome IDs do not appeare in the given snpeff GDS data: ",
+            chr[!hit])
+  }
+}
+
+.validateANN <- function(gff, ann){
+  if(!inherits(ann, "data.frame")){
+    stop("The input ann must be a data.frame class object.",
+         call. = FALSE)
+  }
+
+  if(is.null(ann$Gene_ID)){
+    stop("The input ann should have a column named 'Gene_ID' that should match the IDs in the input GFF data.",
+         call. = FALSE)
+  }
+
+  hit <- ann$Gene_ID %in% gff$ID
+  if(all(!hit)){
+    stop("Any of Gene_IDs in ann do not match the IDs in the given GFF data.",
+         call. = FALSE)
+  }
+  if(!all(hit)){
+    warning("The following Gene_IDs in ann do not appeare in the given GFF data: ",
+            unique(ann$Gene_ID[!hit]))
+  }
+}
 
 .create_candidate_folders <- function(object) {
   candidate_gdsn <- .create_gdsn(root_node = object$root,
@@ -3251,87 +3366,14 @@ setMethod("listCandidate",
                               is_folder = TRUE)
 }
 
-#' @importFrom rtracklayer import.gff
-#' @importFrom GenomeInfoDb seqlevels seqlevels<-
-.loadGFF <- function(gff_fn, numerize_chr){
-  if(!file.exists(gff_fn)){
-    stop("The specified GFF file does not exist!",
-         call. = FALSE)
-  }
-  gff <- import.gff(gff_fn)
-
-  if(numerize_chr){
-    seq_lev <- seqlevels(gff)
-    num_seq_lev <- suppressWarnings(as.numeric(seq_lev))
-    if(!all(!is.na(num_seq_lev))){
-      seq_lev <- gsub("[^0-9]", "", seq_lev)
-      missing <- seq_lev == ""
-    }
-    num_seq_lev <- suppressWarnings(as.numeric(seq_lev))
-    if(!all(!is.na(num_seq_lev[!missing]))){
-      seq_lev <- gsub("[^0-9]", "", seq_lev)
-    }
-    new_seq_lev <- as.numeric(seq_lev)
-    new_seq_lev[missing] <- seqlevels(gff)[missing]
-    seqlevels(gff) <- new_seq_lev
-  }
-
-  return(gff)
+## Sub-function to finalize GDS nodes
+#' @importFrom gdsfmt index.gdsn readmode.gdsn
+.finalize_gdsn_candidate <- function(object, pheno_name) {
+  readmode.gdsn(node = index.gdsn(node = object$root,
+                                  path = paste0("lazygas/candidate/", pheno_name)))
+  readmode.gdsn(node = index.gdsn(node = object$root,
+                                  path = paste0("lazygas/snpeff/", pheno_name)))
 }
-
-#' @importFrom vcfR read.vcfR
-.loadSNPEff <- function(snpeff_fn, numerize_chr){
-  if(is.null(snpeff_fn)){
-    return(NULL)
-  } else {
-    if(!file.exists(snpeff_fn)){
-      stop("The specified SNPEff file does not exist!",
-           call. = FALSE)
-    }
-    snpeff <- read.vcfR(snpeff_fn)
-  }
-
-  if(numerize_chr){
-    snpeff_fix <- as.data.frame(snpeff@fix)
-    seq_lev <- unique(snpeff_fix$CHROM)
-    num_seq_lev <- suppressWarnings(as.numeric(seq_lev))
-    if(!all(!is.na(num_seq_lev))){
-      seq_lev <- gsub("[^0-9]", "", seq_lev)
-      missing <- seq_lev == ""
-    }
-    num_seq_lev <- suppressWarnings(as.numeric(seq_lev))
-    if(!all(!is.na(num_seq_lev[!missing]))){
-      seq_lev <- gsub("[^0-9]", "", seq_lev)
-    }
-    new_seq_lev <- as.numeric(seq_lev)
-    new_seq_lev[missing] <- seqlevels(gff)[missing]
-    seq_lev <- unique(snpeff_fix$CHROM)
-    hit <- match(snpeff_fix$CHROM, seq_lev)
-    snpeff_fix$CHROM <- new_seq_lev[hit]
-    snpeff@fix <- as.matrix(snpeff_fix)
-  }
-  return(snpeff)
-}
-
-.loadANN <- function(ann){
-  if(!is.null(ann)){
-    if(!file.exists(ann)){
-      stop("The specified annotation file does not exist!",
-           call. = FALSE)
-    }
-    ann <- read.csv(ann)
-  }
-  return(ann)
-}
-
-#' ## Sub-function to finalize GDS nodes
-#' #' @importFrom gdsfmt index.gdsn readmode.gdsn
-#' .finalize_gdsn_candidate <- function(object, pheno_name) {
-#'   readmode.gdsn(node = index.gdsn(node = object$root,
-#'                                   path = paste0("lazygas/candidate/", pheno_name)))
-#'   readmode.gdsn(node = index.gdsn(node = object$root,
-#'                                   path = paste0("lazygas/snpeff/", pheno_name)))
-#' }
 
 #' @importFrom dplyr left_join
 .candidatelistor <- function(object,
@@ -3340,6 +3382,7 @@ setMethod("listCandidate",
                              snpeff,
                              pheno_name,
                              recalc){
+  message("Processing: ", pheno_name)
   peakcall <- .get_peakcall(object = object,
                             pheno_name = pheno_name,
                             recalc = recalc)
@@ -3452,12 +3495,13 @@ setMethod("listCandidate",
 
 #' @importFrom vcfR getFIX getINFO
 .addSnpEff <- function(snpeff, peakblock){
-  snpeff_fix <- as.data.frame(snpeff@fix)
-  target_chr <- snpeff_fix$CHROM %in% peakblock$Chr
-  target_pos <-  snpeff_fix$POS >= min(peakblock$Pos) &  snpeff_fix$POS <= max(peakblock$Pos)
-  peak_ann <- snpeff_fix[target_chr & target_pos, ]
+  snpeff_chr <- read.gdsn(index.gdsn(snpeff$root, "chromosome"))
+  snpeff_pos <- read.gdsn(index.gdsn(snpeff$root, "position"))
+  target_chr <- snpeff_chr %in% peakblock$Chr
+  target_pos <-  snpeff_pos >= min(peakblock$Pos) & snpeff_pos <= max(peakblock$Pos)
+  peak_ann <- target_chr & target_pos
 
-  if(nrow(peak_ann) == 0){
+  if(length(peak_ann) == 0){
     out <- data.frame(t(rep(NA, 19)))
     names(out) <- c("Allele", "Annotation", "Annotation_Impact", "Gene_Name",
                     "Gene_ID", "Feature_Type", "Feature_ID", "Transcript_BioType",
@@ -3465,12 +3509,15 @@ setMethod("listCandidate",
                     "Pos.in.AA", "Distance", "INFO", "Chr", "Pos", "negLog10P")
 
   } else {
-    var_id <- paste0(peak_ann$CHROM, "_", peak_ann$POS, "_")
-    out <- unlist(peak_ann$INFO)
-    out <- sub(".+ANN=", "", out)
-    names(out) <- var_id
-    out <- unlist(strsplit(out, ","))
-    out <- sub(";.+", "", out)
+    at_ann <- read.gdsn(index.gdsn(snpeff$root, "annotation/info/@ANN"))
+    cum_at_ann <- cumsum(at_ann)
+    peak_ann_cum_at_ann <- cum_at_ann[peak_ann]
+    peak_ann_cum_at_ann_start <- peak_ann_cum_at_ann - at_ann[peak_ann] + 1
+    target_ann <- rep(FALSE, max(cum_at_ann))
+    target_index <- apply(cbind(peak_ann_cum_at_ann_start, peak_ann_cum_at_ann), 1, function(x) x[1]:x[2])
+    target_index <- unlist(target_index)
+    target_ann[target_index] <- TRUE
+    out <- readex.gdsn(index.gdsn(snpeff$root, "annotation/info/ANN"), sel = list(target_ann))
     out[grepl("\\|$", out)] <- paste(out[grepl("\\|$", out)], "")
     out <- strsplit(out, "\\|")
     len <- sapply(out, length)
@@ -3479,21 +3526,23 @@ setMethod("listCandidate",
       return(NULL)
     }
     out <- do.call("rbind", out)
-    out <- out[!out[, 2] %in% c("custom", "intergenic_region"), ]
-    if(length(out) == 0){
-      return(NULL)
-    }
     out <- as.data.frame(out)
     colnames(out) <- c("Allele", "Annotation", "Annotation_Impact", "Gene_Name",
                        "Gene_ID", "Feature_Type", "Feature_ID", "Transcript_BioType",
                        "Rank", "HGVS.c", "HGVS.p", "Pos.in.tx", "Pos.in.CDS",
                        "Pos.in.AA", "Distance", "INFO")
-    chr_pos <- sub("_[0-9]$", "", rownames(out))
-    out$Chr <- sub("_.+", "", chr_pos)
-    out$Pos <- sub(".+_", "", chr_pos)
+    out$Chr <- unlist(sapply(which(peak_ann), function(i){
+      return(rep(snpeff_chr[i], at_ann[i]))
+    }))
+    out$Pos <- unlist(sapply(which(peak_ann), function(i){
+      return(rep(snpeff_pos[i], at_ann[i]))
+    }))
     hit <- match(out$Pos, peakblock$Pos)
     out$negLog10P <- peakblock$negLog10P[hit]
-    return(out)
+    out <- out[!out[, 2] %in% c("custom", "intergenic_region"), ]
+    if(length(out) == 0){
+      out <- NULL
+    }
   }
   return(out)
 }
