@@ -1738,7 +1738,7 @@ setMethod("callPeakBlock",
                 val = threshold)
   put.attr.gdsn(node = blocks_gdsn,
                 name = "col_names",
-                val = c("peak_ID", "variant_ID", "dist2peak", "LD2peak"))
+                val = c("peak_ID", "variant_ID", "dist2peak", "LD2peak", "chr_start", "chr_end"))
 }
 
 ## Function to perform peak calling for each phenotype
@@ -1978,26 +1978,6 @@ setMethod("callPeakBlock",
                                 geno_match <- geno_col == geno_col_j
                                 geno_identity <- sum(geno_match, na.rm = TRUE) / sum(!is.na(geno_match))
                                 return(geno_identity)
-                                # cont_table <- matrix(0, num_levels, num_levels)
-                                #
-                                # for (k in seq_len(nrow(geno))) {
-                                #   row_idx <- match(geno_col[k], levels)
-                                #   col_idx <- match(geno_col_j[k], levels)
-                                #   cont_table[row_idx, col_idx] <- cont_table[row_idx, col_idx] + 1
-                                # }
-                                #
-                                # chi_sq <- 0
-                                # row_sums <- rowSums(cont_table)
-                                # col_sums <- colSums(cont_table)
-                                # total_sum <- sum(cont_table)
-                                #
-                                # for (r in seq_len(num_levels)) {
-                                #   for (c in seq_len(num_levels)) {
-                                #     expected <- (row_sums[r] * col_sums[c]) / total_sum
-                                #     chi_sq <- chi_sq + ((cont_table[r, c] - expected) ^ 2) / expected
-                                #   }
-                                # }
-                                # return(chi_sq / nrow(geno))
                               })
     peak_ld <- unlist(geno_identity)
 
@@ -2018,12 +1998,29 @@ setMethod("callPeakBlock",
   } else {
     ld_block <- peak_ld >= threshold
   }
+  one_marker_up <- min(which(ld_block))
+  if(!is.na(ld_block[one_marker_up - 1])){
+    ld_block[one_marker_up - 1] <- TRUE
+    chr_start <- 0
+
+  } else {
+    chr_start <- 1
+  }
+  one_marker_down <- max(which(ld_block))
+  if(!is.na(ld_block[one_marker_down + 1])){
+    ld_block[one_marker_down + 1] <- TRUE
+    chr_end <- 0
+
+  } else {
+    chr_end <- 1
+  }
   peak_block <- na.omit(peak_info$id_in_chr[ld_block])
   ld_to_peak <- na.omit(peak_ld[ld_block])
   pos <- variables$pos[variables$snp_id %in% peak_info$id_in_chr]
   dist2peak <- na.omit(pos[ld_block] - pos[peak_info$peak_index_in_chr])
 
-  return(list(ids = peak_block, ld = ld_to_peak, dist = dist2peak))
+  return(list(ids = peak_block, ld = ld_to_peak, dist = dist2peak,
+              chr_start = chr_start, chr_end = chr_end))
 }
 
 # Function to save the peak data into the GDS object
@@ -2041,7 +2038,7 @@ setMethod("callPeakBlock",
     add.gdsn(node = index.gdsn(node = object$root,
                                path = paste0("lazygas/", node, "/blocks")),
              name = pheno_name, storage = "double", compress = "ZIP_RA", replace = TRUE,
-             val = rbind(peak_id, peak_block$ids, peak_block$dist, peak_block$ld))
+             val = rbind(peak_id, peak_block$ids, peak_block$dist, peak_block$ld, peak_block$chr_start, peak_block$chr_end))
 
   } else {
     # Append the peak information to the existing node
@@ -2053,7 +2050,7 @@ setMethod("callPeakBlock",
     blocks_gdsn <- index.gdsn(node = object$root,
                               path = paste0("lazygas/", node, "/blocks/", pheno_name))
     append.gdsn(node = blocks_gdsn,
-                val = rbind(peak_id, peak_block$ids, peak_block$dist, peak_block$ld))
+                val = rbind(peak_id, peak_block$ids, peak_block$dist, peak_block$ld, peak_block$chr_start, peak_block$chr_end))
   }
 }
 
@@ -2231,10 +2228,10 @@ setMethod("plotPeaks",
   # Create ggplot object
   p <- ggplot() +
     geom_line(data = peakcall,
-              mapping = aes(x = Pos, y = negLog10P, color = peak_ID, group = peak_ID),
+              mapping = aes(x = Pos, y = negLog10P, color = peak_ID),
               linewidth = 1) +
     geom_point(data = signif_peak,
-               mapping = aes(x = Pos, y = negLog10P),
+               mapping = aes(x = Pos, y = negLog10P, group = peak_ID),
                color = "magenta",
                size = 2,
                shape = 20) +
@@ -2667,12 +2664,6 @@ setMethod("recalcAssoc",
                  storage = "double",
                  replace = TRUE)
 
-    # .create_gdsn(root_node = object$root,
-    #              target_node = "lazygas/recalc/group",
-    #              new_node = pheno_name,
-    #              storage = "uint32",
-    #              replace = TRUE)
-
   } else {
     peak_obj <- .make_peakobj(object = object,
                               threshold = att$threshold,
@@ -2682,11 +2673,6 @@ setMethod("recalcAssoc",
                               peakcall = peakcall,
                               binary = binary)
     message("Grouping associations...")
-    # count <- 0
-
-    # while(TRUE){
-    #   count <- count + 1
-    #   message("Round ", count)
 
     cov_scan <- lapply(X = peak_obj$peak_variant_id,
                        FUN = .composite,
@@ -2702,15 +2688,6 @@ setMethod("recalcAssoc",
                                peak_obj = peak_obj,
                                n_threads = n_threads)
 
-    # if(length(new_peaks$newpeaks) == 1){
-    #   peak_obj$peak_variant_id <- new_peaks$newpeaks
-    #   break
-    # }
-    #
-    # if(setequal(new_peaks$newpeaks, peak_obj$peak_variant_id)){
-    #   break
-    # }
-
     peak_obj <- .remake_peakobj(object = object,
                                 peak_obj = peak_obj,
                                 peak_variant_id = new_peaks$newpeaks)
@@ -2720,11 +2697,9 @@ setMethod("recalcAssoc",
                          peak_obj = peak_obj,
                          object = object,
                          peakcall = peakcall,
-                         values = FALSE,
                          n_threads = n_threads)
-    names(peak_block) <- peak_obj$peak_variant_id
-    peak_obj$peak_block <- peak_block
-    # }
+    peak_obj$peak_block <- lapply(seq_along(peak_block),
+                                  function(i) {peak_block[[i]]$variant_ID} )
 
     if(refine_position){
       message("Refine peakpositions...")
@@ -2733,7 +2708,7 @@ setMethod("recalcAssoc",
                             select = c(peak_ID, peak_variant_ID)))
       out2 <- unique(subset(new_peak_blocks,
                             select = c(peak_ID, variant_ID,
-                                       dist2peak, LD2peak,
+                                       dist2peak, LD2peak, chr_start, chr_end,
                                        P.model:negLog10P)))
       out3 <- subset(peak_obj$peakcall,
                      subset = variant_ID %in% unlist(new_peaks$member),
@@ -2755,7 +2730,7 @@ setMethod("recalcAssoc",
       out2 <- unique(subset(peak_obj$peakcall,
                             subset = peak_variant_ID %in% new_peaks$newpeaks,
                             select = c(peak_ID, variant_ID,
-                                       dist2peak, LD2peak,
+                                       dist2peak, LD2peak, chr_start, chr_end,
                                        FDR:negLog10P)))
       out3 <- subset(peak_obj$peakcall,
                      subset = variant_ID %in% unlist(new_peaks$member),
@@ -2789,12 +2764,6 @@ setMethod("recalcAssoc",
                               val = as.matrix(out3),
                               storage = "double",
                               replace = TRUE)
-    # .create_gdsn(root_node = object$root,
-    #              target_node = "lazygas/recalc/group",
-    #              new_node = pheno_name,
-    #              val = as.matrix(peak_grp_summary),
-    #              storage = "uint32",
-    #              replace = TRUE)
 
     put.attr.gdsn(node = out1_gdsn,
                   name = "col_names",
@@ -3109,62 +3078,50 @@ setMethod("recalcAssoc",
   return(peak_obj)
 }
 
-.recallPeak <- function(peak_id, peak_obj, object, peakcall, values, n_threads){
+.recallPeak <- function(peak_id, peak_obj, object, peakcall, n_threads){
   target_variants <- peakcall$peak_ID %in% peakcall$peak_ID[peakcall$variant_ID %in% peak_id]
-  out <- target_variants <- sort(peakcall$variant_ID[target_variants])
+  target_variants <- sort(peakcall$variant_ID[target_variants])
 
-  if(length(target_variants) == 1){
-    if(values){
-      out <- data.frame(dist2peak = 0,
-                        LD2peak = 1,
-                        variant_ID = out)
-    }
+  variables <- .initialize_variables(object = object)
+  index <- which(variables$snp_id == peak_id)
+  chr <- variables$chr[index]
+  chr_with_peak <- which(variables$chr == chr)
+  id_in_chr <- variables$snp_id[chr_with_peak]
+  peak_index_in_chr <- which(id_in_chr == peak_id)
+  peak_info <-   list(index = index,
+                      variantID = peak_id,
+                      chr = chr,
+                      chr_with_peak = chr_with_peak,
+                      id_in_chr = id_in_chr,
+                      peak_index_in_chr = peak_index_in_chr)
 
-  } else{
-    variables <- .initialize_variables(object = object)
-    index <- which(variables$snp_id == peak_id)
-    chr <- variables$chr[index]
-    chr_with_peak <- which(variables$chr == chr)
-    id_in_chr <- variables$snp_id[chr_with_peak]
-    peak_index_in_chr <- which(id_in_chr == peak_id)
-    peak_info <-   list(index = index,
-                        variantID = peak_id,
-                        chr = chr,
-                        chr_with_peak = chr_with_peak,
-                        id_in_chr = id_in_chr,
-                        peak_index_in_chr = peak_index_in_chr)
+  # Set the selection criteria based on the genotype format
+  selection <- .set_selection_criteria_for_peakcall(object = object,
+                                                    geno_format = peak_obj$geno_format,
+                                                    chr = peak_info$chr)
 
-    # Set the selection criteria based on the genotype format
-    selection <- .set_selection_criteria_for_peakcall(object = object,
-                                                      geno_format = peak_obj$geno_format,
-                                                      chr = peak_info$chr)
+  # Retrieve genotype data based on the selection criteria
+  geno <- .retrieve_geno(object = object,
+                         selection = selection,
+                         geno_format = peak_obj$geno_format)
 
-    # Retrieve genotype data based on the selection criteria
-    geno <- .retrieve_geno(object = object,
-                           selection = selection,
-                           geno_format = peak_obj$geno_format)
+  # Calculate linkage disequilibrium (LD) for the identified peak
+  peak_ld <- .calculate_ld(geno = as.matrix(geno),
+                           peak_variant_idx = peak_info$peak_index_in_chr,
+                           is_categorical = selection$is_categorical,
+                           n_threads = n_threads)
 
-    # Calculate linkage disequilibrium (LD) for the identified peak
-    peak_ld <- .calculate_ld(geno = as.matrix(geno),
-                             peak_variant_idx = peak_info$peak_index_in_chr,
-                             is_categorical = selection$is_categorical,
-                             n_threads = n_threads)
-
-    # Identify the peak block based on the LD values
-    peak_block <- .identify_peak_block(peak_ld = peak_ld,
-                                       variables = variables,
-                                       peak_info = peak_info,
-                                       threshold = peak_obj$threshold,
-                                       geno_format = peak_obj$geno_format)
-    if(values){
-      out <- data.frame(dist2peak = peak_block$dist,
-                        LD2peak = peak_block$ld,
-                        variant_ID = peak_block$ids)
-
-    } else {
-      out <- peak_block$ids
-    }
-  }
+  # Identify the peak block based on the LD values
+  peak_block <- .identify_peak_block(peak_ld = peak_ld,
+                                     variables = variables,
+                                     peak_info = peak_info,
+                                     threshold = peak_obj$threshold,
+                                     geno_format = peak_obj$geno_format)
+  out <- data.frame(dist2peak = peak_block$dist,
+                    LD2peak = peak_block$ld,
+                    variant_ID = peak_block$ids,
+                    chr_start = peak_block$chr_start,
+                    chr_end = peak_block$chr_end)
 
   return(out)
 }
@@ -3190,7 +3147,6 @@ setMethod("recalcAssoc",
                              peak_obj = peak_obj,
                              object = object,
                              peakcall = peakcall,
-                             values = TRUE,
                              n_threads = n_threads)
 
   peak_obj <- .remake_peakobj(object = object,
@@ -3393,6 +3349,11 @@ setMethod("listCandidate",
                  new_node = pheno_name,
                  storage = "string",
                  replace = TRUE)
+    .create_gdsn(root_node = object$root,
+                 target_node = "lazygas/snpeff",
+                 new_node = pheno_name,
+                 storage = "string",
+                 replace = TRUE)
 
   } else {
     candidate_list <- NULL
@@ -3459,9 +3420,21 @@ setMethod("listCandidate",
 .getCandidate <- function(peakblock, gff, snpeff){
   peak_variant_id <- peakblock$peak_variant_ID[1]
   is_peak <- peakblock$variant_ID == peak_variant_id
+  if(peakblock$chr_start[1] == 1){
+    peak_start <- 1
+
+  } else {
+    peak_start <- peakblock$Pos[1]
+  }
+  if(peakblock$chr_end[1] == 1){
+    peak_end <- 2^30
+
+  } else {
+    peak_end <- tail(peakblock$Pos, 1)
+  }
   peak_gff <- GRanges(seqnames = peakblock$Chr[is_peak],
-                      ranges = IRanges(start = peakblock$Pos[1],
-                                       end = tail(peakblock$Pos, 1)))
+                      ranges = IRanges(start = peak_start,
+                                       end = peak_end))
   gene_gff <- gff[gff$type %in% "gene"]
   hit <- gene_gff[queryHits(findOverlaps(gene_gff, peak_gff))]
   hit <- hit[order(start(hit))]
@@ -3470,7 +3443,12 @@ setMethod("listCandidate",
     return(peakblock$negLog10P[which.min(abs(peakblock$Pos - x))])
   })
   if(length(hit) == 0){
-    out <- NULL
+    out <- data.frame(peak_ID = peakblock$peak_ID[1],
+                      Gene_ID = NA,
+                      Gene_chr = NA,
+                      Gene_start = NA,
+                      dist2peak = NA,
+                      negLog10P = NA)
 
   } else {
     out <- data.frame(peak_ID = peakblock$peak_ID[1],
@@ -3521,20 +3499,16 @@ setMethod("listCandidate",
     out[grepl("\\|$", out)] <- paste(out[grepl("\\|$", out)], "")
     out <- strsplit(out, "\\|")
     len <- sapply(out, length)
-    out <- out[len %in% 16]
-    if(length(out) == 0){
-      return(NULL)
-    }
     out <- do.call("rbind", out)
     out <- as.data.frame(out)
     colnames(out) <- c("Allele", "Annotation", "Annotation_Impact", "Gene_Name",
                        "Gene_ID", "Feature_Type", "Feature_ID", "Transcript_BioType",
                        "Rank", "HGVS.c", "HGVS.p", "Pos.in.tx", "Pos.in.CDS",
                        "Pos.in.AA", "Distance", "INFO")
-    out$Chr <- unlist(sapply(which(peak_ann), function(i){
+    out$Chr <- unlist(lapply(which(peak_ann), function(i){
       return(rep(snpeff_chr[i], at_ann[i]))
     }))
-    out$Pos <- unlist(sapply(which(peak_ann), function(i){
+    out$Pos <- unlist(lapply(which(peak_ann), function(i){
       return(rep(snpeff_pos[i], at_ann[i]))
     }))
     hit <- match(out$Pos, peakblock$Pos)
@@ -3542,6 +3516,19 @@ setMethod("listCandidate",
     out <- out[!out[, 2] %in% c("custom", "intergenic_region"), ]
     if(length(out) == 0){
       out <- NULL
+    }
+
+    intergenic <- grep("&", out$Gene_ID)
+    if(length(intergenic) > 0){
+      intergenic_split <- lapply(intergenic, function(i){
+        x <- unlist(strsplit(out$Gene_ID[i], "&"))
+        i_out <- data.frame(split_id = x, out[i, ], row.names = NULL)
+        return(i_out)
+      })
+      intergenic_split <- do.call("rbind", intergenic_split)
+      intergenic_split$Gene_ID <- intergenic_split$split_id
+      intergenic_split$split_id <- NULL
+      out <- rbind(out[-intergenic, ], intergenic_split)
     }
   }
   return(out)
@@ -3557,7 +3544,7 @@ setMethod("listCandidate",
     impacts <- c("HIGH", "MODERATE", "LOW", "MODIFIER")
     out <- tapply(seq_along(snpeff_out$Annotation_Impact), snpeff_out$Gene_ID, function(i){
       data.frame(t(as.vector(table(factor(snpeff_out$Annotation_Impact[i], impacts)))),
-                 t(as.vector(table(factor(snpeff_out$Annotation_Impact[i][!is.na(snpeff_out$negLog10P)], impacts)))))
+                 t(as.vector(table(factor(snpeff_out$Annotation_Impact[i][!is.na(snpeff_out$negLog10P[i])], impacts)))))
     })
     Gene_ID = names(out)
     names(out) <- NULL
@@ -3600,57 +3587,97 @@ makeCanditeList <- function(object, pheno, out_fn, peak_id = NULL){
 #' @import plotly
 #' @export
 #'
-makeInteractiveSummary <- function(object, pheno, out_fn){
+makeInteractiveSummary <- function(object, pheno,
+                                   what = c("scan", "peakcall", "recalc", "preakcall_haplo", "recalc_haplo", "candidate"),
+                                   out_fn){
+  what <- match.arg(arg = what,
+                    choices = c("scan", "peakcall", "recalc", "preakcall_haplo", "recalc_haplo", "candidate"),
+                    several.ok = TRUE)
+
+  tag_list <- tagList(div(h1(pheno), style = "text-align:center"))
+
   plot_pheno <- plotPheno(object = object, pheno = pheno, xlab = pheno, boxplot = FALSE)
   plot_pheno <- ggplotly(plot_pheno)
-  plot_man <- plotManhattan(object = object, pheno = pheno) + labs(title = pheno)
-  plot_man <- ggplotly(plot_man)
-  tag_list <- tagList(div(plot_pheno, style = "margin:auto;width:80vw;"),
-                      div(plot_man, style = "margin:auto;width:80vw;"))
+  tag_list <- tagList(tag_list,
+                      div(h1("Phenotype"), style = "text-align:center"),
+                      div(plot_pheno, style = "margin:auto;width:80vw;"))
 
-  peak1 <- lazyData(object = object, dataset = "peakcall", pheno = pheno)
-  if(!is.null(peak1)){
-    plot_peak1 <- plotPeaks(object = object, pheno = pheno, recalc = FALSE) + labs(title = pheno)
+  if("scan" %in% what){
+    plot_man <- plotManhattan(object = object, pheno = pheno)
+    plot_man <- ggplotly(plot_man)
     tag_list <- tagList(tag_list,
-                        div(ggplotly(plot_peak1), style = "margin:auto;width:80vw;"))
+                        div(h1("Manhattan plot"), style = "text-align:center"),
+                        div(plot_man, style = "margin:auto;width:80vw;"))
   }
 
-  peak2 <- lazyData(object = object, dataset = "recalc", pheno = pheno)
-  if(!is.null(peak2)){
-    plot_peak2 <- plotPeaks(object = object, pheno = pheno, recalc = TRUE) + labs(title = pheno)
-    tag_list <- tagList(tag_list,
-                        div(ggplotly(plot_peak2), style = "margin:auto;width:80vw;"))
-  }
-
-  plot_hap <- haploPlot(object = object, pheno = pheno, recalc = TRUE)
-  if(!is.null(plot_hap)){
-    for(i in seq_along(plot_hap)){
+  if("peakcall" %in% what){
+    peak1 <- lazyData(object = object, dataset = "peakcall", pheno = pheno)
+    if(!is.null(peak1)){
+      plot_peak1 <- plotPeaks(object = object, pheno = pheno, recalc = FALSE)
       tag_list <- tagList(tag_list,
-                          div(ggplotly(plot_hap[[i]]), style = "margin:auto;width:60vw;"))
+                          div(h1("Peakcall plot"), style = "text-align:center"),
+                          div(ggplotly(plot_peak1), style = "margin:auto;width:80vw;"))
     }
   }
 
-  candidate <- lazyData(object = object, dataset = "candidate", pheno = pheno)
-  if(length(candidate) == 0){
-    candidate <- NULL
-  }
-  if(!is.null(candidate)){
-    col_names <- colnames(candidate)
-    col_def <- NULL
-    for(i in seq_along(col_names)){
-      min_width <- nchar(col_names[i]) * 16
-      if(min_width < 100){
-        min_width <- 100
-      }
-      col_def <- c(col_def, list(colDef(minWidth = min_width)))
+  if("recalc" %in% what){
+    peak2 <- lazyData(object = object, dataset = "recalc", pheno = pheno)
+    if(!is.null(peak2)){
+      plot_peak2 <- plotPeaks(object = object, pheno = pheno, recalc = TRUE)
+      tag_list <- tagList(tag_list,
+                          div(h1("Recalculated peakcall plot"), style = "text-align:center"),
+                          div(ggplotly(plot_peak2), style = "margin:auto;width:80vw;"))
     }
-    names(col_def) <- col_names
-    table <- reactable(data = candidate, columns = col_def, sortable = TRUE,
-                       resizable = TRUE, filterable = TRUE,
-                       searchable = TRUE, showPageSizeOptions = TRUE,
-                       wrap = TRUE, striped = TRUE, onClick = JS())
-    tag_list <- tagList(tag_list,
-                        div(table, style = "margin:auto;width:90vw;"))
+  }
+
+  if("preakcall_haplo" %in% what){
+    plot_hap <- haploPlot(object = object, pheno = pheno, recalc = FALSE)
+    if(!is.null(plot_hap)){
+      tag_list <- tagList(tag_list,
+                          div(h1("Haplotype plot (all peaks)"), style = "text-align:center"))
+      for(i in seq_along(plot_hap)){
+        tag_list <- tagList(tag_list,
+                            div(ggplotly(plot_hap[[i]]), style = "margin:auto;width:60vw;"))
+      }
+    }
+  }
+
+  if("recalc_haplo" %in% what){
+    plot_hap <- haploPlot(object = object, pheno = pheno, recalc = TRUE)
+    if(!is.null(plot_hap)){
+      tag_list <- tagList(tag_list,
+                          div(h1("Haplotype plot (recalculated peaks)"), style = "text-align:center"))
+      for(i in seq_along(plot_hap)){
+        tag_list <- tagList(tag_list,
+                            div(ggplotly(plot_hap[[i]]), style = "margin:auto;width:60vw;"))
+      }
+    }
+  }
+
+  if("candidate" %in% what){
+    candidate <- lazyData(object = object, dataset = "candidate", pheno = pheno)
+    if(length(candidate) == 0){
+      candidate <- NULL
+    }
+    if(!is.null(candidate)){
+      col_names <- colnames(candidate)
+      col_def <- NULL
+      for(i in seq_along(col_names)){
+        min_width <- nchar(col_names[i]) * 16
+        if(min_width < 100){
+          min_width <- 100
+        }
+        col_def <- c(col_def, list(colDef(minWidth = min_width)))
+      }
+      names(col_def) <- col_names
+      table <- reactable(data = candidate, columns = col_def, sortable = TRUE,
+                         resizable = TRUE, filterable = TRUE,
+                         searchable = TRUE, showPageSizeOptions = TRUE,
+                         wrap = TRUE, striped = TRUE, onClick = JS())
+      tag_list <- tagList(tag_list,
+                          div(h1("Candidate list"), style = "text-align:center"),
+                          div(table, style = "margin:auto;width:90vw;"))
+    }
   }
 
   save_html(tag_list, file = out_fn)
