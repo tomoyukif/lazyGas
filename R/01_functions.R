@@ -2526,6 +2526,7 @@ setMethod("lazyData",
 setGeneric("recalcAssoc", function(object,
                                    n_threads = NULL,
                                    refine_position = FALSE,
+                                   grouping_threshold = 0.05,
                                    ...)
   standardGeneric("recalcAssoc"))
 
@@ -2536,7 +2537,7 @@ setGeneric("recalcAssoc", function(object,
 #'
 setMethod("recalcAssoc",
           "LazyGas",
-          function(object, n_threads, refine_position){
+          function(object, n_threads, refine_position, grouping_threshold){
             if(!exist.gdsn(node = object$root, path = "lazygas/peakcall")){
               stop("No peakcall data in the input LazyGas object.\n",
                    "Run callPeakBlock() to scan associations.")
@@ -2585,7 +2586,8 @@ setMethod("recalcAssoc",
                                   pheno_name = pheno_name,
                                   binary = pheno$pheno_type$binary[i],
                                   n_threads = n_threads,
-                                  refine_position = refine_position)
+                                  refine_position = refine_position,
+                                  grouping_threshold = grouping_threshold)
               }
 
               .finalize_gdsn_recalc(object = object, pheno_name = pheno_name)
@@ -2640,7 +2642,7 @@ setMethod("recalcAssoc",
 
 # Recalculate peaks for a given phenotype.
 #' @importFrom dplyr setequal
-.peakrecalculator <- function(object, pheno, pheno_name, binary, n_threads, refine_position){
+.peakrecalculator <- function(object, pheno, pheno_name, binary, n_threads, refine_position, grouping_threshold){
   message("Processing: ", pheno_name)
 
   peakcall <- .get_peakcall(object = object, pheno_name = pheno_name)
@@ -2681,7 +2683,8 @@ setMethod("recalcAssoc",
                        mode = "excl")
 
     peak_grp <- .group_peaks(cov_scan = cov_scan,
-                             peak_variant_id = peak_obj$peak_variant_id)
+                             peak_variant_id = peak_obj$peak_variant_id,
+                             grouping_threshold = grouping_threshold)
 
     new_peaks <- .get_newpeaks(object = object,
                                peak_grp = peak_grp$group,
@@ -3019,7 +3022,7 @@ setMethod("recalcAssoc",
   }
 }
 
-.group_peaks <- function(cov_scan, peak_variant_id){
+.group_peaks <- function(cov_scan, peak_variant_id, grouping_threshold){
   peak_list <- peak_variant_id
   out2 <- out1 <- NULL
   for(j in seq_along(cov_scan)){
@@ -3027,7 +3030,7 @@ setMethod("recalcAssoc",
       next
     }
     grp <- c(peak_variant_id[j],
-             cov_scan[[j]]$variant_ID[cov_scan[[j]]$p_values > 0.05])
+             cov_scan[[j]]$variant_ID[cov_scan[[j]]$p_values > grouping_threshold])
     grp <- grp[grp %in% peak_list]
     out1 <- c(out1, list(grp))
     out2 <- rbind(out2, data.frame(cov_scan[[j]][cov_scan[[j]]$variant_ID %in% grp, ]))
@@ -3588,10 +3591,10 @@ makeCanditeList <- function(object, pheno, out_fn, peak_id = NULL){
 #' @export
 #'
 makeInteractiveSummary <- function(object, pheno,
-                                   what = c("scan", "peakcall", "recalc", "preakcall_haplo", "recalc_haplo", "candidate"),
+                                   what = c("scan", "scan_png", "peakcall", "recalc", "groups", "preakcall_haplo", "recalc_haplo", "candidate"),
                                    out_fn){
   what <- match.arg(arg = what,
-                    choices = c("scan", "peakcall", "recalc", "preakcall_haplo", "recalc_haplo", "candidate"),
+                    choices = c("scan", "scan_png", "peakcall", "recalc", "groups", "preakcall_haplo", "recalc_haplo", "candidate"),
                     several.ok = TRUE)
 
   tag_list <- tagList(div(h1(pheno), style = "text-align:center"))
@@ -3608,6 +3611,15 @@ makeInteractiveSummary <- function(object, pheno,
     tag_list <- tagList(tag_list,
                         div(h1("Manhattan plot"), style = "text-align:center"),
                         div(plot_man, style = "margin:auto;width:80vw;"))
+  }
+
+  if("scan_png" %in% what){
+    plot_man <- plotManhattan(object = object, pheno = pheno)
+    plot_man <- plotTag(plot_man, alt = paste0("Manhattan plot for ", pheno),
+                        width = 800, height = 600)
+    tag_list <- tagList(tag_list,
+                        div(h1("Manhattan plot"), style = "text-align:center"),
+                        div(plot_man, style = "text-align:center;margin:auto;width:80vw;"))
   }
 
   if("peakcall" %in% what){
@@ -3628,6 +3640,17 @@ makeInteractiveSummary <- function(object, pheno,
                           div(h1("Recalculated peakcall plot"), style = "text-align:center"),
                           div(ggplotly(plot_peak2), style = "margin:auto;width:80vw;"))
     }
+  }
+
+  if("groups" %in% what){
+    groups <- lazyData(object = object, dataset = "groups", pheno = pheno)
+    table <- reactable(data = groups, sortable = TRUE,
+                       resizable = TRUE, filterable = TRUE,
+                       searchable = TRUE, showPageSizeOptions = TRUE,
+                       wrap = TRUE, striped = TRUE, onClick = JS())
+    tag_list <- tagList(tag_list,
+                        div(h1("Peak grouping list"), style = "text-align:center"),
+                        div(table, style = "margin:auto;width:90vw;"))
   }
 
   if("preakcall_haplo" %in% what){

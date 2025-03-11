@@ -4,7 +4,13 @@
 \alias{makeInteractiveSummary}
 \title{Generate interactive summary}
 \usage{
-makeInteractiveSummary(object, pheno, out_fn)
+makeInteractiveSummary(
+  object,
+  pheno,
+  what = c("scan", "scan_png", "peakcall", "recalc", "groups", "preakcall_haplo",
+    "recalc_haplo", "candidate"),
+  out_fn
+)
 }
 \arguments{
 \item{object}{QTLscan object}

@@ -5,9 +5,15 @@
 \alias{recalcAssoc,LazyGas-method}
 \title{Recalculate Associations}
 \usage{
-recalcAssoc(object, n_threads = NULL, refine_position = FALSE, ...)
+recalcAssoc(
+  object,
+  n_threads = NULL,
+  refine_position = FALSE,
+  grouping_threshold = 0.05,
+  ...
+)
 
-\S4method{recalcAssoc}{LazyGas}(object, n_threads, refine_position)
+\S4method{recalcAssoc}{LazyGas}(object, n_threads, refine_position, grouping_threshold)
 }
 \arguments{
 \item{object}{A LazyGas object.}
