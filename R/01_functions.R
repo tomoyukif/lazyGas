@@ -1943,10 +1943,18 @@ setMethod("callPeakBlock",
 
   } else if(geno_format %in% c("corrected", "genotype")){
     out[out == 3] <- NA
-    for(i in seq_len(dim(out)[1])[-1]){
-      out[1,,] <- out[1,,] + out[i,,]
+    if(length(dim(out)) == 2){
+      for(i in seq_len(dim(out)[1])[-1]){
+        out[1,] <- out[1,] + out[i,]
+      }
+      out <- out[1,]
+
+    } else {
+      for(i in seq_len(dim(out)[1])[-1]){
+        out[1,,] <- out[1,,] + out[i,,]
+      }
+      out <- out[1,,]
     }
-    out <- out[1,,]
 
   } else if(geno_format == "dosage"){
     out[out == 63] <- NA
@@ -1999,7 +2007,7 @@ setMethod("callPeakBlock",
     ld_block <- peak_ld >= threshold
   }
   one_marker_up <- min(which(ld_block))
-  if(!is.na(ld_block[one_marker_up - 1])){
+  if(one_marker_up > 1){
     ld_block[one_marker_up - 1] <- TRUE
     chr_start <- 0
 
@@ -3256,6 +3264,7 @@ setMethod("listCandidate",
             }
           })
 
+#' @importFrom GenomeInfoDb seqlevels
 .validateGFF <- function(chr, gff){
   if(!inherits(gff, "GRanges")){
     stop("The input gff must be a GRanges class object imported by rtracklayer::import.gff3().",
