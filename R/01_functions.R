@@ -3601,7 +3601,7 @@ makeCanditeList <- function(object, pheno, out_fn, peak_id = NULL){
 #' @export
 #'
 makeInteractiveSummary <- function(object, pheno,
-                                   what = c("scan", "scan_png", "peakcall", "recalc", "groups", "preakcall_haplo", "recalc_haplo", "candidate"),
+                                   what = c("scan_png", "peakcall", "recalc", "groups", "recalc_haplo", "candidate"),
                                    out_fn){
   what <- match.arg(arg = what,
                     choices = c("scan", "scan_png", "peakcall", "recalc", "groups", "preakcall_haplo", "recalc_haplo", "candidate"),
@@ -3654,13 +3654,15 @@ makeInteractiveSummary <- function(object, pheno,
 
   if("groups" %in% what){
     groups <- lazyData(object = object, dataset = "groups", pheno = pheno)
-    table <- reactable(data = groups, sortable = TRUE,
-                       resizable = TRUE, filterable = TRUE,
-                       searchable = TRUE, showPageSizeOptions = TRUE,
-                       wrap = TRUE, striped = TRUE, onClick = JS())
-    tag_list <- tagList(tag_list,
-                        div(h1("Peak grouping list"), style = "text-align:center"),
-                        div(table, style = "margin:auto;width:90vw;"))
+    if(!is.null(groups)){
+      table <- reactable(data = groups, sortable = TRUE,
+                         resizable = TRUE, filterable = TRUE,
+                         searchable = TRUE, showPageSizeOptions = TRUE,
+                         wrap = TRUE, striped = TRUE, onClick = JS())
+      tag_list <- tagList(tag_list,
+                          div(h1("Peak grouping list"), style = "text-align:center"),
+                          div(table, style = "margin:auto;width:90vw;"))
+    }
   }
 
   if("preakcall_haplo" %in% what){
