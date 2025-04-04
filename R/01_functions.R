@@ -3598,7 +3598,22 @@ makeCanditeList <- function(object, pheno, out_fn, peak_id = NULL){
 #' @import reactable
 #' @import htmltools
 #' @import plotly
+#' @description
+#' The `what` argument accept a character vector of one or more of the following
+#' strings:
+#' \itemize{
+#'  \item{"scan"}{Draw an interactive Manhattan plot}
+#'  \item{"scan_png"}{Draw an static Manhattan plot}
+#'  \item{"peakcall"}{Draw an interactive peackcall plot}
+#'  \item{"recalc"}{Draw an interactive recalculated peackll plot}
+#'  \item{"groups"}{Draw an interactive peack groping list}
+#'  \item{"preakcall_haplo"}{Draw an interactive haplotype-wise phenotype distribution plot for peaks before the recalculation}
+#'  \item{"recalc_haplo"}{Draw an interactive haplotype-wise phenotype distribution plot for peaks after the recalculation}
+#'  \item{"candidate"}{Draw an interactive candidate list}
+#' }
+#'
 #' @export
+#'
 #'
 makeInteractiveSummary <- function(object, pheno,
                                    what = c("scan_png", "peakcall", "recalc", "groups", "recalc_haplo", "candidate"),
