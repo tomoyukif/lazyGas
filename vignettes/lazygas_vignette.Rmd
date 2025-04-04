@@ -17,20 +17,20 @@ vignette: >
 ---
 
 ## Introduction
-This vignette demonstrates the process of conducting a genetic association study using the `lazyGas` package. We will go through the steps of loading input files, preprocessing data, performing association analysis, and visualizing results.
-
+This vignette demonstrates the process of conducting a genetic association study using the `lazyGas` package. We will go through the steps of loading input files, preprocessing data, performing association analysis, and visualizing results.  
+<br>
+  
 Load the lazyGas package.
 ```{r message=FALSE, results="hide", warning=FALSE}
 library(lazyGas)
 ```
-
-
+<br><br>
 
 ## Loading Input GDS file and Building a LazyGas Object
 The lazyGas package was primarily designed to take as input a GDS file created 
 using the `r Biocpkg("GBScleanR")` package. If you have a VCF file for 
 regression analysis, you can convert it to a GDS file using the gbsrVCF2GDS()
-function in GBScleanR. 
+function in GBScleanR.  
 Load a sample GDS file and build a `LazyGas` class object.
 ```{r message=FALSE, results="hide", warning=FALSE}
 gds_fn <- system.file("extdata", "sample.gds", package = "lazyGas")
@@ -43,10 +43,9 @@ The setting `overwrite = FALSE` ensures that all outputs stored in the input GDS
 file, which were created by functions in the `lazyGas` package, are preserved as 
 they are. If `overwrite = TRUE`, those outputs will be removed. This setting has 
 no effect when creating a `LazyGas` class object for the first time, but it does
-apply when reloading the GDS file for reanalysis.
-
-
-
+apply when reloading the GDS file for reanalysis.  
+<br>
+  
 If you have genotype information that are not stored in a GDS file, you can build 
 a `LazyGas` class object by supplying a named list including the necessary 
 information to the `create_gds` argument of the `buildLazyGas()` function.
@@ -82,7 +81,7 @@ create_gds <-  list(genotype = genotype,
 lg <- buildLazyGas(gds_fn = sample_gds, 
                    create_gds = create_gds)
 ```
-
+<br>
 
 ## Loading and Preprocessing Phenotype Data
 Load the phenotype data.
@@ -90,8 +89,7 @@ Load the phenotype data.
 pheno_fn <- system.file("extdata", "pheno.csv", package = "lazyGas")
 pheno <- read.csv(file = pheno_fn)
 ```
-
-
+<br>
 
 You need to assign phenotype data to the `LazyGas` object.
 ```{r}
@@ -105,9 +103,8 @@ data. This renaming is useful when phenotype names in the input `pheno`
 data.frame has abbreviated or ambiguous labeling of phenotype names in the header 
 of the data.frame. The phenotype names provided via the `rename` argument or 
 retrieved from the data.frame header will be used in plots. Renaming is only for 
-the visualization purpose and does not affect the analysis.
-
-
+the visualization purpose and does not affect the analysis.  
+<br><br>
 
 ## Visualizing Phenotype Data
 Generate and save plots for phenotype data.
@@ -121,7 +118,7 @@ for(i in seq_along(pheno$pheno_names)){
   print(p)
 }
 ```
-
+<br><br>
 
 ## Conducting Association Analysis
 
@@ -139,14 +136,14 @@ genotype data, you can specify the `geno_format` argument as `haplotype` or
 g <- getGenoPerMarker(object = lg, geno_format = "genotype")
 print(g)
 ```
-
+<br>
 
 
 ```{r}
 g <- getGenoPerMarker(object = lg, geno_format = "haplotype")
 print(g)
 ```
-
+<br>
 
 
 ```{r}
@@ -158,7 +155,7 @@ As shown above, genotype and haplotype data for each marker is a matrix with two
 rows if you have diploid samples, whereas dosage data is a vector.
 You need to prepare a function to convert those data into a model matrix for the 
 regression analysis.
-
+<br>
 
 
 When you use the dosage data as input for the regression analysis,
@@ -175,8 +172,8 @@ conv_fun <- function(g){
 # For the model matrix above, the formula can be the following.
 formula <- "add + dom"
 ```
-
-
+<br>
+  
 
 Since genotype data indicates reference and alternative alleles as 0 and 1, 
 you can sum the genotype values to obtain the number of alternative alleles.
@@ -196,7 +193,7 @@ conv_fun <- function(g){
 formula <- "add + dom"
 ```
 
-
+<br>
 
 For the haplotype data, you can incorporate interaction effects of haplotypes as
 follows.
@@ -213,7 +210,7 @@ formula <- "hap2 + hap1_hap2"
 
 ```
 
-
+<br>
 
 Although you can manually define a function for the data conversion, 
 the makeConvFun() function helps you create a data conversion function. 
@@ -224,15 +221,15 @@ the makeConvFun() function helps you create a data conversion function.
 conv_fun <- makeConvFun(geno_format = "dosage", n_levels = 3)
 formula <- "add + dom"
 ```
-
-
+  
+<br>
 
 You can check the conversion function definition
 ```{r}
 conv_fun
 ```
 
-
+<br>
 
 The current implementation of the `makeConvFun()` function does not support 
 to assume interaction effects of haplotypes. If necessary, please define a 
@@ -260,8 +257,8 @@ conv_fun <- function(g){
 formula <- paste0("hap2 + hap3 + hap4 + hap1_hap2 + hap1_hap3",
                   " + hap1_hap4 + hap2_hap3 + hap2_hap4 + hap3_hap4")
 ```
-
-
+  
+<br><br>
 
 ### Association Analysis
 The `scanAssoc()` function performs regression analysis using a model formula
@@ -275,8 +272,8 @@ scanAssoc(object = lg,
           conv_fun = conv_fun,
           geno_format = "dosage")
 ```
-
-
+  
+<br>
 
 For GWAS, set `method = "mlm"`. When `method = "mlm"` is specified, only 
 `geno_format = "genotype"` or `geno_format = "corrected"` is accepted. 
@@ -288,7 +285,7 @@ scanAssoc(object = lg,
           method = "mlm")
 ```
 
-
+<br>
 
 If you conducted association tests using another tool and have p values,
 you can assign those p values to the `LazyGas` class object. In this case, you
@@ -305,7 +302,7 @@ lg <- assignPvalues(object = lg, pheno_name = "Fruit weight",
                     formula = formula)
 ```
 
-
+<br><br>
 
 ## Visualizing Results
 Generate Manhattan plots for association results.
@@ -320,8 +317,8 @@ for(i in seq_along(pheno$pheno_names)){
 scan <- lazyData(object = lg, dataset = "scan", pheno = pheno$pheno_names[1])
 scan[which.max(scan$negLog10P), ]
 ```
-
-
+  
+<br>
 
 The `callPeakBlock()` function defines peaks based on adjusted p-values (FDR) 
 obtained from association analysis at markers, as well as genotype correlations 
@@ -329,8 +326,8 @@ between markers — in other words, linkage disequilibrium.
 ```{r message=FALSE}
 callPeakBlock(object = lg, signif = 0.05, threshold = 0.8)
 ```
-
-
+  
+<br>
 
 The peaks detected by the `callPeakBlock()` function can be visualized using
 the `plotPeaks()` function.
@@ -341,7 +338,7 @@ for(i in seq_along(pheno$pheno_names)){
 }
 ```
 
-
+<br><br>
 
 ## Recalculating and Visualizing Peaks
 As shown in the peak plot above, visual inspection may reveal many small peak 
@@ -357,8 +354,8 @@ model at a p-value threshold (the default is 0.05), the two peaks are considered
 independent. Otherwise, the higher peak (the one with the greater -log10(P)
 value) is retained, and the other is removed and recorded as grouped with the 
 higher peak under the `groups` node in the GDS file.
-
-
+  
+<br>
 
 The refine_position argument specifies whether to recalculate the p-values of
 markers around each peak using multiple regression models, treating peaks other
@@ -372,7 +369,8 @@ recalcAssoc(object = lg,
             refine_position = FALSE, 
             grouping_threshold = 0.05)
 ```
-
+  
+<br>
 
 The recalculated peaks can be visualized using the `plotPeaks()` function with 
 `recal = TRUE`.
@@ -383,7 +381,7 @@ for(i in seq_along(pheno$pheno_names)){
 }
 ```
 
-
+<br><br>
 
 ## Visualizing Haplotype and Phenotype Data
 You can generate haplotype-wise phenotype distribution plots using the 
@@ -396,7 +394,7 @@ for(i in seq_along(pheno$pheno_names)){
 }
 ```
 
-
+<br>
 
 ```{r}
 for(i in seq_along(pheno$pheno_names)){
@@ -406,8 +404,8 @@ for(i in seq_along(pheno$pheno_names)){
 }
 ```
 
-
-
+<br>
+  
 ## List up candidate genes
 The `listCandidate()` function helps you list candidate genes for the detected 
 association peaks. You are required to provide a GFF file containing gene 
@@ -441,7 +439,7 @@ names(ann)[1] <- "Gene_ID"
 listCandidate(object = lg, gff = gff, snpeff = snpeff_gds, ann = ann, recalc = TRUE)
 ```
 
-
+<br><br>
 
 ## Extracting Data
 The phenotype data assigned to a `LazyGas` class object, along with the output
@@ -452,7 +450,7 @@ pheno <- getPheno(object = lg)
 sapply(pheno, head)
 ```
 
-
+<br>
 
 The output of association analysis.
 ```{r}
@@ -460,7 +458,7 @@ scan <- lazyData(object = lg, dataset = "scan", pheno = pheno$pheno_names[1])
 head(scan)
 ```
 
-
+<br>
 
 The output of peak calling.
 ```{r}
@@ -468,7 +466,7 @@ peakcall <- lazyData(object = lg, dataset = "peakcall", pheno = pheno$pheno_name
 head(peakcall)
 ```
 
-
+<br>
 
 The output of peak calling after peak grouping.
 ```{r}
@@ -476,7 +474,7 @@ recalc <- lazyData(object = lg, dataset = "recalc", pheno = pheno$pheno_names[1]
 head(recalc)
 ```
 
-
+<br>
 
 The record of peak grouping.
 ```{r}
@@ -484,7 +482,7 @@ groups <- lazyData(object = lg, dataset = "groups", pheno = pheno$pheno_names[1]
 head(groups)
 ```
 
-
+<br>
 
 The list of candidate genes.
 ```{r eval=FALSE}
@@ -493,7 +491,7 @@ candidate <- lazyData(object = lg, dataset = "candidate", pheno = pheno$pheno_na
 head(candidate)
 ```
 
-
+<br>
 
 The gene-wise summarized SnpEff annotation.
 ```{r eval=FALSE}
@@ -502,8 +500,8 @@ candidate <- lazyData(object = lg, dataset = "snpeff", pheno = pheno$pheno_names
 head(candidate)
 ```
 
-
-
+<br><br>
+  
 ## Generating Interactive HTML Report
 To organize the results of the analysis, you can generate an interactive HTML. 
 The `what` argument accepts a character vector specifying one or more types of
@@ -528,5 +526,9 @@ makeInteractiveSummary(object = lg,
                                 "peakcall", "recalc", "groups", 
                                 "preakcall_haplo", "recalc_haplo",
                                 "candidate"))
+```
+
+```{r}
+sessionInfo()
 ```
 
