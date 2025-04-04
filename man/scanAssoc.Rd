@@ -8,7 +8,7 @@ scanAssoc(
   object,
   formula = "phe ~ add",
   conv_fun = NULL,
-  geno_format = c("genotype", "dosage", "haplotype"),
+  geno_format = c("genotype", "corrected", "dosage", "haplotype"),
   kruskal = NULL,
   method = c("glm", "mlm"),
   ...

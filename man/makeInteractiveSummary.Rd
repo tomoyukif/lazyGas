@@ -7,8 +7,7 @@
 makeInteractiveSummary(
   object,
   pheno,
-  what = c("scan", "scan_png", "peakcall", "recalc", "groups", "preakcall_haplo",
-    "recalc_haplo", "candidate"),
+  what = c("scan_png", "peakcall", "recalc", "groups", "recalc_haplo", "candidate"),
   out_fn
 )
 }
@@ -20,5 +19,16 @@ makeInteractiveSummary(
 \item{pehno}{Phenotype names to be drawn}
 }
 \description{
-Generate interactive summary
+The \code{what} argument accept a character vector of one or more of the following
+strings:
+\itemize{
+\item{"scan"}{Draw an interactive Manhattan plot}
+\item{"scan_png"}{Draw an static Manhattan plot}
+\item{"peakcall"}{Draw an interactive peackcall plot}
+\item{"recalc"}{Draw an interactive recalculated peackll plot}
+\item{"groups"}{Draw an interactive peack groping list}
+\item{"preakcall_haplo"}{Draw an interactive haplotype-wise phenotype distribution plot for peaks before the recalculation}
+\item{"recalc_haplo"}{Draw an interactive haplotype-wise phenotype distribution plot for peaks after the recalculation}
+\item{"candidate"}{Draw an interactive candidate list}
+}
 }

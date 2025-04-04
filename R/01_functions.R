@@ -834,10 +834,7 @@ setMethod("assignPvalues",
               i_pheno_names <- pheno_name[i]
 
               p_values_i <- p_values[, i]
-              p_values_i <- cbind(variant_ID = getMarID(object),
-                                  Chr = getChromosome(object),
-                                  Pos = getPosition(object),
-                                  P.model = p_values_i,
+              p_values_i <- cbind(P.model = p_values_i,
                                   FDR = p.adjust(p = p_values_i, method = "fdr"),
                                   negLog10P = -log10(p_values_i))
 
@@ -1050,7 +1047,7 @@ makeConvFun <-  function(geno_format = c("genotype", "corrected", "dosage", "hap
 setGeneric("scanAssoc", function(object,
                                  formula = "phe ~ add",
                                  conv_fun = NULL,
-                                 geno_format = c("genotype", "dosage", "haplotype"),
+                                 geno_format = c("genotype", "corrected", "dosage", "haplotype"),
                                  kruskal = NULL,
                                  method = c("glm", "mlm"),
                                  ...)
@@ -1067,7 +1064,7 @@ setMethod("scanAssoc",
                    method = c("glm", "mlm")){
 
             method <- match.arg(arg = method, choices = c("glm", "mlm"))
-            geno_format <- match.arg(arg = geno_format, choices = c("genotype", "dosage", "haplotype"))
+            geno_format <- match.arg(arg = geno_format, choices = c("genotype", "corrected", "dosage", "haplotype"))
 
             if(method == "mlm"){
               if(geno_format %in% c("dosage", "haplotype")){
@@ -1227,10 +1224,7 @@ setMethod("scanAssoc",
     p_values <- association.test(x = bed_mat, Y = i_pheno, K = k, p = 2,
                                  eigenK = eigen(k), test = "wald",
                                  method = "lmm", response = "quantitative")
-    p_values <- cbind(variant_ID = p_values$id,
-                      Chr = p_values$chr,
-                      Pos = p_values$pos,
-                      P.model = p_values$p,
+    p_values <- cbind(P.model = p_values$p,
                       P.add = p_values$p,
                       Coef.add = p_values$beta,
                       PVE = p_values$h2)
@@ -2107,7 +2101,7 @@ setMethod("plotPeaks",
                    chr = NULL,
                    start = NULL,
                    end = NULL,
-                   recalc = TRUE){
+                   recalc = FALSE){
             .check_peakcall_data(object = object)
             path <- .determine_path(object = object, recalc = recalc)
             pheno_name <- .determine_phenotype_name(object = object,
