@@ -2022,8 +2022,9 @@ setMethod("callPeakBlock",
   } else {
     chr_end <- 1
   }
-  peak_block <- na.omit(peak_info$id_in_chr[ld_block])
-  ld_to_peak <- na.omit(peak_ld[ld_block])
+  ld_block <- which(ld_block)
+  peak_block <- peak_info$id_in_chr[ld_block]
+  ld_to_peak <- peak_ld[ld_block]
   pos <- variables$pos[variables$snp_id %in% peak_info$id_in_chr]
   dist2peak <- na.omit(pos[ld_block] - pos[peak_info$peak_index_in_chr])
 
