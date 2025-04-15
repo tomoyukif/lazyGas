@@ -3237,7 +3237,9 @@ setMethod("listCandidate",
 
             chr <- unique(getChromosome(object))
             .validateGFF(chr = chr, gff = gff)
-            .validateSnpEff(chr = chr, snpeff = snpeff)
+            if(!is.null(snpeff)){
+              .validateSnpEff(chr = chr, snpeff = snpeff)
+            }
             .validateANN(gff = gff, ann = ann)
 
             ## Function to create the necessary folders in the GDS object
