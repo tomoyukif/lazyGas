@@ -3417,6 +3417,13 @@ setMethod("listCandidate",
 
       readmode.gdsn(node = index.gdsn(node = object$root,
                                       path = paste0("lazygas/snpeff/", pheno_name)))
+
+    } else {
+      .create_gdsn(root_node = object$root,
+                   target_node = "lazygas/snpeff",
+                   new_node = pheno_name,
+                   storage = "string",
+                   replace = TRUE)
     }
   }
 }
