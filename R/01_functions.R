@@ -2413,7 +2413,7 @@ setMethod("haploPlot",
 #' @export
 #'
 setGeneric("lazyData", function(object,
-                                dataset = c("scan", "peakcall", "recalc", "candidate", "snpeff"),
+                                dataset = c("scan", "peakcall", "recalc", "groups", "candidate", "snpeff"),
                                 pheno,
                                 ...)
   standardGeneric("lazyData"))
@@ -2679,7 +2679,7 @@ setMethod("recalcAssoc",
                               binary = binary)
     message("Grouping associations...")
 
-    cov_scan <- lapply(X = peak_obj$peak_variant_id,
+    cov_scan <- lapply(X = peak_obj$peak_variant_id[1],
                        FUN = .composite,
                        peak_obj = peak_obj,
                        n_threads = n_threads,
@@ -2950,8 +2950,8 @@ setMethod("recalcAssoc",
 
   if(peak_obj$geno_format == "haplotype"){
     target_geno <- peak_obj$geno[, , !index]
-    if(is.vector(target_geno)){
-      target_geno <- matrix(data = target_geno, ncol = 1)
+    if(length(dim(target_geno)) == 2){
+      target_geno <- array(data = target_geno, dim = c(dim(target_geno), 1))
     }
     target_geno <- apply(X = target_geno, MARGIN = 3, FUN = list)
     target_geno <- lapply(X = target_geno, FUN = "[[", 1)

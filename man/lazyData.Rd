@@ -7,7 +7,7 @@
 \usage{
 lazyData(
   object,
-  dataset = c("scan", "peakcall", "recalc", "candidate", "snpeff"),
+  dataset = c("scan", "peakcall", "recalc", "groups", "candidate", "snpeff"),
   pheno,
   ...
 )
