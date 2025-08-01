@@ -2739,7 +2739,7 @@ setMethod("recalcAssoc",
                                        dist2peak, LD2peak, chr_start, chr_end,
                                        FDR:negLog10P)))
       out3 <- subset(peak_obj$peakcall,
-                     subset = variant_ID %in% unlist(new_peaks$member),
+                     subset = variant_ID %in% unlist(new_peaks$member) & variant_ID == peak_variant_ID,
                      select = c(peak_ID, variant_ID,
                                 FDR:negLog10P))
       grouped_with <- lapply(seq_along(new_peaks$member), function(i){

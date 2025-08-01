@@ -1,4 +1,4 @@
-Changes in version 0.4.8 (2025-08-02)
+Changes in version 0.4.9 (2025-08-02)
 + Bug fix in recalcAssoc(), which was accidentally introduced in the bug fix at 2025-05-16.
 
 Changes in version 0.4.7 (2025-05-16)
