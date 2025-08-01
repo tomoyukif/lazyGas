@@ -2679,7 +2679,7 @@ setMethod("recalcAssoc",
                               binary = binary)
     message("Grouping associations...")
 
-    cov_scan <- lapply(X = peak_obj$peak_variant_id[1],
+    cov_scan <- lapply(X = peak_obj$peak_variant_id,
                        FUN = .composite,
                        peak_obj = peak_obj,
                        n_threads = n_threads,
