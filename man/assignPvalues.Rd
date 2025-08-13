@@ -11,6 +11,7 @@ assignPvalues(
   geno_format = c("genotype", "dosage", "haplotype"),
   conv_fun = NULL,
   formula = "phe ~ add",
+  null_formula = NULL,
   kruskal = NULL,
   ...
 )
