@@ -793,6 +793,7 @@ setGeneric("assignPvalues", function(object, pheno_name, p_values,
                                      geno_format = c("genotype", "dosage", "haplotype"),
                                      conv_fun = NULL,
                                      formula = "phe ~ add",
+                                     null_formula = NULL,
                                      kruskal = NULL, ...)
   standardGeneric("assignPvalues"))
 
@@ -800,11 +801,12 @@ setMethod("assignPvalues",
           "LazyGas",
           function(object, pheno_name, p_values,
                    geno_format = c("genotype", "dosage", "haplotype"),
-                   conv_fun = NULL, formula = "phe ~ add", kruskal = NULL){
+                   conv_fun = NULL, formula = "phe ~ add", null_formula = NULL, kruskal = NULL){
             geno_format <- match.arg(arg = geno_format, choices = c("genotype", "dosage", "haplotype"))
 
             if(is.null(conv_fun)){
               formula <- formula("phe ~ add")  # Define the formula for regression
+              null_formula <- NULL
             }
 
             hit <- pheno_name %in% object@lazydata$pheno_names
@@ -852,6 +854,7 @@ setMethod("assignPvalues",
             .store_additional_info(object = object,
                                    kruskal = kruskal,
                                    formula = formula,
+                                   null_formula = null_formula,
                                    conv_fun = conv_fun,
                                    geno_format = geno_format)
             return(object)
@@ -1058,6 +1061,7 @@ setMethod("scanAssoc",
           "LazyGas",
           function(object,
                    formula = "phe ~ add",
+                   null_formula = NULL,
                    conv_fun = NULL,
                    geno_format = c("genotype", "corrected", "dosage", "haplotype"),
                    kruskal = NULL,
@@ -1076,6 +1080,7 @@ setMethod("scanAssoc",
 
             if(is.null(conv_fun)){
               formula <- formula("phe ~ add")  # Define the formula for regression
+              null_formula <- NULL
             }
 
             # Notify the user of the phenotypes being analyzed
@@ -1105,6 +1110,7 @@ setMethod("scanAssoc",
                                   geno_format = geno_format,
                                   conv_fun = conv_fun,
                                   formula = formula,
+                                  null_formula = null_formula,
                                   dokruskal = dokruskal,
                                   i_pheno_names = i_pheno_names,
                                   binary = binary,
@@ -1115,6 +1121,7 @@ setMethod("scanAssoc",
             .store_additional_info(object = object,
                                    kruskal = kruskal,
                                    formula = formula,
+                                   null_formula = null_formula,
                                    conv_fun = conv_fun,
                                    geno_format = geno_format)
           }
@@ -1143,6 +1150,7 @@ setMethod("scanAssoc",
                                 geno_format,
                                 conv_fun,
                                 formula,
+                                null_formula,
                                 dokruskal,
                                 i_pheno_names,
                                 binary,
@@ -1190,6 +1198,7 @@ setMethod("scanAssoc",
                            geno_format = geno_format,
                            conv_fun = conv_fun,
                            formula = formula,
+                           null_formula = null_formula,
                            dokruskal = dokruskal)
     # Fill NA values
     p_values <- .fill.na(p_values = p_values)
@@ -1265,6 +1274,7 @@ setMethod("scanAssoc",
 .store_additional_info <- function(object,
                                    kruskal,
                                    formula,
+                                   null_formula,
                                    conv_fun,
                                    geno_format) {
   .create_gdsn(root_node = object$root,
@@ -1289,6 +1299,17 @@ setMethod("scanAssoc",
                storage = "string32",
                valdim = dim(formula))
 
+  if(is.null(null_formula)){
+    null_formula <- "NULL"
+  }
+
+  .create_gdsn(root_node = object$root,
+               target_node = "lazygas/scan",
+               new_node = "null_formula",
+               val = null_formula,
+               storage = "string32",
+               valdim = dim(null_formula))
+
   .create_gdsn(root_node = object$root,
                target_node = "lazygas/scan",
                new_node = "conv_fun",
@@ -1312,6 +1333,7 @@ setMethod("scanAssoc",
                         geno_format,
                         conv_fun,
                         formula,
+                        null_formula,
                         dokruskal){
   g[g == na_val] <- NA
   if(all(is.na(g))){
@@ -1335,6 +1357,15 @@ setMethod("scanAssoc",
                   conv_fun = conv_fun,
                   formula = formula)  # Create a data frame for GLM
 
+    if(!is.null(null_formula)){
+      null_df <- .makeDF(g = g,
+                         phe = pheno,
+                         conv_fun = conv_fun,
+                         formula = null_formula)  # Create a data frame for GLM
+    } else {
+      null_df <- NULL
+    }
+
     # Set the family for GLM based on whether the phenotype is binary or continuous
     if(binary){
       family <- "binomial"
@@ -1342,7 +1373,7 @@ setMethod("scanAssoc",
     } else {
       family <- "gaussian"
     }
-    out <- .doGLM(df = df, family = family)  # Perform GLM
+    out <- .doGLM(df = df, null_df = null_df, family = family)  # Perform GLM
   }
 
   return(out)  # Return the result of the regression analysis
@@ -2819,6 +2850,10 @@ setMethod("recalcAssoc",
   } else {
     na_val <- 3
   }
+  null_formula <- .get_data(object, node = "lazygas/scan/null_formula")
+  if(null_formula == "NULL"){
+    null_formula <- NULL
+  }
 
   out <- list(
     geno = geno,
@@ -2829,6 +2864,7 @@ setMethod("recalcAssoc",
     conv_fun = eval(parse(text = .get_data(object,
                                            node = "lazygas/scan/conv_fun"))),
     formula = .get_data(object, node = "lazygas/scan/formula"),
+    null_formula = null_formula,
     na_val = na_val,
     peakcall = peakcall,
     peak_variant_id = peak_variant_id,
@@ -2946,6 +2982,10 @@ setMethod("recalcAssoc",
                        phe = peak_obj$pheno,
                        conv_fun = peak_obj$conv_fun,
                        formula = peak_obj$formula)
+  }
+
+  if(!is.null(peak_obj$null_formula)){
+    null_df$fml <- paste(null_df$fml, sub(".*~", "+", peak_obj$null_formula))
   }
 
   if(peak_obj$geno_format == "haplotype"){
