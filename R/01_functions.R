@@ -898,6 +898,15 @@ setMethod("getGenoPerMarker",
             }
 
             out <- .get_data(object = object, node = path, sel = selection)
+            if(geno_format %in% "haplotype"){
+              out[out == 0] <- NA
+
+            } else if(geno_format %in% "dosage"){
+              out[out == 63] <- NA
+
+            } else {
+              out[out == 3] <- NA
+            }
             return(out)
           }
 )
@@ -1183,7 +1192,7 @@ setMethod("scanAssoc",
     na_val <- 63
 
   } else {
-    na_val <- 2
+    na_val <- 3
   }
 
   if(method == "glm"){

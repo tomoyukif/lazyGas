@@ -1,3 +1,6 @@
+Changes in version 0.4.12 (2025-10-20)
++ Minor bug fix in getGenoPerMarker()
+
 Changes in version 0.4.11 (2025-08-13)
 + Add argument to change the null model in the regression.
 
