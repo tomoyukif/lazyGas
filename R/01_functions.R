@@ -1051,6 +1051,7 @@ makeConvFun <-  function(geno_format = c("genotype", "corrected", "dosage", "hap
 #' @param out_fn Prefix of output file name
 #' @param formula The formula of the regression model
 #' @param conv_fun The function to convert genotype data to a model matrix for the regression
+#' @param fixed_effect A data.frame of fixed effect(s) incorporated in the regression model. The column names must match the terms specified in `formula` and `null_formula.` The number of rows must match the number of samples.
 #'
 #' @importFrom gdsfmt apply.gdsn objdesp.gdsn
 #'
@@ -1060,6 +1061,7 @@ setGeneric("scanAssoc", function(object,
                                  formula = "phe ~ add",
                                  null_formula = NULL,
                                  conv_fun = NULL,
+                                 fixed_effect = NULL,
                                  geno_format = c("genotype", "corrected", "dosage", "haplotype"),
                                  kruskal = NULL,
                                  method = c("glm", "mlm"),
@@ -1073,6 +1075,7 @@ setMethod("scanAssoc",
                    formula = "phe ~ add",
                    null_formula = NULL,
                    conv_fun = NULL,
+                   fixed_effect = NULL,
                    geno_format = c("genotype", "corrected", "dosage", "haplotype"),
                    kruskal = NULL,
                    method = c("glm", "mlm")){
@@ -1089,8 +1092,35 @@ setMethod("scanAssoc",
             }
 
             if(is.null(conv_fun)){
-              formula <- formula("phe ~ add")  # Define the formula for regression
+              formula <- "add"  # Define the formula for regression
               null_formula <- NULL
+            }
+
+            if(!is.null(null_formula)){
+              formula_terms <- unlist(strsplit(formula, "\\+|\\*|\\:"))
+              formula_terms <- gsub("\\s", "", formula_terms)
+              null_formula_terms <- unlist(strsplit(null_formula, "\\+|\\*|\\:"))
+              null_formula_terms <- gsub("\\s", "", null_formula_terms)
+              check <- all(null_formula_terms %in% formula_terms)
+              if(!check){
+                stop("All terms in null_formula must be included in formula.",
+                     call. = FALSE)
+              }
+            }
+
+            if(!is.null(fixed_effect)){
+              terms <- unlist(strsplit(formula, "\\+|\\*|\\:"))
+              terms <- gsub("\\s", "", terms)
+              if(!is.null(null_formula)){
+                null_formula_terms <- unlist(strsplit(null_formula, "\\+|\\*|\\:"))
+                null_formula_terms <- gsub("\\s", "", null_formula_terms)
+                terms <- c(terms, null_formula_terms)
+              }
+              check <- all(names(fixed_effect) %in% terms)
+              if(!check){
+                stop("All terms in fixed_effect must be included in formula.",
+                     call. = FALSE)
+              }
             }
 
             # Notify the user of the phenotypes being analyzed
@@ -1121,6 +1151,7 @@ setMethod("scanAssoc",
                                   conv_fun = conv_fun,
                                   formula = formula,
                                   null_formula = null_formula,
+                                  fixed_effect = fixed_effect,
                                   dokruskal = dokruskal,
                                   i_pheno_names = i_pheno_names,
                                   binary = binary,
@@ -1132,6 +1163,7 @@ setMethod("scanAssoc",
                                    kruskal = kruskal,
                                    formula = formula,
                                    null_formula = null_formula,
+                                   fixed_effect = fixed_effect,
                                    conv_fun = conv_fun,
                                    geno_format = geno_format)
           }
@@ -1161,6 +1193,7 @@ setMethod("scanAssoc",
                                 conv_fun,
                                 formula,
                                 null_formula,
+                                fixed_effect,
                                 dokruskal,
                                 i_pheno_names,
                                 binary,
@@ -1209,6 +1242,7 @@ setMethod("scanAssoc",
                            conv_fun = conv_fun,
                            formula = formula,
                            null_formula = null_formula,
+                           fixed_effect = fixed_effect,
                            dokruskal = dokruskal)
     # Fill NA values
     p_values <- .fill.na(p_values = p_values)
@@ -1240,7 +1274,11 @@ setMethod("scanAssoc",
                       A2 = sub(".+,", "", allele))
     bed_mat <- as.bed.matrix(x = gen, fam = fam, bim = bim)
     k <- GRM(x = bed_mat)
-    p_values <- association.test(x = bed_mat, Y = i_pheno, K = k, p = 2,
+    if(is.null(fixed_effect)){
+      fixed_effect <- matrix(1, nrow(bed_mat))
+    }
+    p_values <- association.test(x = bed_mat, Y = i_pheno, X = fixed_effect,
+                                 K = k, p = 2,
                                  eigenK = eigen(k), test = "wald",
                                  method = "lmm", response = "quantitative")
     p_values <- cbind(P.model = p_values$p,
@@ -1285,6 +1323,7 @@ setMethod("scanAssoc",
                                    kruskal,
                                    formula,
                                    null_formula,
+                                   fixed_effect,
                                    conv_fun,
                                    geno_format) {
   .create_gdsn(root_node = object$root,
@@ -1312,6 +1351,18 @@ setMethod("scanAssoc",
   if(is.null(null_formula)){
     null_formula <- "NULL"
   }
+
+  if(is.null(fixed_effect)){
+    fixed_effect <- "NULL"
+  }
+
+  .create_gdsn(root_node = object$root,
+               target_node = "lazygas/scan",
+               new_node = "fixed_effect",
+               val = fixed_effect,
+               storage = "float",
+               valdim = dim(fixed_effect),
+               attr = list(col_names = names(fixed_effect)))
 
   .create_gdsn(root_node = object$root,
                target_node = "lazygas/scan",
@@ -1344,6 +1395,7 @@ setMethod("scanAssoc",
                         conv_fun,
                         formula,
                         null_formula,
+                        fixed_effect,
                         dokruskal){
   g[g == na_val] <- NA
   if(all(is.na(g))){
@@ -1367,11 +1419,18 @@ setMethod("scanAssoc",
                   conv_fun = conv_fun,
                   formula = formula)  # Create a data frame for GLM
 
+    if(!is.null(fixed_effect)){
+      df$df <- cbind(df$df, fixed_effect)
+    }
+
     if(!is.null(null_formula)){
       null_df <- .makeDF(g = g,
                          phe = pheno,
                          conv_fun = conv_fun,
                          formula = null_formula)  # Create a data frame for GLM
+      if(!is.null(fixed_effect)){
+        null_df$df <- cbind(null_df$df, fixed_effect)
+      }
     } else {
       null_df <- NULL
     }
@@ -2860,9 +2919,20 @@ setMethod("recalcAssoc",
   } else {
     na_val <- 3
   }
+
   null_formula <- .get_data(object, node = "lazygas/scan/null_formula")
   if(null_formula == "NULL"){
     null_formula <- NULL
+  }
+
+  fixed_effect <- .get_data(object, node = "lazygas/scan/fixed_effect")
+  if(fixed_effect == "NULL"){
+    fixed_effect <- NULL
+  } else {
+    fixed_effect <- as.data.frame(fixed_effect)
+    col_names <- get.attr.gdsn(node = index.gdsn(node = object$root,
+                                                 path = "lazygas/scan/fixed_effect"))
+    colnames(fixed_effect) <- col_names
   }
 
   out <- list(
@@ -2875,6 +2945,7 @@ setMethod("recalcAssoc",
                                            node = "lazygas/scan/conv_fun"))),
     formula = .get_data(object, node = "lazygas/scan/formula"),
     null_formula = null_formula,
+    fixed_effect = fixed_effect,
     na_val = na_val,
     peakcall = peakcall,
     peak_variant_id = peak_variant_id,
@@ -2948,9 +3019,12 @@ setMethod("recalcAssoc",
   #
   # } else if(mode == "composite"){
   if(mode == "composite"){
+    formula_terms <- unlist(strsplit(peak_obj$formula, split = "\\+|\\*|\\:"))
+    formula_terms <- gsub("\\s", "", formula_terms)
     null_df <- NULL
-    for(j in query_peak){
-      index <- peak_obj$peak_variant_id %in% j
+    null_fml <- NULL
+    for(j in seq_along(query_peak)){
+      index <- peak_obj$peak_variant_id %in% query_peak[j]
       tmp_df <- .makeDF(g = peak_obj$geno[, index],
                         phe = peak_obj$pheno,
                         conv_fun = peak_obj$conv_fun,
@@ -2963,9 +3037,17 @@ setMethod("recalcAssoc",
         names(tmp_df$df)[-1] <- paste(names(tmp_df$df)[-1], j, sep = "_")
         null_df$df <- cbind(null_df$df, subset(tmp_df$df, select = -phe))
       }
-      null_df$fml <- paste0("phe ~ ",
-                            paste(names(null_df$df)[-1], collapse = " + "))
+      add_fml <- peak_obj$formula
+      for(k in seq_along(formula_terms)){
+        add_fml <- gsub(formula_terms[k], paste(formula_terms[k], j, sep = "_"), add_fml)
+      }
+      if(is.null(null_fml)){
+        null_fml <- paste0("phe ~ ", add_fml)
+      } else {
+        null_fml <- paste(null_fml, add_fml, sep = "+")
+      }
     }
+    null_df$fml <- formula(null_fml)
 
     if(is.null(subject_peak)){
       index <- peak_obj$peak_variant_id %in% query_peak
@@ -2988,15 +3070,20 @@ setMethod("recalcAssoc",
     } else {
       g <- peak_obj$geno[, index]
     }
+
+    if(!is.null(peak_obj$null_formula)){
+      fml <- peak_obj$null_formula
+
+    } else {
+      fml <- peak_obj$formula
+    }
+
     null_df <- .makeDF(g = g,
                        phe = peak_obj$pheno,
                        conv_fun = peak_obj$conv_fun,
-                       formula = peak_obj$formula)
+                       formula = fml)
   }
 
-  if(!is.null(peak_obj$null_formula)){
-    null_df$fml <- paste(null_df$fml, sub(".*~", "+", peak_obj$null_formula))
-  }
 
   if(peak_obj$geno_format == "haplotype"){
     target_geno <- peak_obj$geno[, , !index]
@@ -3051,6 +3138,11 @@ setMethod("recalcAssoc",
 
                          } else {
                            family <- "gaussian"
+                         }
+
+                         if(!is.null(peak_obj$fixed_effect)){
+                           df$df <- cbind(df$df, peak_obj$fixed_effect)
+                           null_df$df <- cbind(null_df$df, peak_obj$fixed_effect)
                          }
 
                          out <- .doGLM(df = df,

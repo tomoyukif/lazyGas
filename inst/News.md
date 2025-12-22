@@ -1,3 +1,6 @@
+Changes in version 0.4.13 (2025-12-22)
++ Add argument to add fixed effects in the regression model.
+
 Changes in version 0.4.12 (2025-10-20)
 + Minor bug fix in getGenoPerMarker()
 
