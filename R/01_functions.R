@@ -1110,7 +1110,7 @@ setMethod("scanAssoc",
                 terms <- names(conv_fun(1))
                 check <- all(null_formula_terms %in% terms)
                 if(!check){
-                  stop("The output of conv_fun does not contain term(s) appeared in null_formula.\nYou may need to specify fixed_effect")
+                  stop("The output of conv_fun does not contain term(s) appeared in null_formula.\nYou may need to specify fixed_effect", call. = FALSE)
                 }
               }
             }
