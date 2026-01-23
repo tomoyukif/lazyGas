@@ -9,6 +9,7 @@ scanAssoc(
   formula = "phe ~ add",
   null_formula = NULL,
   conv_fun = NULL,
+  fixed_effect = NULL,
   geno_format = c("genotype", "corrected", "dosage", "haplotype"),
   kruskal = NULL,
   method = c("glm", "mlm"),
@@ -21,6 +22,8 @@ scanAssoc(
 \item{formula}{The formula of the regression model}
 
 \item{conv_fun}{The function to convert genotype data to a model matrix for the regression}
+
+\item{fixed_effect}{A data.frame of fixed effect(s) incorporated in the regression model. The column names must match the terms specified in \code{formula} and \code{null_formula.} The number of rows must match the number of samples.}
 
 \item{out_fn}{Prefix of output file name}
 }

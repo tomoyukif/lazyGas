@@ -11,7 +11,7 @@ user work with this class object.
 }
 \details{
 The \code{LazyGas} class is an extention of \code{GbsrGenotypeData} in the
-\link{GBScleanR} package.
+\link[GBScleanR:GBScleanR]{GBScleanR::GBScleanR} package.
 }
 \section{Slots}{
 

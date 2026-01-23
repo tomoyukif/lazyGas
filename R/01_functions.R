@@ -1121,6 +1121,11 @@ setMethod("scanAssoc",
                 stop("All terms in fixed_effect must be included in formula.",
                      call. = FALSE)
               }
+            } else {
+              if(!is.null(null_formula)){
+                warnings("null_formula was specified without fixed_effect.",
+                         "Please ensure all terms in null_formula are covered by cov_func.")
+              }
             }
 
             # Notify the user of the phenotypes being analyzed
@@ -1353,7 +1358,7 @@ setMethod("scanAssoc",
   }
 
   if(is.null(fixed_effect)){
-    fixed_effect <- "NULL"
+    fixed_effect <- matrix(NA, nrow = 1, ncol = 1)
   }
 
   .create_gdsn(root_node = object$root,
@@ -3057,7 +3062,7 @@ setMethod("recalcAssoc",
       index <- !peak_obj$peak_variant_id %in% subject_peak
     }
 
-  }  else if(mode == "excl")  {
+  }  else if(mode == "excl"){
     index <- peak_obj$peak_variant_id %in% query_peak
     subject_peak <- peak_obj$peak_variant_id[!index]
 
@@ -3140,7 +3145,7 @@ setMethod("recalcAssoc",
                            family <- "gaussian"
                          }
 
-                         if(!is.null(peak_obj$fixed_effect)){
+                         if(!all(is.na(peak_obj$fixed_effect))){
                            df$df <- cbind(df$df, peak_obj$fixed_effect)
                            null_df$df <- cbind(null_df$df, peak_obj$fixed_effect)
                          }
