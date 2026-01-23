@@ -1116,6 +1116,12 @@ setMethod("scanAssoc",
             }
 
             if(!is.null(fixed_effect)){
+              check <- all(apply(fixed_effect, 2, is.numeric))
+              if(!check){
+                stop("All columns in fixed_effect must be numeric.",
+                     call. = FALSE)
+              }
+
               terms <- unlist(strsplit(formula, "\\+|\\*|\\:"))
               terms <- gsub("\\s", "", formula_terms)
               if(!is.null(null_formula)){
@@ -2936,8 +2942,9 @@ setMethod("recalcAssoc",
   }
 
   fixed_effect <- .get_data(object, node = "lazygas/scan/fixed_effect")
-  if(fixed_effect == "NULL"){
+  if(length(fixed_effect) == 1){
     fixed_effect <- NULL
+
   } else {
     fixed_effect <- as.data.frame(fixed_effect)
     col_names <- get.attr.gdsn(node = index.gdsn(node = object$root,
