@@ -6,7 +6,7 @@
 \alias{LazyGas}
 \title{Class \code{LazyGas}}
 \description{
-The \code{LazyGas} class is the main class of \link{lazyGas} and
+The \code{LazyGas} class is the main class of \code{lazyGas} and
 user work with this class object.
 }
 \details{

@@ -266,7 +266,7 @@ open_snpeff <- function(gds_fn) {
 # Define the LazyGas class object
 #' Class `LazyGas`
 #'
-#' The `LazyGas` class is the main class of [lazyGas] and
+#' The `LazyGas` class is the main class of `lazyGas` and
 #' user work with this class object.
 #'
 #' @details
@@ -1106,11 +1106,18 @@ setMethod("scanAssoc",
                 stop("All terms in null_formula must be included in formula.",
                      call. = FALSE)
               }
+              if(is.null(fixed_effect)){
+                terms <- names(conv_fun(1))
+                check <- all(null_formula_terms %in% terms)
+                if(!check){
+                  stop("The output of conv_fun does not contain term(s) appeared in null_formula.\nYou may need to specify fixed_effect")
+                }
+              }
             }
 
             if(!is.null(fixed_effect)){
               terms <- unlist(strsplit(formula, "\\+|\\*|\\:"))
-              terms <- gsub("\\s", "", terms)
+              terms <- gsub("\\s", "", formula_terms)
               if(!is.null(null_formula)){
                 null_formula_terms <- unlist(strsplit(null_formula, "\\+|\\*|\\:"))
                 null_formula_terms <- gsub("\\s", "", null_formula_terms)
@@ -1118,13 +1125,8 @@ setMethod("scanAssoc",
               }
               check <- all(names(fixed_effect) %in% terms)
               if(!check){
-                stop("All terms in fixed_effect must be included in formula.",
+                stop("All terms in fixed_effect must be included in formula and null_formula.",
                      call. = FALSE)
-              }
-            } else {
-              if(!is.null(null_formula)){
-                warnings("null_formula was specified without fixed_effect.",
-                         "Please ensure all terms in null_formula are covered by cov_func.")
               }
             }
 
@@ -1358,7 +1360,10 @@ setMethod("scanAssoc",
   }
 
   if(is.null(fixed_effect)){
-    fixed_effect <- matrix(NA, nrow = 1, ncol = 1)
+    fixed_effect <- matrix(data = NA, nrow = 1, ncol = 1)
+
+  } else {
+    fixed_effect <- as.matrix(fixed_effect)
   }
 
   .create_gdsn(root_node = object$root,
@@ -3076,13 +3081,7 @@ setMethod("recalcAssoc",
       g <- peak_obj$geno[, index]
     }
 
-    if(!is.null(peak_obj$null_formula)){
-      fml <- peak_obj$null_formula
-
-    } else {
-      fml <- peak_obj$formula
-    }
-
+    fml <- peak_obj$formula
     null_df <- .makeDF(g = g,
                        phe = peak_obj$pheno,
                        conv_fun = peak_obj$conv_fun,
@@ -3136,6 +3135,7 @@ setMethod("recalcAssoc",
                            df$df <- cbind(df$df, tmp)
                            df$fml <- paste(c(df$fml, names(tmp)),
                                            collapse = " + ")
+
                          }
 
                          if(peak_obj$binary){
