@@ -1367,19 +1367,24 @@ setMethod("scanAssoc",
 
   if(is.null(fixed_effect)){
     fixed_effect <- matrix(data = NA, nrow = 1, ncol = 1)
+    .create_gdsn(root_node = object$root,
+                 target_node = "lazygas/scan",
+                 new_node = "fixed_effect",
+                 val = fixed_effect,
+                 storage = "float",
+                 valdim = dim(fixed_effect))
 
   } else {
     fixed_effect_attr <- names(fixed_effect)
     fixed_effect <- as.matrix(fixed_effect)
+    .create_gdsn(root_node = object$root,
+                 target_node = "lazygas/scan",
+                 new_node = "fixed_effect",
+                 val = fixed_effect,
+                 storage = "float",
+                 valdim = dim(fixed_effect),
+                 attr = list(col_names = fixed_effect_attr))
   }
-
-  .create_gdsn(root_node = object$root,
-               target_node = "lazygas/scan",
-               new_node = "fixed_effect",
-               val = fixed_effect,
-               storage = "float",
-               valdim = dim(fixed_effect),
-               attr = list(col_names = fixed_effect_attr))
 
   .create_gdsn(root_node = object$root,
                target_node = "lazygas/scan",
