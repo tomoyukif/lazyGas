@@ -1,3 +1,6 @@
+Changes in version 0.4.16 (2026-02-02)
++ Minor bug fix.
+
 Changes in version 0.4.16 (2026-01-23)
 + Add script to notify users if null_formula is specified without fixed_effect.
 
