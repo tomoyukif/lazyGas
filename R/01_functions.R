@@ -2479,6 +2479,9 @@ setMethod("haploPlot",
       hap <- factor(hap, levels = sort(unique(hap)))
     }
 
+    hap[is.na(hap)] <- "NA"
+    hap[hap == ""] <- "NA"
+
     # Get phenotype data
     pheno <- getPheno(object = object)
     df <- data.frame(y = pheno$pheno[, pheno_name], x = hap)
@@ -3782,7 +3785,7 @@ makeInteractiveSummary <- function(object, pheno,
                                    what = c("scan_png", "peakcall", "recalc", "groups", "recalc_haplo", "candidate"),
                                    out_fn){
   what <- match.arg(arg = what,
-                    choices = c("scan", "scan_png", "peakcall", "recalc", "groups", "preakcall_haplo", "recalc_haplo", "candidate"),
+                    choices = c("scan", "scan_png", "peakcall", "recalc", "groups", "peakcall_haplo", "recalc_haplo", "candidate"),
                     several.ok = TRUE)
 
   tag_list <- tagList(div(h1(pheno), style = "text-align:center"))
@@ -3843,7 +3846,7 @@ makeInteractiveSummary <- function(object, pheno,
     }
   }
 
-  if("preakcall_haplo" %in% what){
+  if("peakcall_haplo" %in% what){
     plot_hap <- haploPlot(object = object, pheno = pheno, recalc = FALSE)
     if(!is.null(plot_hap)){
       tag_list <- tagList(tag_list,
