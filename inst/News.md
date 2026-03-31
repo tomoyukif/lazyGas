@@ -1,4 +1,4 @@
-Changes in version 0.4.19 (2026-02-03)
+Changes in version 0.4.20 (2026-03-31)
 + Minor bug fix.
 
 Changes in version 0.4.16 (2026-01-23)

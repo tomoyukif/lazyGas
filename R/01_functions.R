@@ -339,7 +339,8 @@ setMethod("closeGDS",
 #' `snp.chromosome` and `snp.marker` must be supplied.
 #'
 #' @importFrom GBScleanR loadGDS countGenotype
-#' @importFrom gdsfmt  exist.gdsn
+#' @importClassesFrom GBScleanR GbsrGenotypeData
+#' @importFrom gdsfmt exist.gdsn objdesp.gdsn
 #'
 #' @export
 #'
@@ -348,14 +349,22 @@ buildLazyGas <- function(gds_fn = "",
                          overwrite = FALSE,
                          create_gds = NULL){
   if(!all(sapply(X = create_gds, FUN = is.null))){
-    .createGbsrGDS(gds_fn = gds_fn, create_gds = create_gds)
+    out <- .createGDS(gds_fn = gds_fn, create_gds = create_gds)
+    out <- new(Class = "GbsrGenotypeData", out)
+    nmar <- objdesp.gdsn(index.gdsn(node = out$root, "variant.id"))$dim
+    nsam <- objdesp.gdsn(index.gdsn(node = out$root, "sample.id"))$dim
+    out@marker <- data.frame(valid = rep(TRUE, nmar))
+    out@sample <- data.frame(valid = rep(TRUE, nsam))
+
+  } else {
+    # Load the GDS file and apply the load filter if specified
+    out <- openfn.gds(filename = gds_fn, readonly = FALSE)
+    out <- new(Class = "GbsrGenotypeData", out)
+    nmar <- objdesp.gdsn(index.gdsn(node = out$root, "variant.id"))$dim
+    nsam <- objdesp.gdsn(index.gdsn(node = out$root, "sample.id"))$dim
+    out@marker <- data.frame(valid = rep(TRUE, nmar))
+    out@sample <- data.frame(valid = rep(TRUE, nsam))
   }
-
-  # Load the GDS file and apply the load filter if specified
-  out <- loadGDS(x = gds_fn, load_filter = load_filter)
-
-  # Count the genotypes in the GDS object
-  out <- countGenotype(object = out)
 
   # Check if the "lazygas" node already exists in the GDS file
   if(exist.gdsn(node = out$root, path = "lazygas")){
@@ -382,7 +391,7 @@ buildLazyGas <- function(gds_fn = "",
 #' @importFrom SNPRelate snpgdsCreateGeno
 #' @importFrom SeqArray seqSNP2GDS
 #' @importFrom gdsfmt openfn.gds closefn.gds addfolder.gdsn add.gdsn index.gdsn
-.createGbsrGDS <- function(gds_fn, create_gds){
+.createGDS <- function(gds_fn, create_gds){
   check <- list(genotype = TRUE,
                 haplotype = TRUE,
                 dosage = TRUE)
@@ -458,52 +467,83 @@ buildLazyGas <- function(gds_fn = "",
     create_gds$snp.allele <- sub(",", "/",  create_gds$snp.allele)
   }
 
-  create_gds$genotype[is.na(create_gds$genotype)] <- 3
-  snpgdsCreateGeno(gds.fn = paste0(gds_fn, ".temp"),
-                   genmat = create_gds$genotype,
-                   sample.id = create_gds$sample.id,
-                   snp.id = create_gds$snp.id,
-                   snp.rs.id = create_gds$snp.rs.id,
-                   snp.chromosome = create_gds$snp.chromosome,
-                   snp.position = create_gds$snp.position,
-                   snp.allele = create_gds$snp.allele,
-                   snpfirstdim = FALSE,
-                   compress.annotation = "LZMA_RA",
-                   compress.geno = "LZMA_RA")
+  gds <- createfn.gds(filename = gds_fn)
 
-  seqSNP2GDS(gds.fn = paste0(gds_fn, ".temp"), out.fn = gds_fn)
-  unlink(x = paste0(gds_fn, ".temp"), force = TRUE)
+  put.attr.gdsn(node = index.gdsn(gds, ""),
+                name = "FileFormat", val = "SEQ_ARRAY")
+  put.attr.gdsn(node = index.gdsn(gds, ""),
+                name = "FileVersion", val = "v1.0")
 
-  gds <- openfn.gds(gds_fn, readonly = FALSE)
+  addfolder.gdsn(node = index.gdsn(gds, ""), name = "description")
+
+  .create_gdsn(root_node = gds$root,
+               target_node = "",
+               new_node = "sample.id",
+               val = create_gds$sample.id,
+               storage = "string")
+
+  .create_gdsn(root_node = gds$root,
+               target_node = "",
+               new_node = "variant.id",
+               val = create_gds$snp.id,
+               storage = "int32")
+
+  .create_gdsn(root_node = gds$root,
+               target_node = "",
+               new_node = "position",
+               val = create_gds$snp.position,
+               storage = "int32")
+
+  .create_gdsn(root_node = gds$root,
+               target_node = "",
+               new_node = "chromosome",
+               val = create_gds$snp.chromosome,
+               storage = "string")
+
+  .create_gdsn(root_node = gds$root,
+               target_node = "",
+               new_node = "allele",
+               val = create_gds$snp.allele,
+               storage = "string")
+
+  if(!check$genotype){
+    addfolder.gdsn(node = index.gdsn(gds, ""), name = "genotype")
+    genotype <- array(0L, dim = c(2L, dim(create_gds$genotype)))
+    gc(); gc()
+    genotype[1L, , ] <- as.integer(create_gds$genotype != 0L)
+    gc(); gc()
+    genotype[2L, , ] <- as.integer(create_gds$genotype == 2L)
+    gc(); gc()
+    .create_gdsn(root_node = gds,
+                 target_node = "genotype",
+                 new_node = "data",
+                 val = genotype,
+                 storage = "bit2")
+  }
 
   if(!check$haplotype){
-    create_gds$haplotype[is.na(create_gds$haplotype)] <- 63
-    if(length(dim(create_gds$haplotype)) == 2){
-      rep_row <- rep(seq_len(nrow(create_gds$haplotype)), each = 2)
-      create_gds$haplotype <- create_gds$haplotype[rep_row, ]
-      create_gds$haplotype <- array(data = create_gds$haplotype,
-                                    dim = c(2,
-                                            nrow(create_gds$haplotype) / 2,
-                                            ncol(create_gds$haplotype)))
-
-    }
+    create_gds$haplotype[is.na(create_gds$haplotype)] <- 63L
+    gc(); gc()
     addfolder.gdsn(node = index.gdsn(gds, "annotation/format"), name = "HAP")
-    add.gdsn(index.gdsn(gds, "annotation/format/HAP"), name = "data",
-             val = create_gds$haplotype,
-             storage = "bit6",
-             compress = "LZMA_RA")
+    .create_gdsn(root_node = gds,
+                 target_node = "annotation/format/EDS",
+                 new_node = "data",
+                 val = create_gds$haplotype,
+                 storage = "bit6")
   }
 
   if(!check$dosage){
-    create_gds$dosage[is.na(create_gds$dosage)] <- 63
+    create_gds$dosage[is.na(create_gds$dosage)] <- 63L
+    gc(); gc()
     addfolder.gdsn(node = index.gdsn(gds, "annotation/format"), name = "EDS")
-    add.gdsn(index.gdsn(gds, "annotation/format/EDS"), name = "data",
-             val = create_gds$dosage,
-             storage = "bit6",
-             compress = "LZMA_RA")
+    .create_gdsn(root_node = gds,
+                 target_node = "annotation/format/EDS",
+                 new_node = "data",
+                 val = create_gds$dosage,
+                 storage = "bit6")
   }
 
-  closefn.gds(gds)
+  return(gds)
 }
 
 #' Assign phenotype data to a LazyGas object
@@ -1803,6 +1843,7 @@ setMethod("plotManhattan",
 setGeneric("callPeakBlock", function(object,
                                      signif = 0.05,
                                      threshold = 0.8,
+                                     limit_peakcall = Inf,
                                      n_threads = NULL,
                                      ...)
   standardGeneric("callPeakBlock"))
@@ -1813,6 +1854,7 @@ setMethod("callPeakBlock",
           function(object,
                    signif,
                    threshold,
+                   limit_peakcall,
                    n_threads){
             # Check if scan data exists in the GDS object
             .check_scan_data_exists(object = object)
@@ -1824,7 +1866,8 @@ setMethod("callPeakBlock",
             .perform_peak_calling(object = object,
                                   signif = signif,
                                   threshold = threshold,
-                                  n_threads = n_threads)
+                                  n_threads = n_threads,
+                                  limit_peakcall = limit_peakcall)
           }
 )
 
@@ -1858,21 +1901,31 @@ setMethod("callPeakBlock",
 }
 
 ## Function to perform peak calling for each phenotype
-.perform_peak_calling <- function(object, signif, threshold, n_threads) {
+.perform_peak_calling <- function(object,
+                                  signif,
+                                  threshold,
+                                  n_threads,
+                                  limit_peakcall) {
   for(i in seq_along(object@lazydata$pheno_names)){
     message("Peak calling for the following phenotype: ", object@lazydata$pheno_names[i])
     .peakcaller(object = object,
                 signif = signif,
                 threshold = threshold,
                 pheno_name = object@lazydata$pheno_names[i],
-                n_threads = n_threads)
+                n_threads = n_threads,
+                limit_peakcall = limit_peakcall)
   }
 }
 
 
 
 ## Main peakcaller function
-.peakcaller <- function(object, signif, threshold, pheno_name, n_threads){
+.peakcaller <- function(object,
+                        signif,
+                        threshold,
+                        pheno_name,
+                        n_threads,
+                        limit_peakcall){
   pvalues <- .get_and_filter_pvalues(object = object,
                                      pheno_name = pheno_name,
                                      signif = signif)
@@ -1890,7 +1943,8 @@ setMethod("callPeakBlock",
               variables = variables,
               pheno_name = pheno_name,
               threshold = threshold,
-              n_threads = n_threads)
+              n_threads = n_threads,
+              limit_peakcall = limit_peakcall)
 }
 
 ## Function to get and filter significant p-values
@@ -1927,7 +1981,13 @@ setMethod("callPeakBlock",
 }
 
 ## Function to process peaks in a loop
-.call_peaks <- function(object, pvalues, variables, pheno_name, threshold, n_threads) {
+.call_peaks <- function(object,
+                        pvalues,
+                        variables,
+                        pheno_name,
+                        threshold,
+                        n_threads,
+                        limit_peakcall) {
   peak_id <- 0
 
   # Get the genotype format from the object
@@ -1936,6 +1996,10 @@ setMethod("callPeakBlock",
   # Loop until there are no more p-values to process
   while (nrow(pvalues) > 0) {
     peak_id <- peak_id + 1
+    if(peak_id > limit_peakcall){
+      message("The number of peaks hit the limit.")
+      break
+    }
     message("Calling peak: ", peak_id)
 
     # Identify the peak information
@@ -2462,10 +2526,11 @@ setMethod("haploPlot",
   # Loop through each unique peak ID
   for(i_peak in seq_along(peak_info$peak_height)){
     valid <- var_id %in% peak_info$peak_id[i_peak]
+    object@marker$valid <- valid
 
     # Get the haplotype or genotype data based on the format
     if(geno_format == "haplotype"){
-      hap <- getHaplotype(object = object)[, , valid]
+      hap <- getHaplotype(object = object)
       hap <- apply(X = hap, MARGIN = 2, FUN = function(x){
         return(paste(sort(x), collapse= "|"))
       })
@@ -2475,7 +2540,7 @@ setMethod("haploPlot",
                       dosage = "dosage",
                       corrected = "cor",
                       genotype = "raw")
-      hap <- getGenotype(object = object, node = node)[, valid]
+      hap <- getGenotype(object = object, node = node)
       hap <- factor(hap, levels = sort(unique(hap)))
     }
 
@@ -3693,7 +3758,7 @@ setMethod("listCandidate",
     hit <- match(out$Pos, peakblock$Pos)
     out$negLog10P <- peakblock$negLog10P[hit]
     out <- out[!out[, 2] %in% c("custom", "intergenic_region"), ]
-    if(length(out) == 0){
+    if(nrow(out) == 0){
       out <- NULL
     }
 
