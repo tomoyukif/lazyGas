@@ -10,10 +10,12 @@ Before installing `lazyGas`, ensure you have the following R packages installed:
 
 - `GBScleanR`
 - `ggplot2`
+- `arrow` (Parquet companion storage for association results)
+- `jsonlite`
 
 You can install these packages using the following commands in R:
 ```R
-install.packages("ggplot2")
+install.packages(c("ggplot2", "arrow", "jsonlite"))
 ```
 
 To install `GBScleanR`, please visit the [GitHub repository](https://github.com/tomoyukif/GBScleanR)
@@ -41,13 +43,23 @@ Below is a brief overview of how to use `lazyGas` to conduct a genetic associati
 
 ### Loading Input Data
 
-Load an input GDS file and build a `LazyGas` class object:
+Load an input GDS file and build a `LazyGas` class object.
+Genotypes stay in the GDS file; association results are written to a companion folder `path/to/your/input.lazygas/` (Parquet, default since v0.5.0):
+
 ```R
 library(lazyGas)
 library(GBScleanR)
 
 gds_fn <- "path/to/your/input.gds"
 lg <- buildLazyGas(gds_fn = gds_fn, load_filter = TRUE, overwrite = FALSE)
+# Optional: lazygas_store = "sqlite" for a single .lazygas.sqlite file
+# Optional: lazygas_store = "gds" for legacy storage inside the GDS file
+```
+
+To migrate existing results from a GDS `lazygas/` subtree after upgrading:
+
+```R
+lg <- importLazyGasResults(lg)
 ```
 
 ### Loading and Preprocessing Phenotype Data

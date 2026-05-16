@@ -87,37 +87,19 @@
 }
 
 # Retrieve a scan result for a phenotype
-#' @importFrom gdsfmt get.attr.gdsn objdesp.gdsn read.gdsn readex.gdsn index.gdsn
 .get_scan <- function(object, pheno_name, sel = NULL){
-  # Construct the scan node path for the specified phenotype
-  scan_node <- paste0("lazygas/scan/", pheno_name)
-
-  # Get the attribute names from the scan node
-  col_names <- get.attr.gdsn(node = index.gdsn(node = object$root, path = scan_node))
-  col_names <- col_names$colnames
-
-  # Check if selection criteria (sel) is provided
-  if(is.null(sel)){
-    # If selection criteria is not provided, read the entire scan node
-    out <- data.frame(getMarID(object = object),
-                      getChromosome(object = object),
-                      getPosition(object = object),
-                      read.gdsn(node = index.gdsn(node = object$root, path = scan_node)))
-    # Set the column names for the output data frame
-    colnames(out) <- c("variant_ID", "Chr", "Pos", col_names)
-  } else {
-    # If selection criteria is provided, read the scan node with the selection criteria
-    dim <- objdesp.gdsn(node = index.gdsn(node = object$root, path = scan_node))
-    sel <- list(rep(TRUE, dim$dim[1]), col_names %in% sel)
-    out <- data.frame(getMarID(object = object),
-                      getChromosome(object = object),
-                      getPosition(object = object),
-                      readex.gdsn(node = index.gdsn(node = object$root, path = scan_node), sel = sel))
-    # Set the column names for the output data frame based on the selection criteria
-    colnames(out) <- c("variant_ID", "Chr", "Pos", col_names[sel[[2]]])
+  scan_dat <- .store_read_scan_matrix(object, pheno_name, columns = sel)
+  if (is.null(scan_dat)) {
+    stop("No scan data for phenotype: ", pheno_name, call. = FALSE)
   }
-
-  # Return the retrieved scan data
+  out <- data.frame(
+    getMarID(object = object),
+    getChromosome(object = object),
+    getPosition(object = object),
+    scan_dat$matrix,
+    check.names = FALSE
+  )
+  colnames(out) <- c("variant_ID", "Chr", "Pos", scan_dat$colnames)
   return(out)
 }
 
@@ -126,94 +108,119 @@
 #' @importFrom dplyr right_join left_join
 #'
 .get_peakcall <- function(object, pheno_name, recalc = FALSE){
-  # Determine the paths for peaks and blocks based on whether recalculation is required
-  if(recalc){
-    peaks_gdsn <- "lazygas/recalc/peaks"
-    blocks_gdsn <- "lazygas/recalc/blocks"
-    peaks_col_names <- get.attr.gdsn(node = index.gdsn(node = object$root, path =  paste0(peaks_gdsn, "/", pheno_name)))
-    blocks_col_names <- get.attr.gdsn(node = index.gdsn(node = object$root, path =  paste0(blocks_gdsn, "/", pheno_name)))
+  section <- if (recalc) "recalc" else "peakcall"
 
-  } else {
-    peaks_gdsn <- "lazygas/peakcall/peaks"
-    blocks_gdsn <- "lazygas/peakcall/blocks"
-    peaks_col_names <- get.attr.gdsn(node = index.gdsn(node = object$root, path = peaks_gdsn))
-    blocks_col_names <- get.attr.gdsn(node = index.gdsn(node = object$root, path = blocks_gdsn))
+  if (.store_is_gds(object)) {
+    return(.get_peakcall_gds(object, pheno_name, recalc))
   }
 
-  # Retrieve the peaks data for the specified phenotype
-  peaks <- .get_data(object = object, node = paste0(peaks_gdsn, "/", pheno_name))
-  if(length(peaks) == 0){
+  peaks <- .store_read_peaks_df(object, section, pheno_name, "peaks")
+  if (is.null(peaks) || nrow(peaks) == 0L) {
     return(NULL)
   }
+  blocks <- .store_read_peaks_df(object, section, pheno_name, "blocks")
+  meta <- .store_peak_meta(object, section, pheno_name)
 
-  # Ensure the peaks data is in a data frame format
-  if(!is.matrix(peaks)){
-    peaks <- matrix(peaks, nrow = 1)
-    peaks <- data.frame(peaks)
-  } else {
-    if(recalc){
-      peaks <- data.frame(peaks)
-    } else {
-      peaks <- data.frame(t(peaks))
-    }
-  }
-  names(peaks) <- peaks_col_names$col_names
-
-  # Retrieve the blocks data for the specified phenotype
-  blocks <- .get_data(object = object, node = paste0(blocks_gdsn, "/", pheno_name))
-  if(!is.matrix(blocks)){
-    blocks <- matrix(blocks, nrow = 1)
-    blocks <- data.frame(blocks)
-
-  } else {
-    if(recalc){
-      blocks <- data.frame(blocks)
-
-    } else {
-      blocks <- data.frame(t(blocks))
-    }
-  }
-  names(blocks) <-blocks_col_names$col_names
-
-  # Add variant_ID to peaks data
   peaks$variant_ID <- peaks$peak_variant_ID
-
-  # Retrieve the scan results for the specified phenotype
   pvalues <- .get_scan(object = object, pheno_name = pheno_name, sel = c("FDR", "negLog10P"))
-  if(recalc){
-    # For recalculated data, join peaks and pvalues data
-    pvalues <- .get_scan(object = object, pheno_name = pheno_name, sel = c("FDR", "negLog10P"))
+
+  if (recalc) {
     pvalues <- subset(pvalues, select = variant_ID:Pos)
-    peaks_join <- left_join(x = peaks, y = pvalues, "variant_ID")
+    peaks_join <- left_join(x = peaks, y = pvalues, by = "variant_ID")
     names(peaks_join)[-(1:3)] <- paste0("peak_", names(peaks_join)[-(1:3)])
     peaks_join <- subset(peaks_join, select = -variant_ID)
-
-    # Join blocks and pvalues data
     blocks_join <- left_join(x = blocks, y = pvalues, by = "variant_ID")
     hit <- match(peaks_join$peak_variant_ID, blocks_join$variant_ID)
     peaks_join$peak_negLog10P <- blocks_join$negLog10P[hit]
-
-    # Right join peaks and blocks data
     out <- right_join(x = peaks_join, y = blocks_join, by = "peak_ID")
-
   } else {
-    # For non-recalculated data, join peaks and pvalues data
-    peaks_join <- left_join(x = peaks, y = pvalues, "variant_ID")
+    peaks_join <- left_join(x = peaks, y = pvalues, by = "variant_ID")
     names(peaks_join)[-(1:3)] <- paste0("peak_", names(peaks_join)[-(1:3)])
-    peaks_join <- subset(peaks_join, select = -c(variant_ID, peak_FDR))
-
-    # Join blocks and pvalues data
+  if ("peak_FDR" %in% names(peaks_join)) {
+      peaks_join <- subset(peaks_join, select = -c(variant_ID, peak_FDR))
+    } else {
+      peaks_join <- subset(peaks_join, select = -variant_ID)
+    }
     blocks_join <- left_join(x = blocks, y = pvalues, by = "variant_ID")
-
-    # Right join peaks and blocks data
     out <- right_join(x = peaks_join, y = blocks_join, by = "peak_ID")
   }
 
-  attributes(out) <- c(attributes(out),
-                       list(signif = peaks_col_names$signif,
-                            threshold = peaks_col_names$threshold))
-  # Return the final joined data
+  attributes(out) <- c(
+    attributes(out),
+    list(signif = meta$signif, threshold = meta$threshold)
+  )
   return(out)
+}
+
+.get_peakcall_gds <- function(object, pheno_name, recalc = FALSE){
+  if (recalc) {
+    peaks_gdsn <- "lazygas/recalc/peaks"
+    blocks_gdsn <- "lazygas/recalc/blocks"
+    peaks_col_names <- gdsfmt::get.attr.gdsn(
+      node = gdsfmt::index.gdsn(node = object$root,
+                                path = paste0(peaks_gdsn, "/", pheno_name))
+    )
+    blocks_col_names <- gdsfmt::get.attr.gdsn(
+      node = gdsfmt::index.gdsn(node = object$root,
+                                path = paste0(blocks_gdsn, "/", pheno_name))
+    )
+  } else {
+    peaks_gdsn <- "lazygas/peakcall/peaks"
+    blocks_gdsn <- "lazygas/peakcall/blocks"
+    peaks_col_names <- gdsfmt::get.attr.gdsn(
+      node = gdsfmt::index.gdsn(node = object$root, path = peaks_gdsn)
+    )
+    blocks_col_names <- gdsfmt::get.attr.gdsn(
+      node = gdsfmt::index.gdsn(node = object$root, path = blocks_gdsn)
+    )
+  }
+
+  peaks <- .get_data(object = object, node = paste0(peaks_gdsn, "/", pheno_name))
+  if (length(peaks) == 0) {
+    return(NULL)
+  }
+  if (!is.matrix(peaks)) {
+    peaks <- data.frame(matrix(peaks, nrow = 1))
+  } else if (recalc) {
+    peaks <- data.frame(peaks)
+  } else {
+    peaks <- data.frame(t(peaks))
+  }
+  names(peaks) <- peaks_col_names$col_names
+
+  blocks <- .get_data(object = object, node = paste0(blocks_gdsn, "/", pheno_name))
+  if (!is.matrix(blocks)) {
+    blocks <- data.frame(matrix(blocks, nrow = 1))
+  } else if (recalc) {
+    blocks <- data.frame(blocks)
+  } else {
+    blocks <- data.frame(t(blocks))
+  }
+  names(blocks) <- blocks_col_names$col_names
+
+  peaks$variant_ID <- peaks$peak_variant_ID
+  pvalues <- .get_scan(object = object, pheno_name = pheno_name, sel = c("FDR", "negLog10P"))
+  if (recalc) {
+    pvalues <- subset(pvalues, select = variant_ID:Pos)
+    peaks_join <- left_join(x = peaks, y = pvalues, by = "variant_ID")
+    names(peaks_join)[-(1:3)] <- paste0("peak_", names(peaks_join)[-(1:3)])
+    peaks_join <- subset(peaks_join, select = -variant_ID)
+    blocks_join <- left_join(x = blocks, y = pvalues, by = "variant_ID")
+    hit <- match(peaks_join$peak_variant_ID, blocks_join$variant_ID)
+    peaks_join$peak_negLog10P <- blocks_join$negLog10P[hit]
+    out <- right_join(x = peaks_join, y = blocks_join, by = "peak_ID")
+  } else {
+    peaks_join <- left_join(x = peaks, y = pvalues, by = "variant_ID")
+    names(peaks_join)[-(1:3)] <- paste0("peak_", names(peaks_join)[-(1:3)])
+    peaks_join <- subset(peaks_join, select = -c(variant_ID, peak_FDR))
+    blocks_join <- left_join(x = blocks, y = pvalues, by = "variant_ID")
+    out <- right_join(x = peaks_join, y = blocks_join, by = "peak_ID")
+  }
+  attributes(out) <- c(
+    attributes(out),
+    list(signif = peaks_col_names$signif, threshold = peaks_col_names$threshold)
+  )
+  out
 }
 
 
@@ -275,7 +282,8 @@ open_snpeff <- function(gds_fn) {
 #'
 #' @importClassesFrom GBScleanR GbsrGenotypeData
 #' @aliases  LazyGas-class LazyGas
-#' @slot lazydata A [list] object.
+#' @slot lazydata A [list] object (phenotype data).
+#' @slot store Companion storage configuration (`mode`, `path`, `gds_fn`).
 #'
 #' @examples
 #' # `buildLazyGas()` initialize the `LazyGas` object.
@@ -291,9 +299,12 @@ open_snpeff <- function(gds_fn) {
 #' @importFrom methods setClass slot
 #' @import GBScleanR
 #'
-setClass(Class = "LazyGas",
-         contains = "GbsrGenotypeData",
-         slots = c(lazydata = "list"))
+setClass(
+  Class = "LazyGas",
+  contains = "GbsrGenotypeData",
+  slots = c(lazydata = "list", store = "list"),
+  prototype = list(lazydata = list(), store = list())
+)
 
 ################################################################################
 # Inherited methods
@@ -301,10 +312,12 @@ setClass(Class = "LazyGas",
 setMethod("closeGDS",
           "LazyGas",
           function(object, verbose){
+            object <- .store_close(object)
             closefn.gds(gdsfile = object)
             if(verbose){
               message('The connection to the GDS file was closed.')
             }
+            invisible(object)
           }
 )
 
@@ -315,6 +328,8 @@ setMethod("closeGDS",
 #'
 #' @param gds_fn A path to a GDS file
 #' @param load_filter A logical value to indicate whether apply filrering stored in the input GDS file to samples and markers.
+#' @param overwrite If `TRUE`, replace existing lazyGas results in the companion store (or GDS `lazygas/` folder when `lazygas_store = "gds"`).
+#' @param lazygas_store Where to store association results: `"parquet"` (default companion folder `{stem}.lazygas/`), `"sqlite"`, `"gds"` (legacy GDS subtree), or `"auto"`.
 #' @param create_gds A named list to create a new GDS file with specified genotype and marker information. See the Details section.
 #'
 #' @details
@@ -340,51 +355,51 @@ setMethod("closeGDS",
 #'
 #' @importFrom GBScleanR loadGDS countGenotype
 #' @importClassesFrom GBScleanR GbsrGenotypeData
-#' @importFrom gdsfmt exist.gdsn objdesp.gdsn
+#' @importFrom gdsfmt closefn.gds exist.gdsn objdesp.gdsn
 #'
 #' @export
 #'
 buildLazyGas <- function(gds_fn = "",
                          load_filter = TRUE,
                          overwrite = FALSE,
-                         create_gds = NULL){
+                         create_gds = NULL,
+                         lazygas_store = c("parquet", "sqlite", "gds", "auto")){
   if(!all(sapply(X = create_gds, FUN = is.null))){
-    out <- .createGDS(gds_fn = gds_fn, create_gds = create_gds)
-    out <- new(Class = "GbsrGenotypeData", out)
-    nmar <- objdesp.gdsn(index.gdsn(node = out$root, "variant.id"))$dim
-    nsam <- objdesp.gdsn(index.gdsn(node = out$root, "sample.id"))$dim
-    out@marker <- data.frame(valid = rep(TRUE, nmar))
-    out@sample <- data.frame(valid = rep(TRUE, nsam))
+    raw_gds <- .createGDS(gds_fn = gds_fn, create_gds = create_gds)
+    closefn.gds(gdsfile = raw_gds)
+    out <- loadGDS(x = gds_fn, load_filter = load_filter, verbose = FALSE)
 
   } else {
-    # Load the GDS file and apply the load filter if specified
-    out <- openfn.gds(filename = gds_fn, readonly = FALSE)
-    out <- new(Class = "GbsrGenotypeData", out)
-    nmar <- objdesp.gdsn(index.gdsn(node = out$root, "variant.id"))$dim
-    nsam <- objdesp.gdsn(index.gdsn(node = out$root, "sample.id"))$dim
-    out@marker <- data.frame(valid = rep(TRUE, nmar))
-    out@sample <- data.frame(valid = rep(TRUE, nsam))
+    # SeqArray connection required by GBScleanR accessors (e.g. getSamID)
+    out <- loadGDS(x = gds_fn, load_filter = load_filter, verbose = FALSE)
   }
 
-  # Check if the "lazygas" node already exists in the GDS file
-  if(exist.gdsn(node = out$root, path = "lazygas")){
-    if(overwrite){
-      # If overwrite is TRUE, create (or replace) the "lazygas" folder node
+  lazygas_store <- match.arg(lazygas_store)
+
+  if (lazygas_store == "gds") {
+    if (exist.gdsn(node = out$root, path = "lazygas")) {
+      if (overwrite) {
+        .create_gdsn(root_node = out$root, target_node = "",
+                     new_node = "lazygas", is_folder = TRUE)
+      } else {
+        message(
+          "Some LazyGas data has already been recorded in the input GDS file.",
+          "\nCreate a LazyGas object with the recorded LazyGas data."
+        )
+      }
+    } else {
       .create_gdsn(root_node = out$root, target_node = "",
                    new_node = "lazygas", is_folder = TRUE)
-    } else {
-      # If overwrite is FALSE, notify the user that LazyGas data already exists
-      message("Some LazyGas data has already been recorded in the input GDS file.",
-              "\nCreate a LazyGas object with the recorded LazyGas data.")
     }
-  } else {
-    # If the "lazygas" node does not exist, create it
-    .create_gdsn(root_node = out$root, target_node = "",
-                 new_node = "lazygas", is_folder = TRUE)
   }
 
-  # Create a new LazyGas object and return it
-  out <- new(Class = "LazyGas", out)
+  out <- new(Class = "LazyGas", out, lazydata = list(), store = list())
+  out <- .store_init(
+    object = out,
+    gds_fn = gds_fn,
+    store = lazygas_store,
+    overwrite = overwrite
+  )
   return(out)
 }
 
@@ -880,17 +895,14 @@ setMethod("assignPvalues",
                                   FDR = p.adjust(p = p_values_i, method = "fdr"),
                                   negLog10P = -log10(p_values_i))
 
-              # Add results to the scan node in the GDS object
-              .create_gdsn(root_node = object$root,
-                           target_node = "lazygas/scan",
-                           new_node = i_pheno_names,
-                           val = p_values_i,
-                           storage = "float",
-                           valdim = dim(p_values_i),
-                           attr = list(colnames = colnames(p_values_i)))
+              .store_write_scan(
+                object = object,
+                pheno_name = i_pheno_names,
+                mat = p_values_i,
+                colnames_stats = colnames(p_values_i)
+              )
             }
 
-            # Add additional information to the root node in the GDS object
             .store_additional_info(object = object,
                                    kruskal = kruskal,
                                    formula = formula,
@@ -1222,10 +1234,9 @@ setMethod("scanAssoc",
           }
 )
 
-## Sub-function to create the scan folder in the GDS object
+## Sub-function to create the scan folder in the store
 .create_scan_folder <- function(object) {
-  .create_gdsn(root_node = object$root, target_node = "lazygas",
-               new_node = "scan", is_folder = TRUE)
+  .store_ensure_scan_folder(object)
 }
 
 .standardize <- function(val, binary){
@@ -1346,14 +1357,12 @@ setMethod("scanAssoc",
                     FDR = p.adjust(p = p_values[, "P.model"], method = "fdr"),
                     negLog10P = -log10(p_values[, "P.model"]))
 
-  # Add results to the scan node in the GDS object
-  .create_gdsn(root_node = object$root,
-               target_node = "lazygas/scan",
-               new_node = i_pheno_names,
-               val = p_values,
-               storage = "float",
-               valdim = dim(p_values),
-               attr = list(colnames = colnames(p_values)))
+  .store_write_scan(
+    object = object,
+    pheno_name = i_pheno_names,
+    mat = p_values,
+    colnames_stats = colnames(p_values)
+  )
 }
 
 ## Sub-function to set selection criteria based on the genotype format
@@ -1371,7 +1380,7 @@ setMethod("scanAssoc",
   return(selection)
 }
 
-## Sub-function to store additional information in the GDS object
+## Sub-function to store additional scan metadata
 .store_additional_info <- function(object,
                                    kruskal,
                                    formula,
@@ -1379,73 +1388,15 @@ setMethod("scanAssoc",
                                    fixed_effect,
                                    conv_fun,
                                    geno_format) {
-  .create_gdsn(root_node = object$root,
-               target_node = "lazygas/scan",
-               new_node = "kruskal",
-               val = kruskal,
-               storage = "string32",
-               valdim = dim(kruskal))
-
-  if(!is.character(conv_fun)){
-    conv_fun <- deparse(conv_fun)
-  }
-
-  if(!is.character(formula)){
-    formula <- deparse(formula)
-  }
-
-  .create_gdsn(root_node = object$root,
-               target_node = "lazygas/scan",
-               new_node = "formula",
-               val = formula,
-               storage = "string32",
-               valdim = dim(formula))
-
-  if(is.null(null_formula)){
-    null_formula <- "NULL"
-  }
-
-  if(is.null(fixed_effect)){
-    fixed_effect <- matrix(data = NA, nrow = 1, ncol = 1)
-    .create_gdsn(root_node = object$root,
-                 target_node = "lazygas/scan",
-                 new_node = "fixed_effect",
-                 val = fixed_effect,
-                 storage = "float",
-                 valdim = dim(fixed_effect))
-
-  } else {
-    fixed_effect_attr <- names(fixed_effect)
-    fixed_effect <- as.matrix(fixed_effect)
-    .create_gdsn(root_node = object$root,
-                 target_node = "lazygas/scan",
-                 new_node = "fixed_effect",
-                 val = fixed_effect,
-                 storage = "float",
-                 valdim = dim(fixed_effect),
-                 attr = list(col_names = fixed_effect_attr))
-  }
-
-  .create_gdsn(root_node = object$root,
-               target_node = "lazygas/scan",
-               new_node = "null_formula",
-               val = null_formula,
-               storage = "string32",
-               valdim = dim(null_formula))
-
-  .create_gdsn(root_node = object$root,
-               target_node = "lazygas/scan",
-               new_node = "conv_fun",
-               val = conv_fun,
-               storage = "string32",
-               valdim = dim(deparse(conv_fun)))
-
-  .create_gdsn(root_node = object$root,
-               target_node = "lazygas/scan",
-               new_node = "geno_format",
-               val = geno_format,
-               storage = "string32",
-               valdim = dim(geno_format))
+  .store_write_scan_meta(
+    object = object,
+    kruskal = kruskal,
+    formula = formula,
+    null_formula = null_formula,
+    fixed_effect = fixed_effect,
+    conv_fun = conv_fun,
+    geno_format = geno_format
+  )
 }
 
 ## Perform regression analysis on genotype data
@@ -1686,9 +1637,6 @@ setMethod("plotManhattan",
             # Determine the phenotype index based on user input
             pheno_name <- .determine_phenotype_name(object = object, pheno = pheno)
 
-            # List the scan nodes in the GDS object
-            scan_node <- ls.gdsn(node = index.gdsn(node = object, path = "lazygas/scan"))
-
             # Retrieve the scan data for the specified phenotype
             pvalues <- .get_scan(object = object, pheno_name = pheno_name, sel = c("FDR", "negLog10P"))
 
@@ -1699,10 +1647,10 @@ setMethod("plotManhattan",
           }
 )
 
-## Function to check if scan data exists in the GDS object
+## Function to check if scan data exists
 .check_scan_data_exists <- function(object) {
-  if(!exist.gdsn(node = object$root, path = "lazygas/scan")){
-    stop("No scan data in the input LazyQTL object.\n",
+  if (!.store_check_scan_exists(object)) {
+    stop("No scan data in the input LazyGas object.\n",
          "Run scanAssoc() to scan associations.")
   }
 }
@@ -1871,33 +1819,36 @@ setMethod("callPeakBlock",
           }
 )
 
-## Function to create the necessary folders in the GDS object
+## Function to initialize peakcall storage
 .create_peakcall_folders <- function(object, signif, threshold) {
-  peakcall_gdsn <- .create_gdsn(root_node = object$root,
-                                target_node = "lazygas",
-                                new_node = "peakcall",
+  if (.store_is_gds(object)) {
+    peakcall_gdsn <- .create_gdsn(root_node = object$root,
+                                  target_node = "lazygas",
+                                  new_node = "peakcall",
+                                  is_folder = TRUE)
+    peaks_gdsn <- .create_gdsn(root_node = object$root,
+                               target_node = "lazygas/peakcall",
+                               new_node = "peaks",
+                               is_folder = TRUE)
+    blocks_gdsn <- .create_gdsn(root_node = object$root,
+                                target_node = "lazygas/peakcall",
+                                new_node = "blocks",
                                 is_folder = TRUE)
-  peaks_gdsn <- .create_gdsn(root_node = object$root,
-                             target_node = "lazygas/peakcall",
-                             new_node = "peaks",
-                             is_folder = TRUE)
-  blocks_gdsn <- .create_gdsn(root_node = object$root,
-                              target_node = "lazygas/peakcall",
-                              new_node = "blocks",
-                              is_folder = TRUE)
-
-  put.attr.gdsn(node = peaks_gdsn,
-                name = "col_names",
-                val = c("peak_ID", "peak_variant_ID"))
-  put.attr.gdsn(node = peaks_gdsn,
-                name = "signif",
-                val = signif)
-  put.attr.gdsn(node = peaks_gdsn,
-                name = "threshold",
-                val = threshold)
-  put.attr.gdsn(node = blocks_gdsn,
-                name = "col_names",
-                val = c("peak_ID", "variant_ID", "dist2peak", "LD2peak", "chr_start", "chr_end"))
+    gdsfmt::put.attr.gdsn(node = peaks_gdsn,
+                          name = "col_names",
+                          val = c("peak_ID", "peak_variant_ID"))
+    gdsfmt::put.attr.gdsn(node = peaks_gdsn, name = "signif", val = signif)
+    gdsfmt::put.attr.gdsn(node = peaks_gdsn, name = "threshold", val = threshold)
+    gdsfmt::put.attr.gdsn(
+      node = blocks_gdsn,
+      name = "col_names",
+      val = c("peak_ID", "variant_ID", "dist2peak", "LD2peak", "chr_start", "chr_end")
+    )
+  } else {
+  dir.create(file.path(.store_path(object), "peakcall"),
+             recursive = TRUE, showWarnings = FALSE)
+    .store_set_peakcall_params(object, signif, threshold)
+  }
 }
 
 ## Function to perform peak calling for each phenotype
@@ -1926,6 +1877,10 @@ setMethod("callPeakBlock",
                         pheno_name,
                         n_threads,
                         limit_peakcall){
+  if (!.store_is_gds(object)) {
+    .store_peak_buffer_init(object, "peakcall", pheno_name)
+  }
+
   pvalues <- .get_and_filter_pvalues(object = object,
                                      pheno_name = pheno_name,
                                      signif = signif)
@@ -1960,14 +1915,20 @@ setMethod("callPeakBlock",
 
 ## Function to handle the case where no significant peaks are found
 .handle_no_significant_peaks <- function(object, pheno_name) {
-  peaks_gdsn <- add.gdsn(node = index.gdsn(node = object$root,
-                                           path = "lazygas/peakcall/peaks"),
-                         name = pheno_name, storage = "uint32",
-                         compress = "ZIP_RA", replace = TRUE)
-  blocks_gdsn <- add.gdsn(node = index.gdsn(node = object$root,
-                                            path = "lazygas/peakcall/blocks"),
-                          name = pheno_name, storage = "double",
-                          compress = "ZIP_RA", replace = TRUE)
+  if (.store_is_gds(object)) {
+    gdsfmt::add.gdsn(
+      node = gdsfmt::index.gdsn(node = object$root, path = "lazygas/peakcall/peaks"),
+      name = pheno_name, storage = "uint32",
+      compress = "ZIP_RA", replace = TRUE
+    )
+    gdsfmt::add.gdsn(
+      node = gdsfmt::index.gdsn(node = object$root, path = "lazygas/peakcall/blocks"),
+      name = pheno_name, storage = "double",
+      compress = "ZIP_RA", replace = TRUE
+    )
+  } else {
+    .store_write_empty_peak_tables(object, "peakcall", pheno_name)
+  }
 }
 
 ## Function to initialize variables
@@ -2070,7 +2031,7 @@ setMethod("callPeakBlock",
 
 ## Get Genotype Format
 .get_geno_format <- function(object) {
-  geno_format <- .get_data(object = object, node = "lazygas/scan/geno_format")
+  geno_format <- .store_read_scan_scalar(object, "geno_format")
   return(geno_format)
 }
 
@@ -2212,43 +2173,61 @@ setMethod("callPeakBlock",
               chr_start = chr_start, chr_end = chr_end))
 }
 
-# Function to save the peak data into the GDS object
-#' @importFrom gdsfmt append.gdsn
+# Function to save peak data (buffered for Parquet, GDS append for legacy)
 .save_peak_data <- function(object, pheno_name, peak_info, peak_block, peak_id, peak_ld, node = "peakcall") {
-  # If this is the first peak, create new nodes for peaks and blocks
-  if (peak_id == 1) {
-    # Create a new node for storing peak information
-    add.gdsn(node = index.gdsn(node = object$root,
-                               path = paste0("lazygas/", node, "/peaks")),
-             name = pheno_name, storage = "uint32", compress = "ZIP_RA", replace = TRUE,
-             val = rbind(peak_id, peak_info$variantID))
-
-    # Create a new node for storing block information
-    add.gdsn(node = index.gdsn(node = object$root,
-                               path = paste0("lazygas/", node, "/blocks")),
-             name = pheno_name, storage = "double", compress = "ZIP_RA", replace = TRUE,
-             val = rbind(peak_id, peak_block$ids, peak_block$dist, peak_block$ld, peak_block$chr_start, peak_block$chr_end))
-
+  if (.store_is_gds(object)) {
+    if (peak_id == 1) {
+      gdsfmt::add.gdsn(
+        node = gdsfmt::index.gdsn(node = object$root,
+                                  path = paste0("lazygas/", node, "/peaks")),
+        name = pheno_name, storage = "uint32", compress = "ZIP_RA", replace = TRUE,
+        val = rbind(peak_id, peak_info$variantID)
+      )
+      gdsfmt::add.gdsn(
+        node = gdsfmt::index.gdsn(node = object$root,
+                                  path = paste0("lazygas/", node, "/blocks")),
+        name = pheno_name, storage = "double", compress = "ZIP_RA", replace = TRUE,
+        val = rbind(peak_id, peak_block$ids, peak_block$dist, peak_block$ld,
+                    peak_block$chr_start, peak_block$chr_end)
+      )
+    } else {
+      peaks_gdsn <- gdsfmt::index.gdsn(
+        node = object$root,
+        path = paste0("lazygas/", node, "/peaks/", pheno_name)
+      )
+      gdsfmt::append.gdsn(node = peaks_gdsn, val = rbind(peak_id, peak_info$variantID))
+      blocks_gdsn <- gdsfmt::index.gdsn(
+        node = object$root,
+        path = paste0("lazygas/", node, "/blocks/", pheno_name)
+      )
+      gdsfmt::append.gdsn(
+        node = blocks_gdsn,
+        val = rbind(peak_id, peak_block$ids, peak_block$dist, peak_block$ld,
+                    peak_block$chr_start, peak_block$chr_end)
+      )
+    }
   } else {
-    # Append the peak information to the existing node
-    peaks_gdsn <- index.gdsn(node = object$root,
-                             path = paste0("lazygas/", node, "/peaks/", pheno_name))
-    append.gdsn(node = peaks_gdsn, val = rbind(peak_id, peak_info$variantID))
-
-    # Append the block information to the existing node
-    blocks_gdsn <- index.gdsn(node = object$root,
-                              path = paste0("lazygas/", node, "/blocks/", pheno_name))
-    append.gdsn(node = blocks_gdsn,
-                val = rbind(peak_id, peak_block$ids, peak_block$dist, peak_block$ld, peak_block$chr_start, peak_block$chr_end))
+    .store_peak_buffer_append(
+      object, section = node, pheno_name = pheno_name,
+      peak_id = peak_id, peak_info = peak_info, peak_block = peak_block
+    )
   }
 }
 
-## Sub-function to finalize GDS nodes
+## Sub-function to finalize peakcall storage
 .finalize_gdsn_peakcall <- function(object, pheno_name) {
-  readmode.gdsn(node = index.gdsn(node = object$root,
-                                  path = paste0("lazygas/peakcall/peaks/", pheno_name)))
-  readmode.gdsn(node = index.gdsn(node = object$root,
-                                  path = paste0("lazygas/peakcall/blocks/", pheno_name)))
+  if (.store_is_gds(object)) {
+    gdsfmt::readmode.gdsn(
+      node = gdsfmt::index.gdsn(node = object$root,
+                                path = paste0("lazygas/peakcall/peaks/", pheno_name))
+    )
+    gdsfmt::readmode.gdsn(
+      node = gdsfmt::index.gdsn(node = object$root,
+                                path = paste0("lazygas/peakcall/blocks/", pheno_name))
+    )
+  } else {
+    .store_peak_buffer_flush(object, "peakcall", pheno_name)
+  }
 }
 
 
@@ -2307,25 +2286,26 @@ setMethod("plotPeaks",
 
 # Check if peakcall data exists
 .check_peakcall_data <- function(object) {
-  if (!exist.gdsn(node = object$root, path = "lazygas/peakcall")) {
-    stop("No peakcall data in the input LazyQTL object.\n",
+  if (!.store_section_exists(object, "peakcall")) {
+    stop("No peakcall data in the input LazyGas object.\n",
          "Run callPeakBlock() to call peaks.")
   }
 }
 
 # Determine the path based on recalc parameter
 .determine_path <- function(object, recalc) {
-  if (recalc) {
-    if (!exist.gdsn(node = object$root, path = "lazygas/recalc")) {
-      stop("recalc = TRUE was specified but, \n",
-           "no recalculated scan data in the input LazyQTL object.\n",
-           "Run recalcAssoc() to recalculate associations.")
+  section <- if (recalc) "recalc" else "peakcall"
+  if (!.store_section_exists(object, section)) {
+    if (recalc) {
+      stop(
+        "recalc = TRUE was specified but, \n",
+        "no recalculated scan data in the input LazyGas object.\n",
+        "Run recalcAssoc() to recalculate associations."
+      )
     }
-    return("lazygas/recalc")
-
-  } else {
-    return("lazygas/peakcall")
+    stop("No peakcall data in the input LazyGas object.", call. = FALSE)
   }
+  paste0("lazygas/", section)
 }
 
 # Get chromosome and position data
@@ -2345,8 +2325,6 @@ setMethod("plotPeaks",
                                  chr,
                                  start,
                                  end) {
-  scan_node <- ls.gdsn(node = index.gdsn(node = object,
-                                         path = paste0(path, "/peaks")))
   peakcall <- .get_peakcall(object = object,
                             pheno_name = pheno_name,
                             recalc = grepl(pattern = "recalc", x = path))
@@ -2623,81 +2601,30 @@ setMethod("lazyData",
             pheno_name <- .determine_phenotype_name(object = object,
                                                     pheno = pheno)
 
-            # Retrieve the data based on the dataset type
-            if(dataset == "scan"){
-              check_node <- exist.gdsn(node = index.gdsn(node = object,
-                                                         path = "lazygas"),
-                                       path = dataset)
-              if(!check_node){
+            if (dataset == "scan") {
+              if (!.store_dataset_exists(object, "scan", pheno_name)) {
                 return(NULL)
               }
-              check_node <- exist.gdsn(node = index.gdsn(node = object,
-                                                         path = paste0("lazygas/",
-                                                                       dataset)),
-                                       path = pheno_name)
-              if(!check_node){
-                return(NULL)
-              }
-              out <- .get_scan(object = object,
-                               pheno_name = pheno_name)
+              out <- .get_scan(object = object, pheno_name = pheno_name)
 
-            } else if(dataset %in% c("candidate", "snpeff", "groups")){
-              if(dataset == "groups"){
-                dataset <- "recalc/groups"
-              }
-
-              check_node <- exist.gdsn(node = index.gdsn(node = object,
-                                                         path = "lazygas"),
-                                       path = dataset)
-              if(!check_node){
+            } else if (dataset %in% c("candidate", "snpeff", "groups")) {
+              if (!.store_dataset_exists(object, dataset, pheno_name)) {
                 return(NULL)
               }
-              check_node <- exist.gdsn(node = index.gdsn(node = object,
-                                                         path = paste0("lazygas/",
-                                                                       dataset)),
-                                       path = pheno_name)
-              if(!check_node){
+              out <- .store_read_matrix_dataset(object, dataset, pheno_name)
+              if (is.null(out) || nrow(out) == 0L) {
                 return(NULL)
               }
-              out <- .get_data(object = object,
-                               node = paste0("lazygas/",
-                                             dataset, "/",
-                                             pheno_name))
-              if(length(out) == 0){
-                return(NULL)
-              }
-              if(!is.matrix(out)){
-                out <- matrix(out, nrow = 1)
-              }
-
-              if(dataset == "recalc/groups"){
-                col_names <- get.attr.gdsn(node = index.gdsn(node = object$root,
-                                                             path = file.path("lazygas", dataset, pheno_name)))
-
-              } else {
-                col_names <- get.attr.gdsn(node = index.gdsn(node = object$root,
-                                                             path = paste0("lazygas/", dataset)))
-              }
-              colnames(out) <- col_names$col_names
 
             } else {
-              check_node <- exist.gdsn(node = index.gdsn(node = object,
-                                                         path = "lazygas"),
-                                       path = dataset)
-              if(!check_node){
+              if (!.store_dataset_exists(object, dataset, pheno_name)) {
                 return(NULL)
               }
-              check_node <- exist.gdsn(node = index.gdsn(node = object,
-                                                         path = paste0("lazygas/",
-                                                                       dataset,
-                                                                       "/peaks")),
-                                       path = pheno_name)
-              if(!check_node){
-                return(NULL)
-              }
-              out <- .get_peakcall(object = object,
-                                   pheno_name = pheno_name,
-                                   recalc = (dataset == "recalc"))
+              out <- .get_peakcall(
+                object = object,
+                pheno_name = pheno_name,
+                recalc = (dataset == "recalc")
+              )
             }
 
             return(out)
@@ -2731,20 +2658,22 @@ setGeneric("recalcAssoc", function(object,
 setMethod("recalcAssoc",
           "LazyGas",
           function(object, n_threads, refine_position, grouping_threshold){
-            if(!exist.gdsn(node = object$root, path = "lazygas/peakcall")){
+            if (!.store_section_exists(object, "peakcall")) {
               stop("No peakcall data in the input LazyGas object.\n",
-                   "Run callPeakBlock() to scan associations.")
+                   "Run callPeakBlock() to call peaks.")
             }
 
-            # Parallel processing setup
-            if(is.null(n_threads)){
-              cores <- detectCores()
-              if(cores > 1){
+            if (is.null(n_threads)) {
+              cores <- parallel::detectCores()
+              if (cores > 1) {
                 n_threads <- round(cores / 2)
               }
             }
 
-            kruskal <- .get_data(object = object, node = "lazygas/scan/kruskal")
+            kruskal <- .store_read_scan_scalar(object, "kruskal")
+            if (is.null(kruskal)) {
+              kruskal <- character()
+            }
 
             ## Function to create the necessary folders in the GDS object
             .create_recalc_folders(object = object)
@@ -2755,23 +2684,9 @@ setMethod("recalcAssoc",
               pheno_name <- pheno$pheno_names[i]
               dokruskal <- pheno_name %in% kruskal
 
-              if(dokruskal){
+              if (dokruskal) {
                 message("Skip recalculation for non-parametric data: ", pheno_name)
-                .create_gdsn(root_node = object$root,
-                             target_node = "lazygas/recalc/peaks",
-                             new_node = pheno_name,
-                             storage = "uint32",
-                             replace = TRUE)
-                .create_gdsn(root_node = object$root,
-                             target_node = "lazygas/recalc/blocks",
-                             new_node = pheno_name,
-                             storage = "double",
-                             replace = TRUE)
-                .create_gdsn(root_node = object$root,
-                             target_node = "lazygas/recalc/groups",
-                             new_node = pheno_name,
-                             storage = "double",
-                             replace = TRUE)
+                .store_write_recalc_empty(object, pheno_name)
 
               } else {
                 .peakrecalculator(object = object,
@@ -2789,48 +2704,50 @@ setMethod("recalcAssoc",
 )
 
 .create_recalc_folders <- function(object) {
-  peakcall_gdsn <- .create_gdsn(root_node = object$root,
-                                target_node = "lazygas",
-                                new_node = "recalc",
+  if (.store_is_gds(object)) {
+    .create_gdsn(root_node = object$root,
+                 target_node = "lazygas",
+                 new_node = "recalc",
+                 is_folder = TRUE)
+    peaks_gdsn <- .create_gdsn(root_node = object$root,
+                               target_node = "lazygas/recalc",
+                               new_node = "peaks",
+                               is_folder = TRUE)
+    .create_gdsn(root_node = object$root,
+                 target_node = "lazygas/recalc",
+                 new_node = "blocks",
+                 is_folder = TRUE)
+    groups_gdsn <- .create_gdsn(root_node = object$root,
+                                target_node = "lazygas/recalc",
+                                new_node = "groups",
                                 is_folder = TRUE)
-  peaks_gdsn <- .create_gdsn(root_node = object$root,
-                             target_node = "lazygas/recalc",
-                             new_node = "peaks",
-                             is_folder = TRUE)
-  blocks_gdsn <- .create_gdsn(root_node = object$root,
-                              target_node = "lazygas/recalc",
-                              new_node = "blocks",
-                              is_folder = TRUE)
-  groups_gdsn <- .create_gdsn(root_node = object$root,
-                              target_node = "lazygas/recalc",
-                              new_node = "groups",
-                              is_folder = TRUE)
-
-  att <- get.attr.gdsn(node = index.gdsn(object$root, path = "lazygas/peakcall/peaks"))
-  put.attr.gdsn(node = peaks_gdsn,
-                name = "signif",
-                val = att$signif)
-  put.attr.gdsn(node = peaks_gdsn,
-                name = "threshold",
-                val = att$threshold)
-  # group_gdsn <- .create_gdsn(root_node = object$root,
-  #                            target_node = "lazygas/recalc",
-  #                            new_node = "group",
-  #                            is_folder = TRUE)
-  # put.attr.gdsn(node = group_gdsn, name = "col_names",
-  #               val = c("round", "peak_variant_ID", "member_peak", "new_peak"))
+    att <- gdsfmt::get.attr.gdsn(
+      node = gdsfmt::index.gdsn(object$root, path = "lazygas/peakcall/peaks")
+    )
+    gdsfmt::put.attr.gdsn(node = peaks_gdsn, name = "signif", val = att$signif)
+    gdsfmt::put.attr.gdsn(node = peaks_gdsn, name = "threshold", val = att$threshold)
+  } else {
+    dir.create(file.path(.store_path(object), "recalc"),
+               recursive = TRUE, showWarnings = FALSE)
+  }
 }
 
-## Sub-function to finalize GDS nodes
+## Sub-function to finalize recalc storage
 .finalize_gdsn_recalc <- function(object, pheno_name) {
-  readmode.gdsn(node = index.gdsn(node = object$root,
-                                  path = paste0("lazygas/recalc/peaks/", pheno_name)))
-  readmode.gdsn(node = index.gdsn(node = object$root,
-                                  path = paste0("lazygas/recalc/blocks/", pheno_name)))
-  readmode.gdsn(node = index.gdsn(node = object$root,
-                                  path = paste0("lazygas/recalc/groups/", pheno_name)))
-  # readmode.gdsn(node = index.gdsn(node = object$root,
-  #                                 path = paste0("lazygas/recalc/group/", pheno_name)))
+  if (.store_is_gds(object)) {
+    gdsfmt::readmode.gdsn(
+      node = gdsfmt::index.gdsn(node = object$root,
+                                path = paste0("lazygas/recalc/peaks/", pheno_name))
+    )
+    gdsfmt::readmode.gdsn(
+      node = gdsfmt::index.gdsn(node = object$root,
+                                path = paste0("lazygas/recalc/blocks/", pheno_name))
+    )
+    gdsfmt::readmode.gdsn(
+      node = gdsfmt::index.gdsn(node = object$root,
+                                path = paste0("lazygas/recalc/groups/", pheno_name))
+    )
+  }
 }
 
 # Recalculate peaks for a given phenotype.
@@ -2842,22 +2759,8 @@ setMethod("recalcAssoc",
   att <- attributes(peakcall)
   # peak_grp_summary <- NULL
 
-  if(is.null(peakcall)){
-    .create_gdsn(root_node = object$root,
-                 target_node = "lazygas/recalc/peaks",
-                 new_node = pheno_name,
-                 storage = "uint32",
-                 replace = TRUE)
-    .create_gdsn(root_node = object$root,
-                 target_node = "lazygas/recalc/blocks",
-                 new_node = pheno_name,
-                 storage = "double",
-                 replace = TRUE)
-    .create_gdsn(root_node = object$root,
-                 target_node = "lazygas/recalc/groups",
-                 new_node = pheno_name,
-                 storage = "double",
-                 replace = TRUE)
+  if (is.null(peakcall)) {
+    .store_write_recalc_empty(object, pheno_name)
 
   } else {
     peak_obj <- .make_peakobj(object = object,
@@ -2942,34 +2845,7 @@ setMethod("recalcAssoc",
       out3$full_vs_reduce_pvalue <- peak_grp$pvalue$p_values[hit]
     }
 
-    out1_gdsn <- .create_gdsn(root_node = object$root,
-                              target_node = "lazygas/recalc/peaks",
-                              new_node = pheno_name,
-                              val = as.matrix(out1),
-                              storage = "uint32",
-                              replace = TRUE)
-    out2_gdsn <- .create_gdsn(root_node = object$root,
-                              target_node = "lazygas/recalc/blocks",
-                              new_node = pheno_name,
-                              val = as.matrix(out2),
-                              storage = "double",
-                              replace = TRUE)
-    out3_gdsn <- .create_gdsn(root_node = object$root,
-                              target_node = "lazygas/recalc/groups",
-                              new_node = pheno_name,
-                              val = as.matrix(out3),
-                              storage = "double",
-                              replace = TRUE)
-
-    put.attr.gdsn(node = out1_gdsn,
-                  name = "col_names",
-                  val = names(out1))
-    put.attr.gdsn(node = out2_gdsn,
-                  name = "col_names",
-                  val = names(out2))
-    put.attr.gdsn(node = out3_gdsn,
-                  name = "col_names",
-                  val = names(out3))
+    .store_save_recalc_results(object, pheno_name, out1, out2, out3)
   }
 }
 
@@ -3010,21 +2886,15 @@ setMethod("recalcAssoc",
     na_val <- 3
   }
 
-  null_formula <- .get_data(object, node = "lazygas/scan/null_formula")
-  if(null_formula == "NULL"){
+  null_formula <- .store_read_scan_scalar(object, "null_formula")
+  if (identical(null_formula, "NULL") || is.null(null_formula)) {
     null_formula <- NULL
   }
 
-  fixed_effect <- .get_data(object, node = "lazygas/scan/fixed_effect")
-  if(length(fixed_effect) == 1){
-    fixed_effect <- NULL
+  fixed_effect <- .store_read_fixed_effect(object)
 
-  } else {
-    fixed_effect <- as.data.frame(fixed_effect)
-    col_names <- get.attr.gdsn(node = index.gdsn(node = object$root,
-                                                 path = "lazygas/scan/fixed_effect"))
-    colnames(fixed_effect) <- col_names
-  }
+  conv_fun_txt <- .store_read_scan_scalar(object, "conv_fun")
+  formula_txt <- .store_read_scan_scalar(object, "formula")
 
   out <- list(
     geno = geno,
@@ -3032,9 +2902,8 @@ setMethod("recalcAssoc",
     pheno = .standardize(val = pheno$pheno[, pheno_name], binary = binary),
     threshold = threshold,
     signif = signif,
-    conv_fun = eval(parse(text = .get_data(object,
-                                           node = "lazygas/scan/conv_fun"))),
-    formula = .get_data(object, node = "lazygas/scan/formula"),
+    conv_fun = eval(parse(text = conv_fun_txt)),
+    formula = formula_txt,
     null_formula = null_formula,
     fixed_effect = fixed_effect,
     na_val = na_val,
@@ -3450,14 +3319,13 @@ setMethod("listCandidate",
                    snpeff = NULL,
                    ann = NULL,
                    recalc = FALSE){
-            if(recalc){
-              if(!exist.gdsn(node = object$root, path = "lazygas/recalc")){
-                stop("No peakcall data in the input LazyGas object.\n",
+            if (recalc) {
+              if (!.store_section_exists(object, "recalc")) {
+                stop("No recalc data in the input LazyGas object.\n",
                      "Run recalcAssoc() to recalculate associations.")
               }
-
             } else {
-              if(!exist.gdsn(node = object$root, path = "lazygas/peakcall")){
+              if (!.store_section_exists(object, "peakcall")) {
                 stop("No peakcall data in the input LazyGas object.\n",
                      "Run callPeakBlock() to call peak blocks.")
               }
@@ -3548,24 +3416,35 @@ setMethod("listCandidate",
 }
 
 .create_candidate_folders <- function(object) {
-  candidate_gdsn <- .create_gdsn(root_node = object$root,
-                                 target_node = "lazygas",
-                                 new_node = "candidate",
-                                 is_folder = TRUE)
-
-  snpeff_gdsn <- .create_gdsn(root_node = object$root,
-                              target_node = "lazygas",
-                              new_node = "snpeff",
-                              is_folder = TRUE)
+  if (.store_is_gds(object)) {
+    .create_gdsn(root_node = object$root,
+                 target_node = "lazygas",
+                 new_node = "candidate",
+                 is_folder = TRUE)
+    .create_gdsn(root_node = object$root,
+                 target_node = "lazygas",
+                 new_node = "snpeff",
+                 is_folder = TRUE)
+  } else {
+    dir.create(file.path(.store_path(object), "candidate"),
+               recursive = TRUE, showWarnings = FALSE)
+    dir.create(file.path(.store_path(object), "snpeff"),
+               recursive = TRUE, showWarnings = FALSE)
+  }
 }
 
-## Sub-function to finalize GDS nodes
-#' @importFrom gdsfmt index.gdsn readmode.gdsn
+## Sub-function to finalize candidate storage (GDS legacy)
 .finalize_gdsn_candidate <- function(object, pheno_name) {
-  readmode.gdsn(node = index.gdsn(node = object$root,
-                                  path = paste0("lazygas/candidate/", pheno_name)))
-  readmode.gdsn(node = index.gdsn(node = object$root,
-                                  path = paste0("lazygas/snpeff/", pheno_name)))
+  if (.store_is_gds(object)) {
+    gdsfmt::readmode.gdsn(
+      node = gdsfmt::index.gdsn(node = object$root,
+                                path = paste0("lazygas/candidate/", pheno_name))
+    )
+    gdsfmt::readmode.gdsn(
+      node = gdsfmt::index.gdsn(node = object$root,
+                                path = paste0("lazygas/snpeff/", pheno_name))
+    )
+  }
 }
 
 #' @importFrom dplyr left_join
@@ -3580,17 +3459,8 @@ setMethod("listCandidate",
                             pheno_name = pheno_name,
                             recalc = recalc)
 
-  if(is.null(peakcall)){
-    .create_gdsn(root_node = object$root,
-                 target_node = "lazygas/candidate",
-                 new_node = pheno_name,
-                 storage = "string",
-                 replace = TRUE)
-    .create_gdsn(root_node = object$root,
-                 target_node = "lazygas/snpeff",
-                 new_node = pheno_name,
-                 storage = "string",
-                 replace = TRUE)
+  if (is.null(peakcall)) {
+    .store_write_candidate(object, pheno_name, candidate = NULL, snpeff = NULL)
 
   } else {
     candidate_list <- NULL
@@ -3612,47 +3482,12 @@ setMethod("listCandidate",
       candidate_list[is.na(candidate_list)] <- ""
     }
 
-    if(!is.null(candidate_list)){
-      .create_gdsn(root_node = object$root,
-                   target_node = "lazygas/candidate",
-                   new_node = pheno_name,
-                   val = as.matrix(candidate_list),
-                   storage = "string",
-                   replace = TRUE)
-
-      put.attr.gdsn(node = index.gdsn(node = object$root,
-                                      path = "lazygas/candidate"),
-                    name = "col_names",
-                    val = colnames(candidate_list))
-
-      readmode.gdsn(node = index.gdsn(node = object$root,
-                                      path = paste0("lazygas/candidate/", pheno_name)))
-    }
-    if(!is.null(snpeff_list)){
+    snpeff_out <- NULL
+    if (!is.null(snpeff_list)) {
       snpeff_list[is.na(snpeff_list)] <- ""
-
-      .create_gdsn(root_node = object$root,
-                   target_node = "lazygas/snpeff",
-                   new_node = pheno_name,
-                   val = as.matrix(snpeff_list),
-                   storage = "string",
-                   replace = TRUE)
-
-      put.attr.gdsn(node = index.gdsn(node = object$root,
-                                      path = "lazygas/snpeff"),
-                    name = "col_names",
-                    val = colnames(snpeff_list))
-
-      readmode.gdsn(node = index.gdsn(node = object$root,
-                                      path = paste0("lazygas/snpeff/", pheno_name)))
-
-    } else {
-      .create_gdsn(root_node = object$root,
-                   target_node = "lazygas/snpeff",
-                   new_node = pheno_name,
-                   storage = "string",
-                   replace = TRUE)
+      snpeff_out <- snpeff_list
     }
+    .store_write_candidate(object, pheno_name, candidate_list, snpeff_out)
   }
 }
 

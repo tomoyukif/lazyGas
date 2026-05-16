@@ -1,3 +1,8 @@
+Changes in version 0.5.0 (2026-05-16)
++ Association results (scan, peakcall, recalc, candidate) are stored in a companion Parquet dataset (`{gds}.lazygas/`) by default instead of the GDS `lazygas/` subtree.
++ `buildLazyGas()` gains `lazygas_store` (`"parquet"`, `"sqlite"`, `"gds"`, `"auto"`).
++ `importLazyGasResults()` migrates legacy GDS-stored results into the companion store.
+
 Changes in version 0.4.20 (2026-03-31)
 + Minor bug fix.
 
