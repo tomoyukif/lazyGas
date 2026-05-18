@@ -869,7 +869,13 @@ setMethod("assignPvalues",
             }
 
             # Add a folder to store scan results in the GDS object
-            .create_scan_folder(object)
+            check <- exist.gdsn(node = root_node, path = "lazygas/scan")
+            if(check){
+              message("Scan results will be added to the existing lazygas/scan node.")
+
+            } else {
+              .create_scan_folder(object)
+            }
 
             # Loop through each phenotype name and perform analysis
             for(i in seq_along(pheno_name)){
@@ -1181,7 +1187,14 @@ setMethod("scanAssoc",
                     paste(object@lazydata$pheno_names, collapse = ", "))
 
             # Add a folder to store scan results in the GDS object
-            .create_scan_folder(object)
+
+            check <- exist.gdsn(node = object$root, path = "lazygas/scan")
+            if(check){
+              message("Scan results will be added to the existing lazygas/scan node.")
+
+            } else {
+              .create_scan_folder(object)
+            }
 
             # Loop through each phenotype name and perform analysis
             for(i in seq_along(object@lazydata$pheno_names)){
@@ -1860,7 +1873,20 @@ setMethod("callPeakBlock",
             .check_scan_data_exists(object = object)
 
             # Create the necessary folders in the GDS object
-            .create_peakcall_folders(object = object, signif = signif, threshold = threshold)
+
+            check <- exist.gdsn(node = object$root, path = "lazygas/peakcall")
+            if(check){
+              message("Peakcall results will be added to the existing lazygas/peakcall node.")
+              .create_peakcall_folders(object = object,
+                                       signif = signif,
+                                       threshold = threshold,
+                                       add_attr_only = TRUE)
+
+            } else {
+              .create_peakcall_folders(object = object,
+                                       signif = signif,
+                                       threshold = threshold)
+            }
 
             # Perform peak calling for each phenotype
             .perform_peak_calling(object = object,
@@ -1872,32 +1898,38 @@ setMethod("callPeakBlock",
 )
 
 ## Function to create the necessary folders in the GDS object
-.create_peakcall_folders <- function(object, signif, threshold) {
-  peakcall_gdsn <- .create_gdsn(root_node = object$root,
-                                target_node = "lazygas",
-                                new_node = "peakcall",
+.create_peakcall_folders <- function(object, signif, threshold, add_attr_only = FALSE) {
+  if(!add_attr_only){
+    peakcall_gdsn <- .create_gdsn(root_node = object$root,
+                                  target_node = "lazygas",
+                                  new_node = "peakcall",
+                                  is_folder = TRUE)
+    peaks_gdsn <- .create_gdsn(root_node = object$root,
+                               target_node = "lazygas/peakcall",
+                               new_node = "peaks",
+                               is_folder = TRUE)
+    blocks_gdsn <- .create_gdsn(root_node = object$root,
+                                target_node = "lazygas/peakcall",
+                                new_node = "blocks",
                                 is_folder = TRUE)
-  peaks_gdsn <- .create_gdsn(root_node = object$root,
-                             target_node = "lazygas/peakcall",
-                             new_node = "peaks",
-                             is_folder = TRUE)
-  blocks_gdsn <- .create_gdsn(root_node = object$root,
-                              target_node = "lazygas/peakcall",
-                              new_node = "blocks",
-                              is_folder = TRUE)
+    put.attr.gdsn(node = peaks_gdsn,
+                  name = "col_names",
+                  val = c("peak_ID", "peak_variant_ID"))
+    put.attr.gdsn(node = blocks_gdsn,
+                  name = "col_names",
+                  val = c("peak_ID", "variant_ID", "dist2peak", "LD2peak", "chr_start", "chr_end"))
 
-  put.attr.gdsn(node = peaks_gdsn,
-                name = "col_names",
-                val = c("peak_ID", "peak_variant_ID"))
+  } else {
+    peaks_gdsn <- index.gdsn(node = object$root,
+                             path = "lazygas/peakcall/peaks")
+  }
+
   put.attr.gdsn(node = peaks_gdsn,
                 name = "signif",
                 val = signif)
   put.attr.gdsn(node = peaks_gdsn,
                 name = "threshold",
                 val = threshold)
-  put.attr.gdsn(node = blocks_gdsn,
-                name = "col_names",
-                val = c("peak_ID", "variant_ID", "dist2peak", "LD2peak", "chr_start", "chr_end"))
 }
 
 ## Function to perform peak calling for each phenotype
@@ -2747,7 +2779,14 @@ setMethod("recalcAssoc",
             kruskal <- .get_data(object = object, node = "lazygas/scan/kruskal")
 
             ## Function to create the necessary folders in the GDS object
-            .create_recalc_folders(object = object)
+
+            check <- exist.gdsn(node = object$root, path = "lazygas/recalc")
+            if(check){
+              message("Recalc results will be added to the existing lazygas/recalc node.")
+
+            } else {
+              .create_recalc_folders(object = object)
+            }
 
             pheno <- getPheno(object = object)
 
@@ -3471,7 +3510,13 @@ setMethod("listCandidate",
             .validateANN(gff = gff, ann = ann)
 
             ## Function to create the necessary folders in the GDS object
-            .create_candidate_folders(object = object)
+            check <- exist.gdsn(node = object$root, path = "lazygas/candidate")
+            if(check){
+              message("Candidate search results will be added to the existing lazygas/candidate node.")
+
+            } else {
+              .create_candidate_folders(object = object)
+            }
 
             pheno <- getPheno(object = object)
 

@@ -4,7 +4,14 @@
 \alias{callPeakBlock}
 \title{Call peack blocks}
 \usage{
-callPeakBlock(object, signif = 0.05, threshold = 0.8, n_threads = NULL, ...)
+callPeakBlock(
+  object,
+  signif = 0.05,
+  threshold = 0.8,
+  limit_peakcall = Inf,
+  n_threads = NULL,
+  ...
+)
 }
 \arguments{
 \item{object}{QTLscan object}
