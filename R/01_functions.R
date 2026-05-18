@@ -414,8 +414,8 @@ buildLazyGas <- function(gds_fn = "",
 
     } else {
       if(length(dim(create_gds$haplotype)) == 2){
-        n_sample <- nrow(create_gds$dosage)
-        n_snp <- ncol(create_gds$dosage)
+        n_sample <- nrow(create_gds$haplotype)
+        n_snp <- ncol(create_gds$haplotype)
 
       } else {
         n_sample <- dim(create_gds$haplotype)[2]
@@ -465,6 +465,15 @@ buildLazyGas <- function(gds_fn = "",
                                     replace = TRUE)
   } else {
     create_gds$snp.allele <- sub(",", "/",  create_gds$snp.allele)
+  }
+
+  if(check$genotype){
+    message("No genotype was supplied. ",
+            "A dummy genotype matrix (all 0) will be stored in the GDS file ",
+            "to satisfy GbsrGenotypeData requirements. ",
+            "Use dosage or haplotype for downstream analyses.")
+    create_gds$genotype <- matrix(0L, nrow = n_sample, ncol = n_snp)
+    check$genotype <- FALSE
   }
 
   gds <- createfn.gds(filename = gds_fn)
@@ -521,12 +530,17 @@ buildLazyGas <- function(gds_fn = "",
                  storage = "bit2")
   }
 
+  if(!check$haplotype || !check$dosage){
+    addfolder.gdsn(node = index.gdsn(gds, ""), name = "annotation")
+    addfolder.gdsn(node = index.gdsn(gds, "annotation"), name = "format")
+  }
+
   if(!check$haplotype){
     create_gds$haplotype[is.na(create_gds$haplotype)] <- 63L
     gc(); gc()
     addfolder.gdsn(node = index.gdsn(gds, "annotation/format"), name = "HAP")
     .create_gdsn(root_node = gds,
-                 target_node = "annotation/format/EDS",
+                 target_node = "annotation/format/HAP",
                  new_node = "data",
                  val = create_gds$haplotype,
                  storage = "bit6")
