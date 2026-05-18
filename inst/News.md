@@ -1,3 +1,9 @@
+Changes in version 0.5.1 (2026-05-18)
++ Skip recreation of existing `lazygas/scan`, `lazygas/peakcall`, `lazygas/recalc`, and `lazygas/candidate` GDS nodes on reruns; update peakcall attributes when the peakcall node already exists.
++ Document the `limit_peakcall` argument in `callPeakBlock()`.
++ Fix `buildLazyGas()` when creating a GDS via `create_gds`: create the `annotation/format` folder before writing haplotype or dosage data; store haplotype data under `annotation/format/HAP` (not `EDS`); infer sample and SNP counts from a 2D haplotype matrix correctly.
++ When `create_gds` omits genotype, store an all-zero dummy genotype matrix in the GDS (with a console message) so that `GbsrGenotypeData` validation succeeds; use dosage or haplotype for downstream analyses.
+
 Changes in version 0.4.20 (2026-03-31)
 + Minor bug fix.
 
