@@ -14,7 +14,7 @@ Depends: GBScleanR
 Imports: stats, utils, methods, ggplot2, gdsfmt, GenomeInfoDb, GenomicRanges, IRanges,
   S4Vectors, SNPRelate, SeqArray, cowplot, dplyr, parameters, rtracklayer, vcfR,
   arrow, jsonlite
-Suggests: DBI, RSQLite, testthat, BiocStyle, knitr, rmarkdown
+Suggests: DBI, RSQLite, testthat, BiocStyle, knitr, rmarkdown, text2vec
 SystemRequirements: GNU make, C++11
 VignetteBuilder: knitr
 Roxygen: list(markdown = TRUE)
