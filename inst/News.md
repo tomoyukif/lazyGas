@@ -5,6 +5,13 @@ Changes in version 0.6.0 (2026-06-17)
 + Add and extend tests for full pipeline/integration paths, variant viewer, and candidate-gene search behavior.
 + Bundle demo resources and generated outputs for dashboard/annotation workflows.
 
++ Add `runLazyGas()` one-command pipeline orchestration with resume support and pipeline history in the companion store.
++ Add GWAS QC helpers: `calcGenomicInflation()`, `plotQQ()`, and `summarizeGWASQC()` (also available in interactive reports via `what = "qq"` / `"qc"`).
++ Add cross-trait peak analysis: `clusterCrossTraitPeaks()`, `summarizeCrossTraitPeaks()`, and `plotMultiTraitOverview()` (distance + peak-marker genotype correlation clustering).
++ Add fine-mapping helpers: `conditionalAssoc()`, `calcCredibleSet()`, and `plotCredibleSet()` (Wakefield ABF credible sets).
++ Add ortholog annotation helpers: `annotateOrthologs()`, `summarizeOrthologMatches()`, and `plotOrthologSummary()`.
++ Add `runLazyGasShiny()` and templates under `inst/shiny/` and `inst/quarto/`.
++ Extend `lazyData()` with `qc`, `multitrait`, `conditional`, `credible_set`, and `pipeline` datasets.
 + Exclude large local development datasets under `R/dev/` from version control (`.gds`, large `.csv`/`.gff`/`.pdf` files).
 
 Changes in version 0.5.0 (2026-06-17)

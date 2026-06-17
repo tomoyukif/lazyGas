@@ -703,6 +703,49 @@ From the shell, after installing or loading the package from source:
 Rscript inst/demo/run_dashboard_demo.R demo_output
 ```
 
+### MVP workflow: runLazyGas, QC, and cross-trait view
+
+Run the core pipeline in one call after assigning phenotypes:
+
+```{r eval=FALSE}
+conv_fun <- makeConvFun(geno_format = "dosage", n_levels = 3)
+lg <- runLazyGas(
+  object = lg,
+  steps = c("scan", "peakcall", "recalc", "candidate", "dashboard"),
+  gff = gff,
+  snpeff = snpeff_gds,
+  ann = ann,
+  out_fn = "lazygas_dashboard.html",
+  formula = "add + dom",
+  conv_fun = conv_fun,
+  geno_format = "dosage",
+  resume = TRUE
+)
+```
+
+GWAS quality control:
+
+```{r eval=FALSE}
+summarizeGWASQC(lg, pheno = "Fruit weight")
+plotQQ(lg, pheno = "Fruit weight")
+```
+
+When multiple traits are assigned, compare shared peaks by genomic distance and
+peak-marker genotype correlation:
+
+```{r eval=FALSE}
+plotMultiTraitOverview(lg, recalc = TRUE)
+clusterCrossTraitPeaks(lg, dist_threshold = 500000, r2_threshold = 0.6)
+```
+
+Fine-mapping within a peak (conditional scan and credible set):
+
+```{r eval=FALSE}
+conditionalAssoc(lg, pheno = "Fruit weight", peak_id = 1, recalc = TRUE)
+calcCredibleSet(lg, pheno = "Fruit weight", peak_id = 1, use_conditional = TRUE)
+Shiny and Quarto templates ship under `inst/shiny/` and `inst/quarto/`.
+Launch the Shiny explorer with `runLazyGasShiny()`.
+
 <br><br>
 
 ```{r}

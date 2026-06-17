@@ -1,13 +1,21 @@
-#' @param dataset The dataset to retrieve. One of "scan", "peakcall", or "recalc".
+#' Extract lazyGas result data from the companion store
+#'
+#' @param object A \code{LazyGas} object.
+#' @param dataset The dataset to retrieve. One of `"scan"`, `"peakcall"`,
+#'   `"recalc"`, `"groups"`, `"candidate"`, `"snpeff"`, `"qc"`, `"multitrait"`,
+#'   `"conditional"`, `"credible_set"`, or `"pipeline"`.
 #' @param pheno The phenotype to retrieve.
+#' @param kind Table kind for section datasets (e.g. `"summary"`, `"peak_1"`).
 #' @param ... Additional arguments.
 #'
 #' @return The requested data from the LazyGas object.
 #' @export
 #'
 setGeneric("lazyData", function(object,
-                                dataset = c("scan", "peakcall", "recalc", "groups", "candidate", "snpeff"),
+                                dataset = c("scan", "peakcall", "recalc", "groups", "candidate", "snpeff",
+                                            "qc", "multitrait", "conditional", "credible_set", "pipeline"),
                                 pheno,
+                                kind = NULL,
                                 ...)
   standardGeneric("lazyData"))
 
@@ -18,10 +26,31 @@ setGeneric("lazyData", function(object,
 #'
 setMethod("lazyData",
           "LazyGas",
-          function(object, dataset, pheno){
-            # Match the dataset argument to one of the allowed choices
-            dataset <- match.arg(arg = dataset,
-                                 choices = c("scan", "peakcall", "recalc", "groups", "candidate", "snpeff"))
+          function(object, dataset, pheno, kind = NULL){
+            dataset <- match.arg(
+              arg = dataset,
+              choices = c("scan", "peakcall", "recalc", "groups", "candidate", "snpeff",
+                          "qc", "multitrait", "conditional", "credible_set", "pipeline")
+            )
+            if (dataset == "qc") {
+              k <- if (is.null(kind)) "summary" else kind
+              return(.store_read_section_df(object, "qc", k, pheno_name = NULL))
+            }
+            if (dataset == "multitrait") {
+              k <- if (is.null(kind)) "clusters" else kind
+              return(.store_read_section_df(object, "multitrait", k, pheno_name = NULL))
+            }
+            if (dataset == "pipeline") {
+              return(.store_read_section_df(object, "pipeline", "history", pheno_name = NULL))
+            }
+            if (dataset %in% c("conditional", "credible_set")) {
+              pheno_name <- .determine_phenotype_name(object = object, pheno = pheno)
+              if (is.null(kind)) {
+                stop("kind is required for dataset '", dataset, "' (e.g. 'peak_1').",
+                     call. = FALSE)
+              }
+              return(.store_read_section_df(object, dataset, kind, pheno_name))
+            }
             # Determine phenotype index based on input
             pheno_name <- .determine_phenotype_name(object = object,
                                                     pheno = pheno)

@@ -1,0 +1,84 @@
+---
+title: "lazyGas report"
+format:
+  html:
+    toc: true
+    toc-depth: 2
+params:
+  gds_fn: ""
+  pheno_fn: ""
+  gff_fn: ""
+  pheno_name: "trait1"
+  out_dir: "lazygas_report"
+  recalc: true
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+## Setup
+
+```{r}
+library(lazyGas)
+library(rtracklayer)
+dir.create(params$out_dir, recursive = TRUE, showWarnings = FALSE)
+lg <- buildLazyGas(gds_fn = params$gds_fn, load_filter = TRUE, overwrite = TRUE)
+pheno <- read.csv(params$pheno_fn)
+lg <- assignPheno(lg, pheno = pheno, rename = params$pheno_name)
+gff <- import.gff(params$gff_fn)
+```
+
+## Pipeline
+
+```{r}
+lg <- runLazyGas(
+  object = lg,
+  steps = c("scan", "peakcall", "recalc"),
+  resume = FALSE,
+  formula = "add + dom",
+  conv_fun = makeConvFun(geno_format = "dosage", n_levels = 3),
+  geno_format = "dosage"
+)
+```
+
+## GWAS QC
+
+```{r}
+qc <- summarizeGWASQC(lg, pheno = params$pheno_name)
+knitr::kable(qc)
+```
+
+```{r}
+print(plotQQ(lg, pheno = params$pheno_name))
+```
+
+## Manhattan plot
+
+```{r}
+print(plotManhattan(lg, pheno = params$pheno_name))
+```
+
+## Cross-trait overview
+
+```{r}
+pheno_names <- getPheno(lg)$pheno_names
+if (length(pheno_names) >= 2) {
+  mt <- plotMultiTraitOverview(lg, recalc = params$recalc)
+  print(mt$heatmap)
+  knitr::kable(mt$summary)
+}
+```
+
+## Interactive report
+
+```{r}
+out_html <- file.path(params$out_dir, "lazygas_report.html")
+makeInteractiveSummary(
+  object = lg,
+  pheno = params$pheno_name,
+  out_fn = out_html,
+  what = c("scan_png", "qq", "qc", "peakcall", "recalc", "candidate")
+)
+out_html
+```

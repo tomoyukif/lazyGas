@@ -20,6 +20,9 @@
 #'  \item{"preakcall_haplo"}{Draw an interactive haplotype-wise phenotype distribution plot for peaks before the recalculation}
 #'  \item{"recalc_haplo"}{Draw an interactive haplotype-wise phenotype distribution plot for peaks after the recalculation}
 #'  \item{"candidate"}{Draw an interactive candidate list}
+#'  \item{"qq"}{Draw a QQ plot}
+#'  \item{"qc"}{Draw a GWAS QC summary table}
+#'  \item{"cross_trait"}{Draw cross-trait peak clustering (requires multiple phenotypes)}
 #' }
 #'
 #' @seealso [makeInteractiveDashboard()]
@@ -48,7 +51,7 @@ makeInteractiveSummary <- function(object, pheno,
   what <- match.arg(
     arg = what,
     choices = c("scan", "scan_png", "peakcall", "recalc", "groups",
-                "peakcall_haplo", "recalc_haplo", "candidate"),
+                "peakcall_haplo", "recalc_haplo", "candidate", "qq", "qc", "cross_trait"),
     several.ok = TRUE
   )
 
@@ -159,6 +162,61 @@ makeInteractiveSummary <- function(object, pheno,
           tag_list,
           div(ggplotly(plot_hap[[i]]), style = "margin:auto;width:60vw;")
         )
+      }
+    }
+  }
+
+  if ("qq" %in% what) {
+    plot_qq <- plotQQ(object = object, pheno = pheno)
+    tag_list <- tagList(
+      tag_list,
+      div(h1("QQ plot"), style = "text-align:center"),
+      div(ggplotly(plot_qq), style = "margin:auto;width:80vw;")
+    )
+  }
+
+  if ("qc" %in% what) {
+    qc_df <- summarizeGWASQC(object = object, pheno = pheno, store = TRUE)
+    if (!is.null(qc_df) && nrow(qc_df) > 0L) {
+      tag_list <- tagList(
+        tag_list,
+        div(h1("GWAS QC summary"), style = "text-align:center"),
+        div(
+          reactable(
+            data = qc_df,
+            sortable = TRUE,
+            resizable = TRUE,
+            striped = TRUE
+          ),
+          style = "margin:auto;width:80vw;"
+        )
+      )
+    }
+  }
+
+  if ("cross_trait" %in% what) {
+    pheno_names <- getPheno(object)$pheno_names
+    if (length(pheno_names) >= 2L) {
+      mt <- tryCatch(
+        plotMultiTraitOverview(object = object, recalc = TRUE),
+        error = function(e) NULL
+      )
+      if (!is.null(mt)) {
+        tag_list <- tagList(
+          tag_list,
+          div(h1("Cross-trait peak overview"), style = "text-align:center"),
+          div(ggplotly(mt$heatmap), style = "margin:auto;width:80vw;")
+        )
+        if (nrow(mt$summary) > 0L) {
+          tag_list <- tagList(
+            tag_list,
+            div(h2("Shared peak clusters"), style = "text-align:center"),
+            div(
+              reactable(data = mt$summary, sortable = TRUE, striped = TRUE),
+              style = "margin:auto;width:90vw;"
+            )
+          )
+        }
       }
     }
   }

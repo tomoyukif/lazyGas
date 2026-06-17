@@ -64,6 +64,11 @@ NULL
     dir.create(file.path(path, "recalc"), recursive = TRUE, showWarnings = FALSE)
     dir.create(file.path(path, "candidate"), recursive = TRUE, showWarnings = FALSE)
     dir.create(file.path(path, "snpeff"), recursive = TRUE, showWarnings = FALSE)
+    dir.create(file.path(path, "qc"), recursive = TRUE, showWarnings = FALSE)
+    dir.create(file.path(path, "multitrait"), recursive = TRUE, showWarnings = FALSE)
+    dir.create(file.path(path, "conditional"), recursive = TRUE, showWarnings = FALSE)
+    dir.create(file.path(path, "credible_set"), recursive = TRUE, showWarnings = FALSE)
+    dir.create(file.path(path, "pipeline"), recursive = TRUE, showWarnings = FALSE)
   }
 
   object@store <- list(
@@ -1137,4 +1142,54 @@ importLazyGasResults <- function(object) {
     object@store$db_con <- NULL
   }
   invisible(object)
+}
+
+.store_section_file_path <- function(object, section, kind, pheno_name = NULL) {
+  root <- .store_path(object)
+  if (.store_mode(object) == "sqlite") {
+    if (is.null(pheno_name)) {
+      return(paste0(section, "_", kind))
+    }
+    return(paste0(section, "_", kind, "_", .store_safe_name(pheno_name)))
+  }
+  if (is.null(pheno_name)) {
+    return(file.path(root, section, paste0(kind, ".parquet")))
+  }
+  file.path(root, section, paste0(kind, "_", .store_safe_name(pheno_name), ".parquet"))
+}
+
+.store_write_section_df <- function(object, section, kind, df, pheno_name = NULL) {
+  if (.store_is_gds(object)) {
+    return(invisible(NULL))
+  }
+  dir.create(file.path(.store_path(object), section), recursive = TRUE, showWarnings = FALSE)
+  path <- .store_section_file_path(object, section, kind, pheno_name)
+  .store_write_table(object, df, path)
+  invisible(NULL)
+}
+
+.store_read_section_df <- function(object, section, kind, pheno_name = NULL) {
+  if (.store_is_gds(object)) {
+    return(NULL)
+  }
+  path <- .store_section_file_path(object, section, kind, pheno_name)
+  if (!.store_table_exists(object, path)) {
+    return(NULL)
+  }
+  .store_read_table(object, path)
+}
+
+.store_append_pipeline_history <- function(object, row) {
+  if (.store_is_gds(object)) {
+    return(invisible(NULL))
+  }
+  path <- .store_section_file_path(object, "pipeline", "history", pheno_name = NULL)
+  prev <- .store_read_section_df(object, "pipeline", "history", pheno_name = NULL)
+  if (is.null(prev) || nrow(prev) == 0L) {
+    out <- row
+  } else {
+    out <- rbind(prev, row)
+  }
+  .store_write_section_df(object, "pipeline", "history", out, pheno_name = NULL)
+  invisible(NULL)
 }

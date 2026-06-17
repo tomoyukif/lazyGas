@@ -30,6 +30,9 @@ strings:
 \item{"preakcall_haplo"}{Draw an interactive haplotype-wise phenotype distribution plot for peaks before the recalculation}
 \item{"recalc_haplo"}{Draw an interactive haplotype-wise phenotype distribution plot for peaks after the recalculation}
 \item{"candidate"}{Draw an interactive candidate list}
+\item{"qq"}{Draw a QQ plot}
+\item{"qc"}{Draw a GWAS QC summary table}
+\item{"cross_trait"}{Draw cross-trait peak clustering (requires multiple phenotypes)}
 }
 }
 \seealso{
