@@ -113,6 +113,18 @@ searchCandidateGenes <- function(candidate = NULL,
 
   if (mode %in% c("semantic", "both")) {
     .require_text2vec()
+    n_genes <- if ("Gene_ID" %in% names(candidate)) {
+      length(unique(candidate$Gene_ID))
+    } else {
+      nrow(candidate)
+    }
+    if (n_genes < 10L) {
+      warning(
+        "Semantic search with fewer than 10 genes is unreliable (n = ", n_genes, "). ",
+        "Consider mode = \"keyword\" or expanding the candidate list.",
+        call. = FALSE
+      )
+    }
   }
 
   ann_text <- .candidate_annotation_text(candidate = candidate, ann_cols = ann_cols)

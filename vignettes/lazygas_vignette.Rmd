@@ -1,10 +1,10 @@
 ---
 title: "Association Study with lazyGas"
-author: 
-  -name: "Tomoyuki Furuta"
-  affiliation: Institute of Plant Science and Resources, Okayama University, Okayama, Japan
-  email: f.tomoyuki@okayama-u.ac.jp
-date: "May 16, 2026"
+author:
+  - name: "Tomoyuki Furuta"
+    affiliation: Institute of Plant Science and Resources, Okayama University, Okayama, Japan
+    email: f.tomoyuki@okayama-u.ac.jp
+date: "June 17, 2026"
 package: lazyGas
 output: 
   BiocStyle::html_document:
@@ -17,12 +17,16 @@ vignette: >
 ---
 
 ## Introduction
-This vignette demonstrates the process of conducting a genetic association study using the `lazyGas` package. We will go through the steps of loading input files, preprocessing data, performing association analysis, and visualizing results.  
-<br>
-  
+This vignette demonstrates the process of conducting a genetic association study using the `lazyGas` package. We will go through the steps of loading input files, preprocessing data, performing association analysis, and visualizing results.
+
+Companion storage for scan, peak, recalc, and candidate outputs is written by default to a Parquet-backed directory next to the GDS file (or optionally SQLite or the legacy GDS `lazygas/` subtree); see the [Where association results are stored](#where-association-results-are-stored) section. Optional refinement of candidate genes with `searchCandidateGenes()` uses keyword and/or semantic similarity search and requires the suggested package **text2vec** for semantic mode (`install.packages("text2vec")`).
+
+Since v0.5.0, lazyGas also provides a **variant viewer** (`getVariantViewerData()`, `plotVariantViewer()`) and an **interactive dashboard** (`makeInteractiveDashboard()`) that links candidate genes to per-gene variant plots in a single HTML file. A runnable demo is available via `runDashboardDemo()` using bundled files in `inst/extdata/`.
+
 Load the lazyGas package.
 ```{r message=FALSE, results="hide", warning=FALSE}
 library(lazyGas)
+have_demo_ann <- FALSE
 ```
 <br><br>
 
@@ -437,35 +441,107 @@ for(i in seq_along(pheno$pheno_names)){
   
 ## List up candidate genes
 The `listCandidate()` function helps you list candidate genes for the detected 
-association peaks. You are required to provide a GFF file containing gene 
-annotations. If you have a VCF file output from SnpEff, you can also provide it 
+association peaks. You are required to provide gene annotation as a `GRanges` object (for example from `rtracklayer::import.gff()` or `rtracklayer::import.gff3()`); chromosome names must be consistent with the GDS.
+If you have a VCF file output from SnpEff, you can also provide it 
 to the function to summarize variant impacts on gene functions. Since a VCF file
 output from SnpEff is large and takes a long time to load into the R 
 environment, the `snpeff2gds()` function allows you to convert the VCF file into
 a GDS file. The converted GDS file must then be provided to the `listCandidate()`
 function after opening a connection to the file using the `open_snpeff()`
-function, as shown below. In addition, a data.frame containing other gene 
+function. In addition, a data.frame containing other gene 
 annotations can be provided to the `listCandidate()` function to include that
 information in the output candidate list. The data.frame must contain a column 
-named "GeneID", which should match the gene IDs in the GFF file.
+named `Gene_ID`, which should match the gene IDs in the GFF (`gff$ID`).
+
+### Example with your own annotation files
 ```{r eval=FALSE}
 # Do not run.
-# GFF file 
 gff_fn <- "path/to/gff/gene_annotation.gff"
 gff <- rtracklayer::import.gff(gff_fn)
 
-# SnpEff output VCF file
 snpeff_fn <- "path/to/SnpEff/output/variants.snpeff.vcf"
 gds_fn <- sub("\\.vcf", ".gds", snpeff_fn)
 snpeff2gds(vcf_fn = snpeff_fn, out_fn = gds_fn)
 snpeff_gds <- open_snpeff(gds_fn = gds_fn)
 
-# Any CSV format file for gene annotations
-# The given matrix stored in the CSV file must contain a column named "GeneID"
-# that should match the gene IDs in the GFF file.
-ann <- read.csv("~/01_wd/genomeData/rice/cultivar_sativa/nb_combined/version_2023/gff/nb_combined_summarized_annotation.tsv")
+ann <- read.csv("path/to/gene_annotation.csv")
 names(ann)[1] <- "Gene_ID"
 listCandidate(object = lg, gff = gff, snpeff = snpeff_gds, ann = ann, recalc = TRUE)
+```
+
+### Example with bundled demo annotation
+The package ships synthetic GFF, SnpEff VCF, and gene-description files that overlap
+peaks detected in `sample.gds`. The following chunk lists demo candidate genes for
+the trait analysed above.
+
+```{r message=FALSE, warning=FALSE}
+gff_fn <- system.file("extdata", "demo_annotation.gff", package = "lazyGas")
+vcf_fn <- system.file("extdata", "demo_snpeff.vcf", package = "lazyGas")
+ann_fn <- system.file("extdata", "demo_ann.csv", package = "lazyGas")
+
+have_demo_ann <- nzchar(gff_fn) && file.exists(gff_fn) &&
+  nzchar(vcf_fn) && file.exists(vcf_fn)
+
+if (have_demo_ann) {
+  gff <- rtracklayer::import.gff(gff_fn)
+  ann <- read.csv(ann_fn, stringsAsFactors = FALSE)
+  snpeff_gds_fn <- tempfile(pattern = "lazygas_snpeff_", fileext = ".gds")
+  snpeff2gds(vcf_fn = vcf_fn, out_fn = snpeff_gds_fn, verbose = FALSE)
+  snpeff_gds <- open_snpeff(snpeff_gds_fn)
+  listCandidate(
+    object = lg,
+    gff = gff,
+    snpeff = snpeff_gds,
+    ann = ann,
+    recalc = TRUE
+  )
+  candidate <- lazyData(object = lg, dataset = "candidate", pheno = "Fruit weight")
+  knitr::kable(candidate[, c("peak_ID", "Gene_ID", "Gene_chr", "negLog10P", "Name")])
+} else {
+  message("Demo annotation files are not installed; skipping listCandidate() example.")
+}
+```
+
+<br>
+
+## Refining candidate genes (`searchCandidateGenes`)
+After `listCandidate()`, the candidate table may still be large. The function `searchCandidateGenes()` filters and ranks rows using free-text annotation columns (for example descriptions or GO terms merged via the `ann` argument in `listCandidate()`).
+
+- **`mode = "keyword"`** — fixed substring matching on the query string; with `keyword_match = "all"`, every whitespace-separated token must appear (default is `"all"`; use `"any"` for OR-style matching).
+- **`mode = "semantic"`** — latent semantic analysis with **text2vec** (cosine similarity on a TF–IDF + LSA representation); set `min_score` to control the cutoff.
+- **`mode = "both"`** — keeps genes that pass either keyword or semantic thresholds; `match_score` is the pointwise maximum of the two scores.
+
+By default, all columns except peak/SnpEff coordinate columns are concatenated as annotation text; override with `ann_cols`. Use `object` and `pheno` to read candidates from the companion store, or pass a `data.frame` as `candidate`.
+
+```{r}
+cand_demo <- data.frame(
+  peak_ID = 1L,
+  Gene_ID = c("g1", "g2", "g3"),
+  Gene_chr = "1",
+  Gene_start = 1:3,
+  dist2peak = 0,
+  negLog10P = 3,
+  Description = c(
+    "fruit weight development",
+    "root hair elongation",
+    "cell wall biosynthesis"
+  ),
+  stringsAsFactors = FALSE
+)
+searchCandidateGenes(
+  candidate = cand_demo,
+  query = "fruit weight",
+  mode = "keyword",
+  keyword_match = "all"
+)
+```
+
+Semantic search is not evaluated in this vignette build (requires **text2vec**). After installing that package, you can use for example:
+
+```{r eval=FALSE}
+searchCandidateGenes(object = lg, pheno = "Fruit weight",
+                       query = "fruit ripening carbohydrate",
+                       mode = "both", min_score = 0.15, top_n = 50)
 ```
 
 <br><br>
@@ -515,29 +591,67 @@ head(groups)
 <br>
 
 The list of candidate genes.
-```{r eval=FALSE}
-# Do not run.
-candidate <- lazyData(object = lg, dataset = "candidate", pheno = pheno$pheno_names[1])
+```{r eval=have_demo_ann}
 head(candidate)
 ```
 
 <br>
 
-The gene-wise summarized SnpEff annotation.
-```{r eval=FALSE}
-# Do not run.
-candidate <- lazyData(object = lg, dataset = "snpeff", pheno = pheno$pheno_names[1])
-head(candidate)
+The per-variant SnpEff table stored for the variant viewer.
+```{r eval=have_demo_ann}
+snpeff_tab <- lazyData(object = lg, dataset = "snpeff", pheno = "Fruit weight")
+head(snpeff_tab[, c("Gene_ID", "Chr", "Pos", "Annotation", "Annotation_Impact")])
+```
+
+<br><br>
+
+## Variant viewer
+After `listCandidate()` with SnpEff annotation, you can inspect a single candidate
+gene with `getVariantViewerData()`. The function merges stored SnpEff rows, scan
+statistics, and GFF gene structure into a list that includes a ready-made
+`ggplot` object.
+
+```{r eval=have_demo_ann, fig.width=9, fig.height=4}
+demo_gene <- candidate$Gene_ID[1]
+vdata <- getVariantViewerData(
+  object = lg,
+  gene_id = demo_gene,
+  gff = gff,
+  pheno = "Fruit weight",
+  snpeff = snpeff_gds,
+  ann = ann,
+  recalc = TRUE
+)
+plotVariantViewer(vdata)
+```
+
+The same plot can be produced in one step from a `LazyGas` object:
+
+```{r eval=have_demo_ann, fig.width=9, fig.height=4}
+plotVariantViewer(
+  object = lg,
+  gene_id = demo_gene,
+  gff = gff,
+  pheno = "Fruit weight",
+  snpeff = snpeff_gds,
+  ann = ann,
+  recalc = TRUE
+)
 ```
 
 <br><br>
   
 ## Generating Interactive HTML Report
-To organize the results of the analysis, you can generate an interactive HTML. 
+To organize the results of the analysis, you can generate an interactive HTML file.
+`makeInteractiveSummary()` writes Manhattan plots, peak views, haplotype plots, and
+candidate tables. `makeInteractiveDashboard()` adds variant-viewer panels below the
+summary; clicking a `Gene_ID` in the candidate table scrolls to the corresponding
+gene view.
+
 The `what` argument accepts a character vector specifying one or more types of
 plots to generate. Users can choose from the following options:
 - `"scan"`: Draws an **interactive Manhattan plot**.  
-- `"scan_png"`: Draws a **static Manhattan plot**.  
+- `"scan_png"`: Draws a **static Manhattan plot** (requires suggested package **base64enc**).  
 - `"peakcall"`: Draws an **interactive peak call plot**.  
 - `"recalc"`: Draws an **interactive recalculated peak call plot**.  
 - `"groups"`: Draws an **interactive peak grouping list**.  
@@ -545,18 +659,51 @@ plots to generate. Users can choose from the following options:
 - `"recalc_haplo"`: Draws an **interactive haplotype-wise phenotype distribution plot** for peaks **after recalculation**.  
 - `"candidate"`: Draws an **interactive list of candidate genes**.
 
+### Summary report
 ```{r eval=FALSE}
-# Do not run.
-# Which phenotype should be used for the interactive HTML report is specified 
-# via `pheno` argument.
-makeInteractiveSummary(object = lg,
-                       pheno = pheno$pheno_names[1], 
-                       out_fn = "sample.html", 
-                       what = c("scan", "scan_png", 
-                                "peakcall", "recalc", "groups", 
-                                "peakcall_haplo", "recalc_haplo",
-                                "candidate"))
+makeInteractiveSummary(
+  object = lg,
+  pheno = "Fruit weight",
+  out_fn = "sample_summary.html",
+  what = c("scan", "scan_png", "peakcall", "recalc", "groups", "candidate")
+)
 ```
+
+### Dashboard with variant viewer
+Run `listCandidate()` first (as in the demo section above), then:
+
+```{r eval=FALSE}
+makeInteractiveDashboard(
+  object = lg,
+  pheno = "Fruit weight",
+  gff = gff,
+  out_fn = "lazygas_dashboard.html",
+  snpeff = snpeff_gds,
+  ann = ann,
+  recalc = TRUE,
+  what = c("scan_png", "peakcall", "recalc", "candidate")
+)
+```
+
+Open `lazygas_dashboard.html` in a browser. The `Gene_ID` column contains links;
+click a gene ID to reveal its variant viewer panel.
+
+### One-command demo
+To rebuild the sample analysis and write a dashboard without assembling the
+steps manually:
+
+```{r eval=FALSE}
+runDashboardDemo(out_dir = "demo_output")
+# Opens: demo_output/lazygas_dashboard.html
+```
+
+From the shell, after installing or loading the package from source:
+
+```{bash, eval=FALSE}
+Rscript inst/demo/run_dashboard_demo.R demo_output
+```
+
+<br><br>
 
 ```{r}
 sessionInfo()

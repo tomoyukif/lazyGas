@@ -1,23 +1,40 @@
 Package: lazyGas
 Type: Package
 Title: Lazies' genetic association study (lazyGas): genetic association study pipeline for lazy guys
-Version: 0.5.0
-Date: 2026-03-31
+Version: 0.6.0
+Date: 2026-06-17
 Authors@R: person("Tomoyuki", "Furuta", 
            email = "f.tomoyuki@okayama-u.ac.jp",
            role = c("aut", "cre"),
            comment = c(ORCID = "0000-0002-0869-6626"))
-Description: Genetic analysis pipeline for lazy guys.
+Description: Genetic association study pipeline with companion Parquet storage,
+  peak calling, candidate gene listing, variant viewer, and interactive HTML reports.
 License: GPL-3 + file LICENSE
 Encoding: UTF-8
 Depends: GBScleanR
 Imports: stats, utils, methods, ggplot2, gdsfmt, GenomeInfoDb, GenomicRanges, IRanges,
   S4Vectors, SNPRelate, SeqArray, cowplot, dplyr, parameters, rtracklayer, vcfR,
-  arrow, jsonlite
-Suggests: DBI, RSQLite, testthat, BiocStyle, knitr, rmarkdown, text2vec
+  arrow, jsonlite, gaston
+Suggests: DBI, RSQLite, testthat, BiocStyle, knitr, rmarkdown, text2vec, base64enc
 SystemRequirements: GNU make, C++11
 VignetteBuilder: knitr
 Roxygen: list(markdown = TRUE)
-RoxygenNote: 7.3.3
-BugReports: https://github.com/tomoyukif/lazyGeno/issues
-URL: https://github.com/tomoyukif/lazyGeno
+BugReports: https://github.com/tomoyukif/lazyGas/issues
+URL: https://github.com/tomoyukif/lazyGas
+Config/roxygen2/version: 8.0.0
+Collate:
+    'lazygas-class.R'
+    'store.R'
+    'gds-utils.R'
+    'pheno.R'
+    'scan.R'
+    'peakcall.R'
+    'recalc.R'
+    'plot.R'
+    'candidate.R'
+    'lazy-data.R'
+    'snpeff-io.R'
+    'variant_viewer.R'
+    'interactive.R'
+    'search_candidate_genes.R'
+    'demo_dashboard.R'

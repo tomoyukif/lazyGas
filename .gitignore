@@ -1,0 +1,14 @@
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+
+# Cursor local notes (reviews, agent context)
+.cursor/
+
+# Local development datasets (too large for GitHub)
+R/dev/**/*.gds
+R/dev/**/*.pdf
+R/dev/**/nb_combined_all.gff
+R/dev/**/orthopair_summary_annotated.csv
+R/dev/**/orthopair_summary_msa.csv

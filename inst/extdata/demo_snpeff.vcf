@@ -1,0 +1,19 @@
+##fileformat=VCFv4.2
+##INFO=<ID=ANN,Number=.,Type=String,Description="Functional annotations">
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO
+1	21851000	.	A	G	.	.	ANN=G|synonymous_variant|LOW|DemoGene_chr1|DEMO.C01.F1|transcript|DEMO.C01.F1.t1|protein_coding|1/1|c.100A>G|p.T34T|100|100|34|0|
+2	15245677	.	A	G	.	.	ANN=G|missense_variant|MODERATE|DemoGene1|DEMO.G002.P1|transcript|DEMO.G002.P1.t1|protein_coding|1/1|c.567A>G|p.K189R|567|567|189|0|
+2	13882232	.	C	T	.	.	ANN=T|missense_variant|MODERATE|DemoGene1|DEMO.G002.P1|transcript|DEMO.G002.P1.t1|protein_coding|1/1|c.100C>T|p.R34C|100|100|34|0|
+2	13761196	.	C	T	.	.	ANN=T|missense_variant|MODERATE|DemoGene2|DEMO.G002.P2|transcript|DEMO.G002.P2.t1|protein_coding|1/1|c.1196C>T|p.S399F|1196|1196|399|0|
+2	13760050	.	G	A	.	.	ANN=A|synonymous_variant|LOW|DemoGene2|DEMO.G002.P2|transcript|DEMO.G002.P2.t1|protein_coding|1/1|c.50G>A|p.V17V|50|50|17|0|
+3	18431000	.	C	T	.	.	ANN=T|synonymous_variant|LOW|DemoGene_chr3|DEMO.C03.F1|transcript|DEMO.C03.F1.t1|protein_coding|1/1|c.100C>T|p.L34L|100|100|34|0|
+4	17891000	.	G	A	.	.	ANN=A|synonymous_variant|LOW|DemoGene_chr4|DEMO.C04.F1|transcript|DEMO.C04.F1.t1|protein_coding|1/1|c.100G>A|p.G34G|100|100|34|0|
+5	8988772	.	G	A	.	.	ANN=A|missense_variant|MODERATE|DemoGene3|DEMO.G005.P1|transcript|DEMO.G005.P1.t1|protein_coding|1/1|c.772G>A|p.V258M|772|772|258|0|
+5	7086127	.	T	C	.	.	ANN=C|missense_variant|MODERATE|DemoGene3|DEMO.G005.P1|transcript|DEMO.G005.P1.t1|protein_coding|1/1|c.127T>C|p.Y43H|127|127|43|0|
+6	15881000	.	T	C	.	.	ANN=C|synonymous_variant|LOW|DemoGene_chr6|DEMO.C06.F1|transcript|DEMO.C06.F1.t1|protein_coding|1/1|c.100T>C|p.S34S|100|100|34|0|
+7	15101000	.	A	G	.	.	ANN=G|synonymous_variant|LOW|DemoGene_chr7|DEMO.C07.F1|transcript|DEMO.C07.F1.t1|protein_coding|1/1|c.100A>G|p.T34T|100|100|34|0|
+8	14461000	.	C	T	.	.	ANN=T|synonymous_variant|LOW|DemoGene_chr8|DEMO.C08.F1|transcript|DEMO.C08.F1.t1|protein_coding|1/1|c.100C>T|p.L34L|100|100|34|0|
+9	11751000	.	G	A	.	.	ANN=A|synonymous_variant|LOW|DemoGene_chr9|DEMO.C09.F1|transcript|DEMO.C09.F1.t1|protein_coding|1/1|c.100G>A|p.G34G|100|100|34|0|
+10	11851000	.	T	C	.	.	ANN=C|synonymous_variant|LOW|DemoGene_chr10|DEMO.C10.F1|transcript|DEMO.C10.F1.t1|protein_coding|1/1|c.100T>C|p.S34S|100|100|34|0|
+11	14751000	.	A	G	.	.	ANN=G|synonymous_variant|LOW|DemoGene_chr11|DEMO.C11.F1|transcript|DEMO.C11.F1.t1|protein_coding|1/1|c.100A>G|p.T34T|100|100|34|0|
+12	13991000	.	C	T	.	.	ANN=T|synonymous_variant|LOW|DemoGene_chr12|DEMO.C12.F1|transcript|DEMO.C12.F1.t1|protein_coding|1/1|c.100C>T|p.L34L|100|100|34|0|

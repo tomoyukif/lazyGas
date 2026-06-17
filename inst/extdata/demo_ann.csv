@@ -1,0 +1,4 @@
+Gene_ID,Name,Description
+DEMO.G002.P1,DemoGene_peak1,"Synthetic demo gene overlapping chr2 peak block 1 (fruit-weight QTL example)"
+DEMO.G002.P2,DemoGene_peak2,"Synthetic demo gene overlapping chr2 peak block 2"
+DEMO.G005.P1,DemoGene_peak3,"Synthetic demo gene overlapping chr5 peak block 3"

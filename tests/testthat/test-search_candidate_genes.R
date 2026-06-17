@@ -22,6 +22,47 @@ make_test_candidate <- function() {
   )
 }
 
+make_semantic_test_candidate <- function() {
+  n <- 12L
+  data.frame(
+    peak_ID = rep(1L, n),
+    Gene_ID = paste0("g", seq_len(n)),
+    Gene_chr = "1",
+    Gene_start = seq_len(n),
+    dist2peak = seq_len(n) * 100L,
+    negLog10P = 3,
+    Description = c(
+      "fruit weight development and ripening",
+      "root hair elongation",
+      "seed weight regulation",
+      "photosystem II reaction center",
+      "grain yield and biomass accumulation",
+      "floral organ development",
+      "drought stress response pathway",
+      "cell wall biosynthesis enzyme",
+      "starch metabolism in endosperm",
+      "auxin transport and signaling",
+      "ethylene biosynthesis regulation",
+      "gibberellin-mediated stem elongation"
+    ),
+    GO = c(
+      "fruit development",
+      "root development",
+      "seed development",
+      "photosynthesis",
+      "grain yield",
+      "flower development",
+      "drought tolerance",
+      "cell wall",
+      "starch biosynthesis",
+      "auxin signaling",
+      "ethylene response",
+      "gibberellin pathway"
+    ),
+    stringsAsFactors = FALSE
+  )
+}
+
 test_that("searchCandidateGenes is exported", {
   skip_if_not_installed("lazyGas")
   expect_true("searchCandidateGenes" %in% getNamespaceExports("lazyGas"))
@@ -120,7 +161,18 @@ test_that("missing ann_cols errors", {
 test_that("semantic search runs when text2vec is available", {
   skip_if_not_installed("text2vec")
   searchCandidateGenes <- .load_search_fn()
-  cand <- make_test_candidate()
+  cand <- make_semantic_test_candidate()
+  expect_warning(
+    searchCandidateGenes(
+      candidate = cand,
+      query = "grain yield fruit mass",
+      ann_cols = c("Description", "GO"),
+      mode = "semantic",
+      min_score = 0,
+      top_n = 3L
+    ),
+    NA
+  )
   out <- searchCandidateGenes(
     candidate = cand,
     query = "grain yield fruit mass",
@@ -131,7 +183,23 @@ test_that("semantic search runs when text2vec is available", {
   )
   expect_true(nrow(out) >= 1L)
   expect_true(all(c("semantic_score", "match_score") %in% names(out)))
-  expect_true("g1" %in% out$Gene_ID || "g3" %in% out$Gene_ID)
+  expect_true("g1" %in% out$Gene_ID || "g3" %in% out$Gene_ID || "g5" %in% out$Gene_ID)
+})
+
+test_that("semantic mode warns when gene count is low", {
+  skip_if_not_installed("text2vec")
+  searchCandidateGenes <- .load_search_fn()
+  cand <- make_test_candidate()[1:3, , drop = FALSE]
+  expect_warning(
+    searchCandidateGenes(
+      candidate = cand,
+      query = "fruit development",
+      ann_cols = "Description",
+      mode = "semantic",
+      min_score = 0
+    ),
+    "fewer than 10 genes"
+  )
 })
 
 test_that("semantic mode errors without text2vec", {

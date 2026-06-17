@@ -137,14 +137,21 @@ NULL
   }
   meta_path <- .store_meta_path(object)
   if (!file.exists(meta_path)) {
-    return(list())
+    return(list(lazygas_schema_version = 1L))
   }
-  jsonlite::fromJSON(txt = meta_path, simplifyVector = TRUE)
+  meta <- jsonlite::fromJSON(txt = meta_path, simplifyVector = TRUE)
+  if (is.null(meta$lazygas_schema_version)) {
+    meta$lazygas_schema_version <- 1L
+  }
+  meta
 }
 
 .store_write_meta <- function(object, meta) {
   if (.store_is_gds(object)) {
     return(invisible(NULL))
+  }
+  if (is.null(meta$lazygas_schema_version)) {
+    meta$lazygas_schema_version <- 1L
   }
   meta_path <- .store_meta_path(object)
   jsonlite::write_json(meta, path = meta_path, auto_unbox = TRUE, pretty = TRUE)
@@ -310,7 +317,7 @@ NULL
   sub("\\.parquet$", "", files)
 }
 
-.store_write_scan <- function(object, pheno_name, mat, colnames_stats) {
+.store_write_scan <- function(object, pheno_name, mat, colnames_stats, update_meta = TRUE) {
   if (.store_is_gds(object)) {
   .create_gdsn(root_node = object$root,
                target_node = "lazygas/scan",
@@ -326,11 +333,42 @@ NULL
   names(df) <- colnames_stats
   path <- .store_scan_path(object, pheno_name)
   .store_write_table(object, df, path)
+  if (update_meta) {
+    .store_append_scan_meta(object, pheno_name, colnames_stats)
+  } else {
+    if (is.null(object@store$pending_scan_meta)) {
+      object@store$pending_scan_meta <- list()
+    }
+    object@store$pending_scan_meta[[pheno_name]] <- colnames_stats
+  }
+  invisible(NULL)
+}
+
+.store_append_scan_meta <- function(object, pheno_name, colnames_stats) {
   phenos <- unique(c(.store_list_scan_phenos(object), pheno_name))
   meta <- .store_read_meta(object)
   meta$scan_phenotypes <- phenos
   meta$scan_colnames[[pheno_name]] <- colnames_stats
   .store_write_meta(object, meta)
+  invisible(NULL)
+}
+
+.store_flush_scan_meta <- function(object) {
+  if (.store_is_gds(object)) {
+    return(invisible(NULL))
+  }
+  pending <- object@store$pending_scan_meta
+  if (is.null(pending) || length(pending) == 0L) {
+    return(invisible(NULL))
+  }
+  phenos <- unique(c(.store_list_scan_phenos(object), names(pending)))
+  meta <- .store_read_meta(object)
+  meta$scan_phenotypes <- phenos
+  for (pheno_name in names(pending)) {
+    meta$scan_colnames[[pheno_name]] <- pending[[pheno_name]]
+  }
+  .store_write_meta(object, meta)
+  object@store$pending_scan_meta <- NULL
   invisible(NULL)
 }
 
