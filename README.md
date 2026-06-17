@@ -37,6 +37,39 @@ For more information, run the following code on a R console to see a vignette.
 browseVignettes(package = "lazyGas")
 ```
 
+## Demos
+
+Bundled sample data lives under `inst/extdata/` (`sample.gds`, phenotype CSVs, demo
+annotation, SnpEff VCF, and ortholog table). After installing or loading the
+package from source (`devtools::load_all()`), you can run end-to-end demos without
+preparing your own files.
+
+**Dashboard demo** (variant viewer + interactive summary):
+
+```R
+runDashboardDemo(out_dir = "demo_output")
+# -> demo_output/lazygas_dashboard.html
+```
+
+**MVP feature demo** (v0.6+ APIs: `runLazyGas()`, GWAS QC, multi-trait peaks,
+fine-mapping, ortholog annotation):
+
+```R
+runMvpDemo(out_dir = "demo_output/mvp")
+# -> demo_output/mvp/lazygas_mvp_report.html
+```
+
+From the shell at the package root:
+
+```bash
+Rscript inst/demo/run_dashboard_demo.R demo_output
+Rscript inst/demo/run_mvp_demo.R demo_output/mvp
+```
+
+The MVP demo uses three correlated traits in `demo_pheno_multitrait.csv` so that
+cross-trait peak clustering and shared candidate-gene summaries can be exercised
+on a single locus.
+
 ## Usage
 
 Below is a brief overview of how to use `lazyGas` to conduct a genetic association study. For more detailed instructions, refer to the vignette.

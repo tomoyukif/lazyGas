@@ -45,3 +45,37 @@ test_that("multitrait overview runs after full pipeline", {
   expect_s3_class(mt$heatmap, "ggplot")
   expect_true(is.data.frame(mt$summary))
 })
+
+test_that("multitrait clustering merges peaks at the same locus", {
+  skip_if_not_installed("GBScleanR")
+
+  gds_fn <- .copy_sample_gds(.skip_without_sample_gds())
+  on.exit(unlink(gds_fn), add = TRUE)
+
+  lg <- lazyGas::buildLazyGas(
+    gds_fn = gds_fn,
+    load_filter = TRUE,
+    overwrite = TRUE,
+    lazygas_store = "parquet"
+  )
+  on.exit(.close_lg(lg), add = TRUE)
+
+  peaks <- data.frame(
+    trait = c("trait_a", "trait_b", "trait_c"),
+    peak_ID = 1L,
+    peak_variant_ID = "1378",
+    chr = 2L,
+    pos = 13920070L,
+    negLog10P = c(10, 9, 8),
+    peak_key = c("trait_a:1", "trait_b:1", "trait_c:1"),
+    stringsAsFactors = FALSE
+  )
+  clusters <- lazyGas:::.multitrait_cluster_peaks(
+    object = lg,
+    peaks = peaks,
+    dist_threshold = 500000L,
+    r2_threshold = 0.6
+  )
+  expect_equal(length(unique(clusters$cluster_id)), 1L)
+  expect_false(any(clusters$merge_reason == "singleton"))
+})

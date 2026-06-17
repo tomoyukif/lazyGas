@@ -21,7 +21,7 @@ This vignette demonstrates the process of conducting a genetic association study
 
 Companion storage for scan, peak, recalc, and candidate outputs is written by default to a Parquet-backed directory next to the GDS file (or optionally SQLite or the legacy GDS `lazygas/` subtree); see the [Where association results are stored](#where-association-results-are-stored) section. Optional refinement of candidate genes with `searchCandidateGenes()` uses keyword and/or semantic similarity search and requires the suggested package **text2vec** for semantic mode (`install.packages("text2vec")`).
 
-Since v0.5.0, lazyGas also provides a **variant viewer** (`getVariantViewerData()`, `plotVariantViewer()`) and an **interactive dashboard** (`makeInteractiveDashboard()`) that links candidate genes to per-gene variant plots in a single HTML file. A runnable demo is available via `runDashboardDemo()` using bundled files in `inst/extdata/`.
+Since v0.5.0, lazyGas also provides a **variant viewer** (`getVariantViewerData()`, `plotVariantViewer()`) and an **interactive dashboard** (`makeInteractiveDashboard()`) that links candidate genes to per-gene variant plots in a single HTML file. Runnable demos are available via `runDashboardDemo()` and, for v0.6+ features, `runMvpDemo()` using bundled files in `inst/extdata/`.
 
 Load the lazyGas package.
 ```{r message=FALSE, results="hide", warning=FALSE}
@@ -703,6 +703,37 @@ From the shell, after installing or loading the package from source:
 Rscript inst/demo/run_dashboard_demo.R demo_output
 ```
 
+### MVP feature demo (v0.6+)
+
+`runMvpDemo()` exercises the newer APIs on bundled data: three traits
+(`demo_pheno_multitrait.csv`), gene annotation, SnpEff effects, and an ortholog
+table (`demo_orthologs.csv`). It runs `runLazyGas()`, prints GWAS QC and
+cross-trait peak summaries, conditional association and credible-set results,
+and ortholog matches, then writes an HTML report.
+
+```{r eval=FALSE}
+runMvpDemo(out_dir = "demo_output/mvp")
+# -> demo_output/mvp/lazygas_mvp_report.html
+# Companion store: demo_output/mvp/sample.lazygas/
+```
+
+From the shell:
+
+```{bash, eval=FALSE}
+Rscript inst/demo/run_mvp_demo.R demo_output/mvp
+```
+
+Bundled MVP inputs in `inst/extdata/`:
+
+| File | Role |
+|------|------|
+| `sample.gds` | Genotypes (100 samples, chromosomes 1–12) |
+| `demo_pheno_multitrait.csv` | `fruit_weight`, `fruit_length`, `flowering_time` |
+| `demo_annotation.gff` | Gene models for candidate listing |
+| `demo_snpeff.vcf` | SnpEff annotations (converted to GDS on first run) |
+| `demo_ann.csv` | Gene names and descriptions |
+| `demo_orthologs.csv` | Ortholog IDs and scores for `annotateOrthologs()` |
+
 ### MVP workflow: runLazyGas, QC, and cross-trait view
 
 Run the core pipeline in one call after assigning phenotypes:
@@ -743,6 +774,16 @@ Fine-mapping within a peak (conditional scan and credible set):
 ```{r eval=FALSE}
 conditionalAssoc(lg, pheno = "Fruit weight", peak_id = 1, recalc = TRUE)
 calcCredibleSet(lg, pheno = "Fruit weight", peak_id = 1, use_conditional = TRUE)
+```
+
+Ortholog annotation on a candidate table:
+
+```{r eval=FALSE}
+ortholog <- read.csv(system.file("extdata", "demo_orthologs.csv", package = "lazyGas"))
+cand <- lazyData(lg, dataset = "candidate", pheno = "fruit_weight")
+annotateOrthologs(candidate = cand, ortholog = ortholog)
+```
+
 Shiny and Quarto templates ship under `inst/shiny/` and `inst/quarto/`.
 Launch the Shiny explorer with `runLazyGasShiny()`.
 

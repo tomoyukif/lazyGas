@@ -1,0 +1,6 @@
+gene_id,ortholog_id,score,species
+DEMO.G002.P1,Os02g01010,0.94,rice
+DEMO.G002.P2,Os02g01020,0.88,rice
+DEMO.G005.P1,At5g12340,0.91,arabidopsis
+DEMO.C01.F1,Os01g09000,0.72,rice
+DEMO.C03.F1,Os03g05000,0.68,rice

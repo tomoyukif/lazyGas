@@ -38,6 +38,7 @@ Collate:
     'interactive.R'
     'search_candidate_genes.R'
     'demo_dashboard.R'
+    'demo_mvp.R'
     'pipeline.R'
     'qc.R'
     'multitrait.R'

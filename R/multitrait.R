@@ -185,7 +185,7 @@ plotMultiTraitOverview <- function(object,
     ri <- find_root(i)
     rj <- find_root(j)
     if (ri != rj) {
-      parent[rj] <- ri
+      parent[rj] <<- ri
     }
   }
 
