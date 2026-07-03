@@ -23,4 +23,6 @@ A list of ggplot objects representing the haplotype plots.
 }
 \description{
 This function generates haplotype plots for the specified phenotype.
+Plot titles include peak location, \code{-log10P}, and the additive scan
+effect direction when \code{Coef.add} is available in stored scan results.
 }

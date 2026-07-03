@@ -112,10 +112,16 @@ test_that("full pipeline: peak calling, recalc, plots, and haploPlot", {
   expect_true(is.list(hap_peak))
   expect_gt(length(hap_peak), 0L)
   expect_s3_class(hap_peak[[1L]], "ggplot")
+  scan_dat <- lazyGas::lazyData(object = lg, dataset = "scan", pheno = pheno_name)
+  expect_true("Coef.add" %in% names(scan_dat))
+  hap_title <- hap_peak[[1L]]$labels$title
+  expect_true(grepl("Coef.add", hap_title, fixed = TRUE))
+  expect_match(hap_title, "alt allele (increases|decreases) phenotype")
 
   hap_recalc <- lazyGas::haploPlot(object = lg, pheno = pheno_name, recalc = TRUE)
   expect_true(is.list(hap_recalc))
   expect_gt(length(hap_recalc), 0L)
+  expect_match(hap_recalc[[1L]]$labels$title, "Coef.add")
 })
 
 test_that("full pipeline: listCandidate and searchCandidateGenes", {

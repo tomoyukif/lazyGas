@@ -194,6 +194,9 @@ setMethod("plotPeaks",
 #' Generate Haplotype Plots
 #'
 #' This function generates haplotype plots for the specified phenotype.
+#' Plot titles include peak location, \code{-log10P}, and the additive scan
+#' effect direction when \code{Coef.add} is available in stored scan results
+#' (in original phenotype units for continuous traits).
 #'
 #' @param object A LazyGas object.
 #' @param pheno The phenotype to plot.
@@ -256,6 +259,11 @@ setMethod("haploPlot",
 
   peak_info <- .get_peak_info(peakcall = peakcall)
 
+  scan_df <- tryCatch(
+    .get_scan(object = object, pheno_name = pheno_name),
+    error = function(e) NULL
+  )
+
   out <- NULL
   # Loop through each unique peak ID
   for(i_peak in seq_along(peak_info$peak_height)){
@@ -290,22 +298,77 @@ setMethod("haploPlot",
     pheno <- getPheno(object = object)
     df <- data.frame(y = pheno$pheno[, pheno_name], x = hap)
 
+    title <- .haplo_plot_title(
+      peak_chr = peak_info$peak_chr[i_peak],
+      peak_pos = peak_info$peak_pos[i_peak],
+      peak_height = peak_info$peak_height[i_peak],
+      peak_variant_id = peak_info$peak_id[i_peak],
+      scan_df = scan_df
+    )
+
     # Generate the plot
     p <- ggplot(df) +
       geom_boxplot(aes(x = x, y = y)) +
-      labs(title = paste("Peak @",
-                         paste(peak_info$peak_chr[i_peak],
-                               peak_info$peak_pos[i_peak],
-                               sep = "_"),
-                         ", -log10P = ",
-                         signif(x = peak_info$peak_height[i_peak],
-                                digits = 3))) +
+      labs(title = title) +
       xlab("Haplotypes") +
       ylab(pheno_name)
 
     out <- c(out, list(p))
   }
   return(out)
+}
+
+.peak_scan_additive_coef <- function(scan_df, variant_id) {
+  if (is.null(scan_df) || nrow(scan_df) == 0L) {
+    return(NA_real_)
+  }
+  hit <- match(variant_id, scan_df$variant_ID)
+  if (is.na(hit)) {
+    return(NA_real_)
+  }
+  if ("Coef.add" %in% names(scan_df)) {
+    return(as.numeric(scan_df$Coef.add[hit]))
+  }
+  coef_cols <- grep("^Coef\\.", names(scan_df), value = TRUE)
+  if (length(coef_cols) == 0L) {
+    return(NA_real_)
+  }
+  as.numeric(scan_df[[coef_cols[1]]][hit])
+}
+
+.haplo_effect_title_suffix <- function(coef) {
+  if (is.na(coef)) {
+    return("")
+  }
+  if (coef > 0) {
+    return(sprintf(
+      ", alt allele increases phenotype (Coef.add = %s)",
+      signif(coef, digits = 3)
+    ))
+  }
+  if (coef < 0) {
+    return(sprintf(
+      ", alt allele decreases phenotype (Coef.add = %s)",
+      signif(coef, digits = 3)
+    ))
+  }
+  ", no additive effect (Coef.add = 0)"
+}
+
+.haplo_plot_title <- function(peak_chr,
+                              peak_pos,
+                              peak_height,
+                              peak_variant_id,
+                              scan_df) {
+  base <- paste(
+    "Peak @",
+    paste(peak_chr, peak_pos, sep = "_"),
+    ", -log10P =",
+    signif(peak_height, digits = 3)
+  )
+  coef <- .peak_scan_additive_coef(scan_df = scan_df,
+                                   variant_id = peak_variant_id)
+  paste0(base, .haplo_effect_title_suffix(coef))
 }
 
 .get_peak_info <- function(peakcall = peakcall){
