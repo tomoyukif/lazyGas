@@ -184,6 +184,11 @@ makeConvFun <-  function(geno_format = c("genotype", "corrected", "dosage", "hap
 ################################################################################
 #' Scan QTL
 #'
+#' Continuous phenotypes are standardized internally before regression. Stored
+#' \code{Coef.*} columns are rescaled to the original phenotype units (change in
+#' phenotype per genotype unit). Binary phenotypes are not standardized; their
+#' coefficients remain on the GLM scale (log-odds).
+#'
 #' @param object A LazyGas object
 #' @param out_fn Prefix of output file name
 #' @param formula The formula of the regression model
@@ -291,8 +296,13 @@ setMethod("scanAssoc",
 
               # Retrieve the phenotype data from the GDS object
               binary <- getPheno(object = object)$pheno_type$binary[i]
-              i_pheno <- getPheno(object = object)$pheno[, i_pheno_names]
-              i_pheno <- .standardize(val = i_pheno, binary = binary)
+              i_pheno_raw <- getPheno(object = object)$pheno[, i_pheno_names]
+              pheno_scale <- if (isTRUE(binary)) {
+                1
+              } else {
+                stats::sd(i_pheno_raw, na.rm = TRUE)
+              }
+              i_pheno <- .standardize(val = i_pheno_raw, binary = binary)
 
               # Perform regression analysis and store results
               .perform_regression(object = object,
@@ -305,7 +315,8 @@ setMethod("scanAssoc",
                                   dokruskal = dokruskal,
                                   i_pheno_names = i_pheno_names,
                                   binary = binary,
-                                  method = method)
+                                  method = method,
+                                  pheno_scale = pheno_scale)
             }
 
             .store_flush_scan_meta(object = object)
@@ -335,6 +346,24 @@ setMethod("scanAssoc",
   }
 }
 
+.rescale_scan_coefs <- function(mat, pheno_scale) {
+  if (is.null(mat)) {
+    return(mat)
+  }
+  if (length(pheno_scale) != 1L || !is.finite(pheno_scale) || pheno_scale <= 0) {
+    return(mat)
+  }
+  if (abs(pheno_scale - 1) < .Machine$double.eps^0.5) {
+    return(mat)
+  }
+  coef_cols <- grep("^Coef\\.", colnames(mat), value = TRUE)
+  if (length(coef_cols) == 0L) {
+    return(mat)
+  }
+  mat[, coef_cols] <- mat[, coef_cols, drop = FALSE] * pheno_scale
+  mat
+}
+
 ## Sub-function to perform regression analysis and store results
 #' @importFrom gdsfmt apply.gdsn
 #' @importFrom gaston as.bed.matrix GRM association.test
@@ -348,7 +377,8 @@ setMethod("scanAssoc",
                                 dokruskal,
                                 i_pheno_names,
                                 binary,
-                                method) {
+                                method,
+                                pheno_scale = 1) {
   margin <- switch(geno_format,
                    "genotype" = 3,
                    "corrected" = 3,
@@ -443,6 +473,8 @@ setMethod("scanAssoc",
   p_values <- cbind(p_values,
                     FDR = p.adjust(p = p_values[, "P.model"], method = "fdr"),
                     negLog10P = -log10(p_values[, "P.model"]))
+
+  p_values <- .rescale_scan_coefs(mat = p_values, pheno_scale = pheno_scale)
 
   .store_write_scan(
     object = object,
