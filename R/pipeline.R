@@ -7,7 +7,7 @@
 #' @param object A \code{LazyGas} object with phenotype data assigned.
 #' @param steps Character vector of steps to run. One or more of \code{"scan"},
 #'   \code{"peakcall"}, \code{"recalc"}, \code{"candidate"}, \code{"dashboard"},
-#'   \code{"summary"}.
+#'   \code{"summary"}, or \code{"fine_mapping"}.
 #' @param resume If \code{TRUE}, skip steps whose outputs already exist in the
 #'   companion store.
 #' @param gff,gff_fn \code{GRanges} or path to GFF for \code{listCandidate()} and
@@ -38,7 +38,7 @@ runLazyGas <- function(object,
   }
   steps <- match.arg(
     steps,
-    c("scan", "peakcall", "recalc", "candidate", "dashboard", "summary"),
+    c("scan", "peakcall", "recalc", "candidate", "fine_mapping", "dashboard", "summary"),
     several.ok = TRUE
   )
   if (!is.null(seed)) {
@@ -59,6 +59,9 @@ runLazyGas <- function(object,
   peak_args <- dots[names(dots) %in% c("signif", "threshold", "limit_peakcall", "n_threads")]
   recalc_args <- dots[names(dots) %in% c("n_threads", "refine_position", "grouping_threshold")]
   cand_args <- dots[names(dots) %in% c("recalc")]
+  fm_args <- dots[names(dots) %in% c(
+    "recalc", "k_step", "p_threshold", "coverage", "prior_W", "prior_V", "peak_ids"
+  )]
   report_args <- dots[names(dots) %in% c("what", "genes", "peak_id")]
 
   ran <- character()
@@ -132,6 +135,30 @@ runLazyGas <- function(object,
     }
   }
 
+  if ("fine_mapping" %in% steps) {
+    use_recalc <- if (!is.null(fm_args$recalc)) fm_args$recalc else recalc
+    if (resume && .store_section_exists(object, "fine_mapping")) {
+      skipped <- c(skipped, "fine_mapping")
+    } else {
+      if (use_recalc && !.store_section_exists(object, "recalc")) {
+        stop("No recalc data. Run step 'recalc' first or set recalc = FALSE.",
+             call. = FALSE)
+      }
+      if (!use_recalc && !.store_section_exists(object, "peakcall")) {
+        stop("No peakcall data. Run step 'peakcall' first.", call. = FALSE)
+      }
+      message("runLazyGas: runFineMapping()")
+      do.call(
+        runFineMapping,
+        c(
+          list(object = object, recalc = use_recalc, store = TRUE),
+          fm_args[setdiff(names(fm_args), "recalc")]
+        )
+      )
+      ran <- c(ran, "fine_mapping")
+    }
+  }
+
   if ("summary" %in% steps || "dashboard" %in% steps) {
     if (is.null(out_fn)) {
       out_fn <- file.path(
@@ -143,9 +170,9 @@ runLazyGas <- function(object,
     what <- if (!is.null(report_args$what)) {
       report_args$what
     } else if ("dashboard" %in% steps) {
-      c("scan_png", "peakcall", "recalc", "candidate")
+      c("scan_png", "peakcall", "recalc", "candidate", "fine_mapping")
     } else {
-      c("scan_png", "peakcall", "recalc", "candidate")
+      c("scan_png", "peakcall", "recalc", "candidate", "fine_mapping")
     }
     if ("dashboard" %in% steps) {
       if (is.null(gff)) {

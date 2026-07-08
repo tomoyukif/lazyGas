@@ -18,6 +18,15 @@ plotMultiTraitOverview(
 
 \item{dist_threshold, r2_threshold}{Passed to \code{\link[=clusterCrossTraitPeaks]{clusterCrossTraitPeaks()}}.}
 }
+\value{
+A list with \code{heatmap} (genome-wide trait-by-chromosome tile plot),
+\code{clusters}, \code{summary}, and \code{shared_genes}. The heatmap shows
+all chromosomes in the marker set; colored tiles mark chromosomes with a
+peak for that trait (fill = \code{cluster_id}). \code{shared_genes} lists
+candidate genes that appear in two or more traits within the same cluster
+window; it is empty when \code{\link[=listCandidate]{listCandidate()}} has not been run or no gene is
+shared across traits in that region.
+}
 \description{
 Plot multi-trait peak overview
 }

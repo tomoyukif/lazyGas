@@ -27,7 +27,8 @@ NULL
   paste0(stem, ".lazygas")
 }
 
-.store_init <- function(object, gds_fn, store = "parquet", overwrite = FALSE) {
+.store_init <- function(object, gds_fn, store = "parquet", overwrite = FALSE,
+                        companion_path = NULL) {
   store <- match.arg(store, c("parquet", "sqlite", "gds", "auto"))
   gds_fn <- normalizePath(gds_fn, winslash = "/", mustWork = FALSE)
 
@@ -49,7 +50,12 @@ NULL
     return(object)
   }
 
-  path <- .store_companion_path(gds_fn = gds_fn, store_mode = store)
+  path <- if (!is.null(companion_path) && length(companion_path) == 1L &&
+              nzchar(companion_path)) {
+    normalizePath(companion_path, winslash = "/", mustWork = FALSE)
+  } else {
+    .store_companion_path(gds_fn = gds_fn, store_mode = store)
+  }
   if (overwrite && store == "parquet" && dir.exists(path)) {
     unlink(path, recursive = TRUE)
   }
@@ -68,6 +74,7 @@ NULL
     dir.create(file.path(path, "multitrait"), recursive = TRUE, showWarnings = FALSE)
     dir.create(file.path(path, "conditional"), recursive = TRUE, showWarnings = FALSE)
     dir.create(file.path(path, "credible_set"), recursive = TRUE, showWarnings = FALSE)
+    dir.create(file.path(path, "fine_mapping"), recursive = TRUE, showWarnings = FALSE)
     dir.create(file.path(path, "pipeline"), recursive = TRUE, showWarnings = FALSE)
   }
 
@@ -77,22 +84,6 @@ NULL
     path = path,
     peak_buffer = new.env(parent = emptyenv())
   )
-
-  if (store != "gds" && exist.gdsn(node = object$root, path = "lazygas")) {
-    companion_empty <- !dir.exists(path) ||
-      length(list.files(path, all.files = TRUE, no.. = TRUE)) == 0L
-    if (store == "sqlite") {
-      companion_empty <- !file.exists(path)
-    }
-    if (companion_empty) {
-      .store_migrate_from_gds(object)
-    } else {
-      message(
-        "Companion store already exists; keeping it. ",
-        "Use importLazyGasResults() to copy legacy GDS lazygas/ data."
-      )
-    }
-  }
 
   object
 }
@@ -774,21 +765,6 @@ NULL
   .store_pheno_table_exists(object, dataset, "peaks", pheno_name)
 }
 
-#' Import lazyGas results from the legacy GDS `lazygas/` subtree into the companion store.
-#' @param object A LazyGas object using Parquet or SQLite storage.
-#' @export
-importLazyGasResults <- function(object) {
-  if (.store_is_gds(object)) {
-    stop("object already uses GDS storage (lazygas_store = \"gds\").", call. = FALSE)
-  }
-  if (!exist.gdsn(node = object$root, path = "lazygas")) {
-    message("No lazygas/ node in the GDS file.")
-    return(invisible(object))
-  }
-  .store_migrate_from_gds(object)
-  invisible(object)
-}
-
 .store_write_candidate <- function(object, pheno_name, candidate, snpeff) {
   if (.store_is_gds(object)) {
     if (is.null(candidate)) {
@@ -934,123 +910,6 @@ importLazyGasResults <- function(object) {
   )
 }
 
-.store_migrate_from_gds <- function(object) {
-  if (!exist.gdsn(node = object$root, path = "lazygas")) {
-    return(invisible(NULL))
-  }
-  if (.store_is_gds(object)) {
-    return(invisible(NULL))
-  }
-  message("Migrating lazygas/ results from GDS to companion storage...")
-  meta <- .store_read_meta_gds(object)
-  .store_write_meta(object, meta)
-
-  if (exist.gdsn(node = object$root, path = "lazygas/scan")) {
-    phenos <- .store_list_scan_phenos_gds(object)
-    for (pheno in phenos) {
-      scan_node <- paste0("lazygas/scan/", pheno)
-      col_names <- gdsfmt::get.attr.gdsn(
-        node = gdsfmt::index.gdsn(node = object$root, path = scan_node)
-      )$colnames
-      mat <- gdsfmt::read.gdsn(
-        node = gdsfmt::index.gdsn(node = object$root, path = scan_node)
-      )
-      .store_write_scan(object, pheno, mat, col_names)
-    }
-  }
-
-  for (section in c("peakcall", "recalc")) {
-    for (kind in c("peaks", "blocks", "groups")) {
-      base <- paste0("lazygas/", section, "/", kind)
-      if (!exist.gdsn(node = object$root, path = base)) {
-        next
-      }
-      phenos <- gdsfmt::ls.gdsn(
-        node = gdsfmt::index.gdsn(node = object, path = base)
-      )
-      for (pheno in phenos) {
-        dfs <- .store_gds_peak_kind_to_df(
-          object = object,
-          section = section,
-          kind = kind,
-          pheno_name = pheno
-        )
-        if (is.null(dfs)) {
-          next
-        }
-        .store_write_peaks_df(object, section, pheno, kind, dfs)
-      }
-    }
-  }
-
-  for (kind in c("candidate", "snpeff")) {
-    base <- paste0("lazygas/", kind)
-    if (!exist.gdsn(node = object$root, path = base)) {
-      next
-    }
-    phenos <- gdsfmt::ls.gdsn(
-      node = gdsfmt::index.gdsn(node = object, path = base)
-    )
-    att <- gdsfmt::get.attr.gdsn(
-      node = gdsfmt::index.gdsn(node = object$root, path = base)
-    )
-    for (pheno in phenos) {
-      raw <- .get_data_gds_only(object, paste0(base, "/", pheno))
-      if (length(raw) == 0L) {
-        next
-      }
-      df <- as.data.frame(raw, stringsAsFactors = FALSE)
-      if (length(att$col_names)) {
-        colnames(df) <- att$col_names
-      }
-      if (kind == "candidate") {
-        .store_write_candidate(object, pheno, df, NULL)
-      } else {
-        .store_write_candidate(object, pheno, NULL, df)
-      }
-    }
-  }
-  invisible(NULL)
-}
-
-.store_gds_peak_kind_to_df <- function(object, section, kind, pheno_name) {
-  node <- paste0("lazygas/", section, "/", kind, "/", pheno_name)
-  if (!exist.gdsn(node = object$root, path = node)) {
-    return(NULL)
-  }
-  raw <- .get_data_gds_only(object, node)
-  if (length(raw) == 0L) {
-    return(NULL)
-  }
-  if (!is.matrix(raw)) {
-    raw <- matrix(raw, nrow = 1)
-  }
-  if (section == "recalc") {
-    df <- data.frame(raw, stringsAsFactors = FALSE)
-  } else {
-    df <- data.frame(t(raw), stringsAsFactors = FALSE)
-  }
-  att_path <- if (section == "recalc") {
-    node
-  } else {
-    paste0("lazygas/", section, "/", kind)
-  }
-  att <- gdsfmt::get.attr.gdsn(
-    node = gdsfmt::index.gdsn(node = object$root, path = att_path)
-  )
-  if (length(att$col_names)) {
-    colnames(df) <- att$col_names
-  }
-  df
-}
-
-.store_list_scan_phenos_gds <- function(object) {
-  nodes <- gdsfmt::ls.gdsn(node = gdsfmt::index.gdsn(node = object, path = "lazygas/scan"))
-  meta_nodes <- c("kruskal", "formula", "null_formula", "conv_fun",
-                  "geno_format", "fixed_effect")
-  setdiff(nodes, meta_nodes)
-}
-
 .get_data_gds_only <- function(object, node, sel = NULL) {
   if (is.null(sel)) {
     gdsfmt::read.gdsn(node = gdsfmt::index.gdsn(node = object$root, path = node))
@@ -1192,4 +1051,63 @@ importLazyGasResults <- function(object) {
   }
   .store_write_section_df(object, "pipeline", "history", out, pheno_name = NULL)
   invisible(NULL)
+}
+
+.store_save_pheno_snapshot <- function(object) {
+  if (.store_is_gds(object)) {
+    return(invisible(NULL))
+  }
+  pheno <- object@lazydata$pheno
+  pheno_names <- object@lazydata$pheno_names
+  if (is.null(pheno) || is.null(pheno_names) || !length(pheno_names)) {
+    return(invisible(NULL))
+  }
+  sam <- getSamID(object)
+  df <- data.frame(sample_id = sam, pheno, stringsAsFactors = FALSE, check.names = FALSE)
+  .store_write_section_df(object, "pheno", "snapshot", df, pheno_name = NULL)
+  meta <- .store_read_meta(object)
+  meta$pheno_names <- as.character(pheno_names)
+  if (!is.null(object@lazydata$pheno_type)) {
+    meta$pheno_type <- object@lazydata$pheno_type
+  }
+  .store_write_meta(object, meta)
+  invisible(NULL)
+}
+
+.store_list_pheno_names <- function(object) {
+  pheno_names <- NULL
+  if (!.store_is_gds(object)) {
+    meta <- .store_read_meta(object)
+    if (length(meta$pheno_names) > 0L) {
+      pheno_names <- as.character(unlist(meta$pheno_names, use.names = FALSE))
+    }
+  }
+  if (length(pheno_names)) {
+    return(unique(pheno_names))
+  }
+
+  pheno_names <- .store_list_scan_phenos(object)
+  if (length(pheno_names)) {
+    return(unique(pheno_names))
+  }
+
+  if (.store_is_gds(object)) {
+    return(character())
+  }
+  cand_dir <- file.path(.store_path(object), "candidate")
+  if (!dir.exists(cand_dir)) {
+    return(character())
+  }
+  files <- list.files(cand_dir, pattern = "^candidate_.*\\.parquet$", full.names = FALSE)
+  if (!length(files)) {
+    return(character())
+  }
+  unique(sub("^candidate_", "", sub("\\.parquet$", "", files)))
+}
+
+.store_read_pheno_snapshot <- function(object) {
+  if (.store_is_gds(object)) {
+    return(NULL)
+  }
+  .store_read_section_df(object, "pheno", "snapshot", pheno_name = NULL)
 }

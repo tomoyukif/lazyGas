@@ -10,6 +10,7 @@ conditionalAssoc(
   peak_id,
   recalc = TRUE,
   k_step = 3L,
+  p_threshold = 0.05,
   store = TRUE
 )
 }
@@ -24,9 +25,14 @@ conditionalAssoc(
 
 \item{k_step}{Maximum number of conditioning steps.}
 
+\item{p_threshold}{Stop adding conditioning leads when the best conditional
+\code{P_conditional} is not below this value.}
+
 \item{store}{If \code{TRUE}, write results to the companion store.}
 }
 \description{
 Re-scans markers in a peak while conditioning on the lead variant (and
 optionally additional independent signals via stepwise conditioning).
+Use \code{\link[=summarizeConditionalSignals]{summarizeConditionalSignals()}} to count independent associations and
+\code{\link[=summarizeFineMapping]{summarizeFineMapping()}} for an interpretation-focused peak summary.
 }

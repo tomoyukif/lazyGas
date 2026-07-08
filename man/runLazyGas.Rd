@@ -23,7 +23,7 @@ runLazyGas(
 
 \item{steps}{Character vector of steps to run. One or more of \code{"scan"},
 \code{"peakcall"}, \code{"recalc"}, \code{"candidate"}, \code{"dashboard"},
-\code{"summary"}.}
+\code{"summary"}, or \code{"fine_mapping"}.}
 
 \item{resume}{If \code{TRUE}, skip steps whose outputs already exist in the
 companion store.}

@@ -2,7 +2,7 @@
 % Please edit documentation in R/demo_mvp.R
 \name{runMvpDemo}
 \alias{runMvpDemo}
-\title{Run MVP feature demo (pipeline, QC, multi-trait, fine-mapping, orthologs)}
+\title{Run MVP feature demo (pipeline, QC, multi-trait, fine-mapping)}
 \usage{
 runMvpDemo(
   out_dir = file.path(getwd(), "demo_output", "mvp"),
@@ -20,14 +20,15 @@ runMvpDemo(
 }
 \value{
 Invisibly, a list with \code{lg}, \code{gff}, \code{snpeff},
-\code{ann}, \code{ortholog}, \code{report_html}, and \code{out_dir}.
+\code{ann}, \code{report_html}, and \code{out_dir}.
 }
 \description{
 Uses bundled \code{sample.gds}, multi-trait phenotypes
-(\code{demo_pheno_multitrait.csv}), annotation, SnpEff, and ortholog tables.
+(\code{demo_pheno_multitrait.csv}), annotation, and SnpEff tables.
 Writes an HTML report and prints summaries for the new APIs introduced in
 lazyGas v0.6+.
 }
 \seealso{
-\code{\link[=runDashboardDemo]{runDashboardDemo()}}
+\code{\link[=runDashboardDemo]{runDashboardDemo()}},
+\code{\link[=runExplorerDemo]{runExplorerDemo()}}
 }

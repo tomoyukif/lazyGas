@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# lazyGas Ollama CLI wrapper (Apptainer). Installed by configureLazyGasOllama().
+set -euo pipefail
+
+APPTAINER="__APPTAINER_BIN__"
+SIF="__SIF_PATH__"
+HOME_DIR="__OLLAMA_HOME__"
+OLLAMA_HOST_BIND="__OLLAMA_HOST__"
+
+if [[ ! -x "${APPTAINER}" ]]; then
+  echo "Apptainer binary not executable: ${APPTAINER}" >&2
+  exit 1
+fi
+if [[ ! -f "${SIF}" ]]; then
+  echo "Ollama SIF not found: ${SIF}" >&2
+  echo "Run buildLazyGasOllamaSif() or inst/apptainer/build_ollama_sif.sh" >&2
+  exit 1
+fi
+
+mkdir -p "${HOME_DIR}"
+
+exec "${APPTAINER}" exec \
+  --bind "${HOME_DIR}:/root/.ollama" \
+  --env "OLLAMA_HOST=${OLLAMA_HOST_BIND}" \
+  --env "HOME=/root" \
+  "${SIF}" ollama "$@"

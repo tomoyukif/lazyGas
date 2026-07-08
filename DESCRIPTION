@@ -1,21 +1,25 @@
 Package: lazyGas
 Type: Package
 Title: Lazies' genetic association study (lazyGas): genetic association study pipeline for lazy guys
-Version: 0.6.0
-Date: 2026-06-17
+Version: 0.9.0
+Date: 2026-07-09
 Authors@R: person("Tomoyuki", "Furuta", 
            email = "f.tomoyuki@okayama-u.ac.jp",
            role = c("aut", "cre"),
            comment = c(ORCID = "0000-0002-0869-6626"))
 Description: Genetic association study pipeline with companion Parquet storage,
-  peak calling, candidate gene listing, variant viewer, and interactive HTML reports.
+  peak calling, candidate gene listing, variant viewer, interactive HTML reports,
+  and a phenotype explorer Shiny app with GWAS / locus plots and optional local
+  LLM support. GWAS effect coefficients for continuous traits are reported in
+  original phenotype units.
 License: GPL-3 + file LICENSE
 Encoding: UTF-8
 Depends: GBScleanR
 Imports: stats, utils, methods, ggplot2, gdsfmt, GenomeInfoDb, GenomicRanges, IRanges,
   S4Vectors, SNPRelate, SeqArray, cowplot, dplyr, parameters, rtracklayer, vcfR,
-  arrow, jsonlite, gaston
-Suggests: DBI, RSQLite, testthat, BiocStyle, knitr, rmarkdown, text2vec, base64enc, shiny, quarto
+  arrow, jsonlite, gaston, plotly, htmltools, reactable
+Suggests: DBI, RSQLite, testthat, BiocStyle, knitr, rmarkdown, text2vec, base64enc,
+  shiny, quarto, httr2, curl, rentrez, processx
 SystemRequirements: GNU make, C++11
 VignetteBuilder: knitr
 Roxygen: list(markdown = TRUE)
@@ -43,5 +47,12 @@ Collate:
     'qc.R'
     'multitrait.R'
     'conditional.R'
-    'ortholog.R'
-    'shiny-app.R'
+    'llm-local.R'
+    'ollama-apptainer.R'
+    'ollama-server.R'
+    'phenotype-query.R'
+    'gene-evidence.R'
+    'phenotype-rank.R'
+    'explorer-demo.R'
+    'shiny-explorer.R'
+    'resolve-paths.R'

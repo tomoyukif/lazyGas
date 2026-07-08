@@ -28,5 +28,8 @@ scanAssoc(
 \item{out_fn}{Prefix of output file name}
 }
 \description{
-Scan QTL
+Continuous phenotypes are standardized internally before regression. Stored
+\code{Coef.*} columns are rescaled to the original phenotype units (change in
+phenotype per genotype unit). Binary phenotypes are not standardized; their
+coefficients remain on the GLM scale (log-odds).
 }

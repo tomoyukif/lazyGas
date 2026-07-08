@@ -9,7 +9,8 @@ buildLazyGas(
   load_filter = TRUE,
   overwrite = FALSE,
   create_gds = NULL,
-  lazygas_store = c("parquet", "sqlite", "gds", "auto")
+  lazygas_store = c("parquet", "sqlite", "gds", "auto"),
+  companion_path = NULL
 )
 }
 \arguments{
@@ -22,6 +23,10 @@ buildLazyGas(
 \item{create_gds}{A named list to create a new GDS file with specified genotype and marker information. See the Details section.}
 
 \item{lazygas_store}{Where to store association results: \code{"parquet"} (default companion folder \verb{\{stem\}.lazygas/}), \code{"sqlite"}, \code{"gds"} (legacy GDS subtree), or \code{"auto"}.}
+
+\item{companion_path}{Optional path to an existing companion store when it
+does not sit next to \code{gds_fn} (e.g. Shiny file uploads). See
+\code{\link[=resolveLazyGasPaths]{resolveLazyGasPaths()}}.}
 }
 \description{
 Build a LazyGas object

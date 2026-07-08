@@ -62,8 +62,104 @@ test_that("variant viewer builds ggplot from mock data", {
     gene_id = "g1"
   )
   cds_df <- lazyGas:::.variant_viewer_cds_df(gff = gff, gene_id = "g1", plot_df = plot_df)
-  p <- lazyGas:::.variant_viewer_ggplot(plot_df = plot_df, cds_df = cds_df)
+  p <- lazyGas:::.variant_viewer_ggplot(
+    plot_df = plot_df,
+    cds_df = cds_df,
+    gene_id = "g1",
+    pheno = "fruit_weight"
+  )
   expect_true(inherits(p, "ggplot"))
+  expect_match(p$labels$title, "fruit_weight")
+  expect_match(p$labels$title, "g1")
+})
+
+test_that("variant_viewer_plot_title handles missing fields", {
+  expect_equal(
+    lazyGas:::.variant_viewer_plot_title(gene_id = "g1", pheno = "trait"),
+    "g1 — trait"
+  )
+  expect_equal(lazyGas:::.variant_viewer_plot_title(pheno = "trait"), "trait")
+  expect_equal(lazyGas:::.variant_viewer_plot_title(gene_id = "g1"), "g1")
+  expect_null(lazyGas:::.variant_viewer_plot_title())
+})
+
+test_that("variant viewer tooltips distinguish coding and non-coding variants", {
+  coding <- data.frame(
+    Allele = "A/G",
+    Position_in_CDS = 12L,
+    Position_in_AA = 4L,
+    Change_in_AA = "p.M1V",
+    Start = 1500L,
+    negLog10p = 3.1,
+    P_value = 0.001,
+    stringsAsFactors = FALSE
+  )
+  noncoding <- data.frame(
+    Allele = "C/T",
+    Position_in_CDS = NA_integer_,
+    Position_in_AA = NA_integer_,
+    Change_in_AA = NA_character_,
+    Start = 1600L,
+    negLog10p = 2.5,
+    P_value = 0.01,
+    stringsAsFactors = FALSE
+  )
+
+  coding_tip <- lazyGas:::.variant_viewer_variant_tooltip(coding)
+  noncoding_tip <- lazyGas:::.variant_viewer_variant_tooltip(noncoding)
+  gwas_tip <- lazyGas:::.variant_viewer_gwas_tooltip(coding)
+
+  expect_match(coding_tip, "Allele: A/G")
+  expect_match(coding_tip, "CDS pos: 12")
+  expect_match(coding_tip, "AA pos: 4")
+  expect_match(coding_tip, "AA change: p.M1V")
+  expect_equal(noncoding_tip, "Allele: C/T")
+  expect_match(gwas_tip, "Pos: 1500")
+  expect_match(gwas_tip, "negLog10P:")
+})
+
+test_that("variant viewer ggplotly uses custom hover text", {
+  skip_if_not_installed("plotly")
+  df <- data.frame(
+    Allele = "A/G",
+    Position_in_CDS = 1L,
+    Position_in_AA = 1L,
+    Change_in_AA = "p.M1V",
+    Change_in_DNA = "c.1A>G",
+    Start = 1500L,
+    End = 1500L,
+    ID = 1L,
+    P_value = 0.001,
+    negLog10p = 3,
+    Chr = "1",
+    Gene_ID = "g1",
+    Transcript_ID = "tx1",
+    Effect = factor("MODERATE", levels = c("HIGH", "MODERATE", "LOW", "MODIFIER")),
+    stringsAsFactors = FALSE
+  )
+  df$y_pos <- 1
+  df$x_pos <- 1500
+  df$ymin <- 1
+  df$ymax <- 1.8
+  cds_df <- data.frame(
+    Transcript_ID = factor("tx1", levels = "tx1"),
+    cds_start = 1200L,
+    cds_end = 1800L,
+    ymin = 1,
+    ymax = 1.8,
+    stringsAsFactors = FALSE
+  )
+  p <- lazyGas:::.variant_viewer_ggplot(
+    plot_df = df,
+    cds_df = cds_df,
+    gene_id = "g1",
+    pheno = "fruit_weight"
+  )
+  pg <- plotly::ggplotly(p, tooltip = "text")
+  texts <- unlist(lapply(pg$x$data, `[[`, "text"))
+  texts <- texts[nzchar(texts)]
+  expect_true(any(grepl("Allele:", texts)))
+  expect_true(any(grepl("negLog10P:", texts)))
 })
 
 test_that("variant_viewer_gene_info handles NA gene_id metadata", {

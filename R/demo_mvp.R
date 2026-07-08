@@ -20,10 +20,10 @@
   extdata
 }
 
-#' Run MVP feature demo (pipeline, QC, multi-trait, fine-mapping, orthologs)
+#' Run MVP feature demo (pipeline, QC, multi-trait, fine-mapping)
 #'
 #' Uses bundled \code{sample.gds}, multi-trait phenotypes
-#' (\code{demo_pheno_multitrait.csv}), annotation, SnpEff, and ortholog tables.
+#' (\code{demo_pheno_multitrait.csv}), annotation, and SnpEff tables.
 #' Writes an HTML report and prints summaries for the new APIs introduced in
 #' lazyGas v0.6+.
 #'
@@ -33,10 +33,10 @@
 #' @param seed Random seed recorded in pipeline metadata.
 #'
 #' @return Invisibly, a list with \code{lg}, \code{gff}, \code{snpeff},
-#'   \code{ann}, \code{ortholog}, \code{report_html}, and \code{out_dir}.
+#'   \code{ann}, \code{report_html}, and \code{out_dir}.
 #' @export
 #'
-#' @seealso [runDashboardDemo()]
+#' @seealso [runDashboardDemo()], [runExplorerDemo()]
 #'
 runMvpDemo <- function(out_dir = file.path(getwd(), "demo_output", "mvp"),
                        overwrite = TRUE,
@@ -54,8 +54,7 @@ runMvpDemo <- function(out_dir = file.path(getwd(), "demo_output", "mvp"),
     pheno = file.path(extdata, "demo_pheno_multitrait.csv"),
     gff = file.path(extdata, "demo_annotation.gff"),
     vcf = file.path(extdata, "demo_snpeff.vcf"),
-    ann = file.path(extdata, "demo_ann.csv"),
-    ortholog = file.path(extdata, "demo_orthologs.csv")
+    ann = file.path(extdata, "demo_ann.csv")
   )
   for (fn in unlist(paths)) {
     if (!file.exists(fn)) {
@@ -70,7 +69,6 @@ runMvpDemo <- function(out_dir = file.path(getwd(), "demo_output", "mvp"),
   message("Loading demo annotation ...")
   gff <- rtracklayer::import.gff(paths$gff)
   ann <- read.csv(paths$ann, stringsAsFactors = FALSE)
-  ortholog <- read.csv(paths$ortholog, stringsAsFactors = FALSE)
 
   snpeff_gds_fn <- file.path(out_dir, "demo_snpeff.gds")
   if (!file.exists(snpeff_gds_fn)) {
@@ -110,7 +108,7 @@ runMvpDemo <- function(out_dir = file.path(getwd(), "demo_output", "mvp"),
     geno_format = "dosage",
     limit_peakcall = 3L,
     n_threads = 1L,
-    what = c("scan_png", "qq", "qc", "peakcall", "recalc", "cross_trait", "candidate")
+    what = c("scan_png", "qq", "qc", "peakcall", "recalc", "cross_trait", "fine_mapping", "candidate")
   )
 
   message("\n--- GWAS QC (per trait) ---")
@@ -127,38 +125,29 @@ runMvpDemo <- function(out_dir = file.path(getwd(), "demo_output", "mvp"),
 
   message("\n--- Fine-mapping (first trait, peak 1) ---")
   peak_id <- 1L
-  cond <- conditionalAssoc(
+  fm <- runFineMapping(
     object = lg,
     pheno = trait_names[1],
-    peak_id = peak_id,
+    peak_ids = peak_id,
     recalc = TRUE,
-    k_step = 2L
+    store = TRUE
   )
+  print(fm$summary)
+  cond <- lazyData(lg, dataset = "conditional", pheno = trait_names[1], kind = paste0("peak_", peak_id))
   print(head(cond[order(cond$P_conditional), ], 5))
 
-  cred <- calcCredibleSet(
-    object = lg,
-    pheno = trait_names[1],
-    peak_id = peak_id,
-    use_conditional = TRUE,
-    recalc = TRUE
-  )
+  cred <- lazyData(lg, dataset = "credible_set", pheno = trait_names[1], kind = paste0("peak_", peak_id))
+  if (is.null(cred)) {
+    cred <- calcCredibleSet(
+      object = lg,
+      pheno = trait_names[1],
+      peak_id = peak_id,
+      use_conditional = TRUE,
+      recalc = TRUE
+    )
+  }
   message("Credible set summary:")
   print(attr(cred, "summary"))
-
-  message("\n--- Ortholog annotation (", trait_names[1], ") ---")
-  cand <- lazyData(lg, dataset = "candidate", pheno = trait_names[1])
-  cand_ortho <- annotateOrthologs(candidate = cand, ortholog = ortholog)
-  ortho_show <- merge(
-    cand_ortho[, c("Gene_ID", "ortholog_id", "ortholog_score"), drop = FALSE],
-    ortholog[, c("gene_id", "species"), drop = FALSE],
-    by.x = "Gene_ID",
-    by.y = "gene_id",
-    all.x = TRUE
-  )
-  ortho_show <- ortho_show[!is.na(ortho_show$ortholog_id), , drop = FALSE]
-  print(ortho_show)
-  print(head(summarizeOrthologMatches(cand_ortho), 5))
 
   message("\nDone.")
   message("  Report: ", normalizePath(report_html, mustWork = FALSE))
@@ -167,19 +156,18 @@ runMvpDemo <- function(out_dir = file.path(getwd(), "demo_output", "mvp"),
     mustWork = FALSE
   ))
   message("  Re-run in R: runMvpDemo()")
-  message("  Shiny: runLazyGasShiny() after loading the GDS from ", out_dir)
+  message("  Shiny: runLazyGasExplorer() after loading the GDS from ", out_dir)
 
   invisible(list(
     lg = lg,
     gff = gff,
     snpeff = snpeff,
     ann = ann,
-    ortholog = ortholog,
     qc = qc,
     multitrait = mt,
     conditional = cond,
     credible_set = cred,
-    candidates_ortholog = cand_ortho,
+    fine_mapping = fm$summary,
     report_html = report_html,
     out_dir = normalizePath(out_dir, mustWork = FALSE)
   ))

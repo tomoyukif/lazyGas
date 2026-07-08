@@ -1,46 +1,96 @@
 ################################################################################
-#' Confirm data structure of genotype data per marker
+#' Extract genotype values for a single marker
+#'
+#' Returns genotypes for one marker. Among valid markers,
+#' \code{marker_index} is a 1-based index (not a variant ID).
+#'
+#' @param object A \code{LazyGas} object.
+#' @param geno_format One of \code{"genotype"}, \code{"corrected"},
+#'   \code{"dosage"}, or \code{"haplotype"}.
+#' @param marker_index Integer index of the marker among
+#'   \code{validMar(object)} markers (default \code{1L}).
+#' @param ... Unused. Legacy \code{marker_id=} is accepted with a warning and
+#'   treated as \code{marker_index}.
+#'
+#' @return
+#' \describe{
+#'   \item{dosage}{Integer vector of length \code{nsam(object)}.}
+#'   \item{genotype / haplotype}{Matrix with dimensions
+#'     \code{c(ploidy, nsam)} (rows = alleles, columns = samples).}
+#' }
+#'
 #' @export
 #'
-setGeneric("getGenoPerMarker", function(object, geno_format, marker_id, ...)
-  standardGeneric("getGenoPerMarker"))
+setGeneric("getGenoPerMarker",
+           function(object, geno_format, marker_index = 1L, ...)
+             standardGeneric("getGenoPerMarker"))
 
 setMethod("getGenoPerMarker",
           "LazyGas",
           function(object,
                    geno_format = c("genotype", "corrected", "dosage", "haplotype"),
-                   marker_index = 1){
+                   marker_index = 1L,
+                   ...) {
+            geno_format <- match.arg(
+              arg = geno_format,
+              choices = c("genotype", "corrected", "dosage", "haplotype")
+            )
 
-            geno_format <- match.arg(arg = geno_format, c("genotype", "corrected", "dosage", "haplotype"))
+            dots <- list(...)
+            if (!is.null(dots$marker_id)) {
+              warning(
+                "Argument 'marker_id' is deprecated; use 'marker_index' instead.",
+                call. = FALSE
+              )
+              marker_index <- dots$marker_id
+            }
 
-            path <- switch(geno_format,
-                           "genotype" = "genotype/data",
-                           "corrected" = "annotation/format/CGT/data",
-                           "dosage" = "annotation/format/EDS/data",
-                           "haplotype" = "annotation/format/HAP/data")
+            marker_index <- as.integer(marker_index)
+            if (length(marker_index) != 1L || is.na(marker_index) ||
+                marker_index < 1L) {
+              stop("'marker_index' must be a single positive integer.",
+                   call. = FALSE)
+            }
 
-            if(geno_format == "dosage"){
-              selection <- list(validSam(object = object),
-                                validMar(object = object))
+            n_valid <- sum(validMar(object = object))
+            if (marker_index > n_valid) {
+              stop(
+                "'marker_index' (", marker_index,
+                ") exceeds the number of valid markers (", n_valid, ").",
+                call. = FALSE
+              )
+            }
+
+            path <- switch(
+              geno_format,
+              "genotype" = "genotype/data",
+              "corrected" = "annotation/format/CGT/data",
+              "dosage" = "annotation/format/EDS/data",
+              "haplotype" = "annotation/format/HAP/data"
+            )
+
+            if (geno_format == "dosage") {
+              selection <- list(
+                validSam(object = object),
+                validMar(object = object)
+              )
               selection[[2]][selection[[2]]][-marker_index] <- FALSE
-
             } else {
-              # Get the index of the target node in the GDS object
               target_node_index <- index.gdsn(node = object, path = path)
               obj_desp <- objdesp.gdsn(node = target_node_index)
-              selection <- list(rep(TRUE, obj_desp$dim[1]),
-                                validSam(object = object),
-                                validMar(object = object))
+              selection <- list(
+                rep(TRUE, obj_desp$dim[1]),
+                validSam(object = object),
+                validMar(object = object)
+              )
               selection[[3]][selection[[3]]][-marker_index] <- FALSE
             }
 
             out <- .get_data(object = object, node = path, sel = selection)
-            if(geno_format %in% "haplotype"){
+            if (identical(geno_format, "haplotype")) {
               out[out == 0] <- NA
-
-            } else if(geno_format %in% "dosage"){
+            } else if (identical(geno_format, "dosage")) {
               out[out == 63] <- NA
-
             } else {
               out[out == 3] <- NA
             }

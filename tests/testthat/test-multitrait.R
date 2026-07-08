@@ -39,11 +39,21 @@ test_that("multitrait overview runs after full pipeline", {
   expect_true(is.data.frame(clusters))
   if (nrow(clusters) > 0L) {
     expect_true(all(c("cluster_id", "merge_reason", "trait") %in% names(clusters)))
+    heat_df <- lazyGas:::.multitrait_heatmap_df(lg, clusters)
+    expect_gt(length(levels(heat_df$chr)), length(unique(clusters$chr)))
+    expect_equal(
+      nrow(heat_df),
+      length(unique(clusters$trait)) * length(levels(heat_df$chr))
+    )
   }
 
   mt <- lazyGas::plotMultiTraitOverview(lg, recalc = TRUE)
   expect_s3_class(mt$heatmap, "ggplot")
   expect_true(is.data.frame(mt$summary))
+  expect_equal(
+    names(mt$shared_genes),
+    c("cluster_id", "Gene_ID", "trait", "n_traits")
+  )
 })
 
 test_that("multitrait clustering merges peaks at the same locus", {
@@ -67,7 +77,6 @@ test_that("multitrait clustering merges peaks at the same locus", {
     chr = 2L,
     pos = 13920070L,
     negLog10P = c(10, 9, 8),
-    peak_key = c("trait_a:1", "trait_b:1", "trait_c:1"),
     stringsAsFactors = FALSE
   )
   clusters <- lazyGas:::.multitrait_cluster_peaks(
@@ -78,4 +87,20 @@ test_that("multitrait clustering merges peaks at the same locus", {
   )
   expect_equal(length(unique(clusters$cluster_id)), 1L)
   expect_false(any(clusters$merge_reason == "singleton"))
+  expect_equal(
+    names(clusters),
+    c(
+      "cluster_id", "merge_reason", "trait", "peak_ID", "peak_variant_ID",
+      "chr", "pos", "negLog10P"
+    )
+  )
+})
+
+test_that("multitrait empty shared_genes has stable columns", {
+  empty <- lazyGas:::.multitrait_empty_shared_genes()
+  expect_equal(
+    names(empty),
+    c("cluster_id", "Gene_ID", "trait", "n_traits")
+  )
+  expect_equal(nrow(empty), 0L)
 })

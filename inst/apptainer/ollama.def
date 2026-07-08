@@ -1,0 +1,14 @@
+# lazyGas official Ollama Apptainer image (alternative to docker://ollama/ollama pull)
+Bootstrap: docker
+From: ollama/ollama:latest
+
+%environment
+    export OLLAMA_HOST=127.0.0.1:11434
+    export HOME=/root
+
+%runscript
+    exec ollama "$@"
+
+%labels
+    Author lazyGas
+    Version 1.0

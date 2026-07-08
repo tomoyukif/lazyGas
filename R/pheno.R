@@ -81,9 +81,98 @@ setMethod("assignPheno",
             object@lazydata$pheno_type <- pheno_type
             object@lazydata$pheno_names <- colnames(pheno)
 
+            .store_save_pheno_snapshot(object)
+
             return(object)
           }
 )
+
+#' Restore phenotype metadata from the companion store
+#'
+#' Re-opening a GDS file does not reload phenotype data assigned by
+#' [assignPheno()] in a previous session. This function restores phenotype
+#' names (and values when a snapshot was saved) from the companion Parquet/SQLite
+#' store so that [getPheno()], [lazyData()], and explorer tools work again.
+#'
+#' @param object A \code{LazyGas} object.
+#' @param warn_stub If \code{TRUE}, warn when only trait names are restored
+#'   without phenotype values.
+#'
+#' @return The \code{LazyGas} object with phenotype metadata attached.
+#' @export
+restorePhenoFromStore <- function(object, warn_stub = TRUE) {
+  if (!inherits(object, "LazyGas")) {
+    stop("'object' must be a LazyGas object.", call. = FALSE)
+  }
+
+  existing <- getPheno(object)$pheno_names
+  if (!is.null(existing) && length(existing)) {
+    return(object)
+  }
+
+  snap <- .store_read_pheno_snapshot(object)
+  if (!is.null(snap) && nrow(snap) > 0L && "sample_id" %in% names(snap)) {
+    sam <- getSamID(object)
+    id_match <- match(sam, snap$sample_id)
+    if (any(is.na(id_match))) {
+      warning(
+        "Phenotype snapshot sample IDs do not fully match the GDS; ",
+        "missing samples will be NA.",
+        call. = FALSE
+      )
+    }
+    pheno_cols <- setdiff(names(snap), "sample_id")
+    pheno <- snap[id_match, pheno_cols, drop = FALSE]
+    rownames(pheno) <- sam
+
+    meta <- if (.store_is_gds(object)) list() else .store_read_meta(object)
+    if (!is.null(meta$pheno_type)) {
+      pheno_type <- meta$pheno_type
+    } else {
+      pheno_type <- .checkPhenoType(pheno = pheno)
+    }
+
+    object@lazydata$pheno <- pheno
+    object@lazydata$pheno_type <- pheno_type
+    object@lazydata$pheno_names <- pheno_cols
+    return(object)
+  }
+
+  pheno_names <- .store_list_pheno_names(object)
+  if (!length(pheno_names)) {
+    warning(
+      "No phenotype information found in the companion store.",
+      call. = FALSE
+    )
+    return(object)
+  }
+
+  if (warn_stub) {
+    message(
+      "Restored phenotype names from companion store (values not available). ",
+      "Re-run assignPheno() to attach phenotype data for new analyses."
+    )
+  }
+
+  n <- nsam(object)
+  pheno <- as.data.frame(
+    setNames(
+      rep(list(rep(NA_real_, n)), length(pheno_names)),
+      pheno_names
+    ),
+    stringsAsFactors = FALSE
+  )
+  pheno_type <- data.frame(
+    binary = rep(FALSE, length(pheno_names)),
+    normality = rep(NA_real_, length(pheno_names)),
+    row.names = pheno_names,
+    stringsAsFactors = FALSE
+  )
+  object@lazydata$pheno <- pheno
+  object@lazydata$pheno_type <- pheno_type
+  object@lazydata$pheno_names <- pheno_names
+  object
+}
 
 # Function to check the phenotype type
 .checkPhenoType <- function(pheno) {
@@ -272,16 +361,45 @@ setMethod("show",
           }
 )
 
-#' Assign phenotype data to a LazyGas object
+#' Register externally computed association results in the companion store
 #'
-#' @param object A LazyGas object.
-#' @param pheno_name A character vector.
-#' @param p_values A numeric matrix or data.frame with the number of rows matching the number of markers.
-#' @importMethodsFrom GBScleanR nmar getMarID getChromosome getPosition
+#' Use this when p-values (and optionally coefficients or other per-marker
+#' columns) come from another GWAS tool, not from [scanAssoc()]. Each call
+#' writes a **new** scan table for \code{pheno_name}; it does not merge into
+#' an existing \code{scanAssoc()} result. To keep downstream plots such as
+#' [haploPlot()] informative, pass \code{coef} and/or \code{any_data} together
+#' with \code{p_values}.
+#'
+#' @param object A \code{LazyGas} object.
+#' @param pheno_name Character vector of phenotype name(s).
+#' @param p_values Numeric vector, matrix, or data.frame. Rows must equal
+#'   \code{nmar(object)}. A vector is \code{P.model} for one phenotype; matrix
+#'   columns map to \code{pheno_name} in order. \code{FDR} and \code{negLog10P}
+#'   are derived from \code{P.model}.
+#' @param coef Optional effect sizes to store with the scan. A numeric vector
+#'   (length \code{nmar}) becomes \code{Coef.add}. A matrix or \code{data.frame}
+#'   with \code{nrow = nmar} uses its column names (e.g. \code{Coef.add},
+#'   \code{Coef.dom}). When \code{p_values} has multiple columns, \code{coef}
+#'   may have the same number of columns (one per phenotype) or a single
+#'   coefficient block shared across phenotypes.
+#' @param any_data Optional \code{data.frame} with \code{nrow = nmar}. Its
+#'   columns are appended to the stored scan table (e.g. external test
+#'   statistics). Column names must not duplicate \code{P.model}, \code{FDR},
+#'   \code{negLog10P}, or \code{coef} columns.
+#' @param geno_format Genotype format metadata for downstream steps.
+#' @param conv_fun,formula,null_formula,kruskal Scan metadata recorded for
+#'   peak calling and recalculation.
+#' @param ... Unused.
+#'
+#' @return The updated \code{LazyGas} object (invisibly).
+#'
+#' @seealso [scanAssoc()], [lazyData()]
 #'
 #' @export
 #'
 setGeneric("assignPvalues", function(object, pheno_name, p_values,
+                                     coef = NULL,
+                                     any_data = NULL,
                                      geno_format = c("genotype", "dosage", "haplotype"),
                                      conv_fun = NULL,
                                      formula = "phe ~ add",
@@ -289,48 +407,203 @@ setGeneric("assignPvalues", function(object, pheno_name, p_values,
                                      kruskal = NULL, ...)
   standardGeneric("assignPvalues"))
 
+.assignpvalues_as_matrix <- function(x, n_markers, label = "p_values") {
+  if (is.data.frame(x)) {
+    mat <- as.matrix(x)
+  } else if (is.matrix(x)) {
+    mat <- x
+  } else {
+    mat <- matrix(as.numeric(x), ncol = 1L)
+  }
+  if (nrow(mat) != n_markers) {
+    stop(
+      "The input ", label, " has ", nrow(mat), " rows, but nmar(object) is ",
+      n_markers, ".",
+      call. = FALSE
+    )
+  }
+  mat
+}
+
+.assignpvalues_coef_block <- function(coef, pheno_idx, n_markers, n_pheno) {
+  if (is.null(coef)) {
+    return(NULL)
+  }
+  if (is.vector(coef) && !is.data.frame(coef)) {
+    if (n_pheno > 1L) {
+      stop(
+        "A numeric vector 'coef' requires a single phenotype in 'pheno_name'. ",
+        "Use a matrix with one column per phenotype, or call assignPvalues() ",
+        "once per trait.",
+        call. = FALSE
+      )
+    }
+    if (length(coef) != n_markers) {
+      stop(
+        "'coef' length (", length(coef), ") must equal nmar(object) (",
+        n_markers, ").",
+        call. = FALSE
+      )
+    }
+    return(data.frame(Coef.add = as.numeric(coef), check.names = FALSE))
+  }
+
+  cm <- as.data.frame(coef, check.names = FALSE)
+  if (nrow(cm) != n_markers) {
+    stop(
+      "'coef' has ", nrow(cm), " rows, but nmar(object) is ", n_markers, ".",
+      call. = FALSE
+    )
+  }
+  if (ncol(cm) == n_pheno && n_pheno > 1L) {
+    return(cm[, pheno_idx, drop = FALSE])
+  }
+  if (ncol(cm) == 1L && (is.null(names(cm)) || !nzchar(names(cm)[1L]))) {
+    names(cm)[1L] <- "Coef.add"
+  }
+  cm
+}
+
+.assignpvalues_build_scan_mat <- function(p_col,
+                                         coef = NULL,
+                                         pheno_idx = 1L,
+                                         n_markers,
+                                         n_pheno,
+                                         any_data = NULL) {
+  p_col <- as.numeric(p_col)
+  if (length(p_col) != n_markers) {
+    stop(
+      "'p_values' column length (", length(p_col),
+      ") must equal nmar(object) (", n_markers, ").",
+      call. = FALSE
+    )
+  }
+
+  out <- data.frame(
+    P.model = p_col,
+    FDR = p.adjust(p = p_col, method = "fdr"),
+    negLog10P = -log10(p_col),
+    check.names = FALSE,
+    stringsAsFactors = FALSE
+  )
+
+  coef_block <- .assignpvalues_coef_block(
+    coef = coef,
+    pheno_idx = pheno_idx,
+    n_markers = n_markers,
+    n_pheno = n_pheno
+  )
+  if (!is.null(coef_block)) {
+    dup <- intersect(names(out), names(coef_block))
+    if (length(dup)) {
+      stop(
+        "Column name overlap between derived scan columns and 'coef': ",
+        paste(dup, collapse = ", "),
+        call. = FALSE
+      )
+    }
+    out <- cbind(out, coef_block)
+  }
+
+  if (!is.null(any_data)) {
+    if (!is.data.frame(any_data)) {
+      stop("'any_data' must be a data.frame.", call. = FALSE)
+    }
+    if (nrow(any_data) != n_markers) {
+      stop(
+        "'any_data' has ", nrow(any_data), " rows, but nmar(object) is ",
+        n_markers, ".",
+        call. = FALSE
+      )
+    }
+    dup <- intersect(names(out), names(any_data))
+    if (length(dup)) {
+      stop(
+        "Column name overlap between scan columns and 'any_data': ",
+        paste(dup, collapse = ", "),
+        call. = FALSE
+      )
+    }
+    out <- cbind(out, any_data)
+  }
+
+  as.matrix(out)
+}
+
 setMethod("assignPvalues",
           "LazyGas",
           function(object, pheno_name, p_values,
+                   coef = NULL,
+                   any_data = NULL,
                    geno_format = c("genotype", "dosage", "haplotype"),
-                   conv_fun = NULL, formula = "phe ~ add", null_formula = NULL, kruskal = NULL){
-            geno_format <- match.arg(arg = geno_format, choices = c("genotype", "dosage", "haplotype"))
+                   conv_fun = NULL,
+                   formula = "phe ~ add",
+                   null_formula = NULL,
+                   kruskal = NULL,
+                   ...) {
+            geno_format <- match.arg(
+              arg = geno_format,
+              choices = c("genotype", "dosage", "haplotype")
+            )
 
-            if(is.null(conv_fun)){
-              formula <- formula("phe ~ add")  # Define the formula for regression
+            if (is.null(conv_fun)) {
+              formula <- formula("phe ~ add")
               null_formula <- NULL
             }
 
             hit <- pheno_name %in% object@lazydata$pheno_names
-            if(any(!hit)){
-              stop('Following phenotype name(s) was not found in the input LazyGas object: ',
-                   paste(pheno_name[!hit], collapse = ", "),
-                   call. = FALSE)
-            }
-            if(is.vector(p_values)){
-              p_values <- matrix(p_values, ncol = 1)
-            }
-
-            nrow_p_values <- nrow(p_values)
-            lg_nmar <- nmar(object)
-            if(lg_nmar != nrow_p_values){
-              stop('The input p_values has ',
-                   nrow_p_values, ' rows',
-                   ', but the marker number assigned in the lazyGas object is ',
-                   lg_nmar)
+            if (any(!hit)) {
+              stop(
+                "Following phenotype name(s) was not found in the input LazyGas object: ",
+                paste(pheno_name[!hit], collapse = ", "),
+                call. = FALSE
+              )
             }
 
-            # Add a folder to store scan results in the GDS object
+            p_mat <- .assignpvalues_as_matrix(
+              x = p_values,
+              n_markers = nmar(object),
+              label = "p_values"
+            )
+            n_pheno <- length(pheno_name)
+            if (ncol(p_mat) == 1L && n_pheno > 1L) {
+              stop(
+                "p_values has one column but pheno_name has ", n_pheno,
+                " traits. Supply a matrix with one column per phenotype.",
+                call. = FALSE
+              )
+            }
+            if (ncol(p_mat) != n_pheno) {
+              stop(
+                "p_values has ", ncol(p_mat), " column(s) but pheno_name has ",
+                n_pheno, " trait(s).",
+                call. = FALSE
+              )
+            }
+
+            if (!is.null(coef) && (is.matrix(coef) || is.data.frame(coef))) {
+              coef_n <- ncol(as.data.frame(coef))
+              if (coef_n > 1L && coef_n != n_pheno && n_pheno > 1L) {
+                stop(
+                  "coef has ", coef_n, " columns; expected 1 (shared block) or ",
+                  n_pheno, " (one per phenotype).",
+                  call. = FALSE
+                )
+              }
+            }
+
             .create_scan_folder(object)
 
-            # Loop through each phenotype name and perform analysis
-            for(i in seq_along(pheno_name)){
+            for (i in seq_along(pheno_name)) {
               i_pheno_names <- pheno_name[i]
-
-              p_values_i <- p_values[, i]
-              p_values_i <- cbind(P.model = p_values_i,
-                                  FDR = p.adjust(p = p_values_i, method = "fdr"),
-                                  negLog10P = -log10(p_values_i))
+              p_values_i <- .assignpvalues_build_scan_mat(
+                p_col = p_mat[, i],
+                coef = coef,
+                pheno_idx = i,
+                n_markers = nmar(object),
+                n_pheno = n_pheno,
+                any_data = any_data
+              )
 
               .store_write_scan(
                 object = object,
@@ -340,13 +613,15 @@ setMethod("assignPvalues",
               )
             }
 
-            .store_additional_info(object = object,
-                                   kruskal = kruskal,
-                                   formula = formula,
-                                   null_formula = null_formula,
-                                   fixed_effect = NULL,
-                                   conv_fun = conv_fun,
-                                   geno_format = geno_format)
-            return(object)
+            .store_additional_info(
+              object = object,
+              kruskal = kruskal,
+              formula = formula,
+              null_formula = null_formula,
+              fixed_effect = NULL,
+              conv_fun = conv_fun,
+              geno_format = geno_format
+            )
+            invisible(object)
           }
 )

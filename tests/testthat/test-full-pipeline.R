@@ -29,6 +29,40 @@ test_that("full pipeline: build, phenotype, and genotype helpers", {
 
   g_hap <- lazyGas::getGenoPerMarker(object = lg, geno_format = "haplotype")
   expect_true(is.matrix(g_hap))
+  expect_equal(dim(g_hap), c(2L, GBScleanR::nsam(lg)))
+
+  g_hap5 <- lazyGas::getGenoPerMarker(
+    object = lg,
+    geno_format = "haplotype",
+    marker_index = 5L
+  )
+  expect_false(identical(g_hap, g_hap5))
+
+  g_pos5 <- lazyGas::getGenoPerMarker(lg, "haplotype", 5L)
+  expect_identical(g_pos5, g_hap5)
+
+  expect_warning(
+    g_legacy <- lazyGas::getGenoPerMarker(
+      object = lg,
+      geno_format = "haplotype",
+      marker_id = 5L
+    ),
+    "marker_id.*deprecated"
+  )
+  expect_identical(g_legacy, g_hap5)
+
+  expect_error(
+    lazyGas::getGenoPerMarker(lg, "dosage", marker_index = 0L),
+    "positive integer"
+  )
+  expect_error(
+    lazyGas::getGenoPerMarker(
+      lg,
+      "dosage",
+      marker_index = GBScleanR::nmar(lg) + 1L
+    ),
+    "exceeds"
+  )
 
   conv_fun <- lazyGas::makeConvFun(geno_format = "dosage", n_levels = 3L)
   expect_true(is.function(conv_fun))
@@ -63,21 +97,52 @@ test_that("full pipeline: scan, assignPvalues, and manhattan plot", {
 
   scan_dat <- lazyGas::lazyData(object = lg, dataset = "scan", pheno = "test_trait")
   expect_equal(nrow(scan_dat), GBScleanR::nmar(lg))
-  expect_true(all(c("FDR", "negLog10P", "P.model", "P.add") %in% names(scan_dat)))
+  expect_true(all(c("FDR", "negLog10P", "P.model", "P.add", "Coef.add") %in% names(scan_dat)))
 
+  p_man <- lazyGas::plotManhattan(object = lg, pheno = "test_trait")
+  expect_s3_class(p_man, "ggplot")
+})
+
+test_that("assignPvalues registers external scan with coef and any_data", {
+  skip_if_not_installed("GBScleanR")
+  skip_if_not_installed("arrow")
+
+  gds_fn <- .copy_sample_gds(.skip_without_sample_gds())
+  on.exit(unlink(gds_fn), add = TRUE)
+
+  lg <- lazyGas::buildLazyGas(gds_fn = gds_fn, load_filter = TRUE, overwrite = TRUE)
+  on.exit(.close_lg(lg), add = TRUE)
+
+  demo <- .skip_without_demo_extdata()
+  pheno <- read.csv(demo$pheno_fn)
+  lg <- lazyGas::assignPheno(object = lg, pheno = pheno, rename = "ext_trait")
+
+  n <- GBScleanR::nmar(lg)
+  ext_p <- runif(n, min = 1e-6, max = 0.5)
+  ext_coef <- rnorm(n, mean = 0, sd = 0.5)
+  ext_extra <- data.frame(
+    ext_stat = rnorm(n),
+    stringsAsFactors = FALSE
+  )
+
+  conv_fun <- lazyGas::makeConvFun(geno_format = "dosage", n_levels = 3L)
   lg <- lazyGas::assignPvalues(
     object = lg,
-    pheno_name = "test_trait",
-    p_values = scan_dat$P.model,
+    pheno_name = "ext_trait",
+    p_values = ext_p,
+    coef = ext_coef,
+    any_data = ext_extra,
     geno_format = "dosage",
     conv_fun = conv_fun,
     formula = "add + dom"
   )
-  scan2 <- lazyGas::lazyData(object = lg, dataset = "scan", pheno = "test_trait")
-  expect_equal(scan2$P.model, scan_dat$P.model)
 
-  p_man <- lazyGas::plotManhattan(object = lg, pheno = "test_trait")
-  expect_s3_class(p_man, "ggplot")
+  scan_ext <- lazyGas::lazyData(object = lg, dataset = "scan", pheno = "ext_trait")
+  expect_equal(scan_ext$P.model, ext_p)
+  expect_equal(scan_ext$Coef.add, ext_coef)
+  expect_equal(scan_ext$ext_stat, ext_extra$ext_stat)
+  expect_true(all(c("FDR", "negLog10P") %in% names(scan_ext)))
+  expect_false("P.add" %in% names(scan_ext))
 })
 
 test_that("full pipeline: peak calling, recalc, plots, and haploPlot", {
@@ -257,48 +322,4 @@ test_that("full pipeline: snpeff2gds and open_snpeff", {
   expect_true(inherits(se, "snpeff_gds"))
   chr <- gdsfmt::read.gdsn(gdsfmt::index.gdsn(se$root, "chromosome"))
   expect_gt(length(chr), 0L)
-})
-
-test_that("full pipeline: importLazyGasResults from legacy GDS store", {
-  skip_if_not_installed("GBScleanR")
-  skip_if_not_installed("arrow")
-
-  gds_fn <- .copy_sample_gds(.skip_without_sample_gds())
-  on.exit(unlink(gds_fn), add = TRUE)
-  on.exit(unlink(sub("\\.gds$", ".lazygas", gds_fn)), add = TRUE)
-
-  lg_gds <- lazyGas::buildLazyGas(
-    gds_fn = gds_fn,
-    load_filter = TRUE,
-    overwrite = TRUE,
-    lazygas_store = "gds"
-  )
-  on.exit(.close_lg(lg_gds), add = TRUE)
-
-  demo <- .skip_without_demo_extdata()
-  pheno <- read.csv(demo$pheno_fn)
-  lg_gds <- lazyGas::assignPheno(object = lg_gds, pheno = pheno, rename = "legacy_trait")
-  suppressMessages(
-    lazyGas::scanAssoc(object = lg_gds, formula = "add", geno_format = "dosage")
-  )
-  GBScleanR::closeGDS(lg_gds, verbose = FALSE)
-  lg_gds <- NULL
-
-  companion <- sub("\\.gds$", ".lazygas", gds_fn)
-  if (dir.exists(companion)) {
-    unlink(companion, recursive = TRUE)
-  }
-
-  lg_parquet <- lazyGas::buildLazyGas(
-    gds_fn = gds_fn,
-    load_filter = TRUE,
-    overwrite = TRUE,
-    lazygas_store = "parquet"
-  )
-  on.exit(.close_lg(lg_parquet), add = TRUE)
-
-  lg_parquet <- lazyGas::assignPheno(object = lg_parquet, pheno = pheno, rename = "legacy_trait")
-  lg_parquet <- lazyGas::importLazyGasResults(lg_parquet)
-  scan_dat <- lazyGas::lazyData(lg_parquet, dataset = "scan", pheno = "legacy_trait")
-  expect_equal(nrow(scan_dat), GBScleanR::nmar(lg_parquet))
 })

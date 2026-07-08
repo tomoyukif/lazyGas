@@ -7,10 +7,6 @@ gds_fn <- system.file("extdata", "sample.gds", package = "lazyGas")
 lg <- buildLazyGas(gds_fn = gds_fn, load_filter = TRUE, overwrite = FALSE)
 
 
-## ----eval=FALSE---------------------------------------------------------------
-# lg <- importLazyGasResults(lg)
-
-
 ## ----message=FALSE, results="hide", warning=FALSE-----------------------------
 # Set a temporary file path for a GDS file.
 temp_dir <- tempdir()

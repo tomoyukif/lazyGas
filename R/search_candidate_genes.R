@@ -289,7 +289,7 @@ searchCandidateGenes <- function(candidate = NULL,
     logical(n)
   )
   if (!is.matrix(hits)) {
-    hits <- matrix(hits, nrow = n, ncol = 1L)
+    hits <- matrix(hits, nrow = n, ncol = length(terms))
   }
 
   if (match == "all") {
@@ -308,6 +308,21 @@ searchCandidateGenes <- function(candidate = NULL,
     )
   }
   invisible(TRUE)
+}
+
+.with_rsparse_info_suppressed <- function(expr) {
+  if (!requireNamespace("rsparse", quietly = TRUE)) {
+    return(force(expr))
+  }
+  ns <- asNamespace("rsparse")
+  if (!exists("logger", envir = ns, inherits = FALSE)) {
+    return(force(expr))
+  }
+  log <- get("logger", envir = ns)
+  old_thresh <- log$threshold
+  log$set_threshold("warn")
+  on.exit(log$set_threshold(old_thresh), add = TRUE)
+  force(expr)
 }
 
 .text2vec_semantic_score <- function(text, query, n_topics = NULL) {
@@ -355,7 +370,9 @@ searchCandidateGenes <- function(candidate = NULL,
 
   if (k >= 2L && n_row >= 2L && n_col >= 2L) {
     lsa <- text2vec::LatentSemanticAnalysis$new(n_topics = k)
-    doc_emb <- text2vec::fit_transform(dtm_tfidf, lsa)
+    doc_emb <- .with_rsparse_info_suppressed(
+      text2vec::fit_transform(dtm_tfidf, lsa)
+    )
   } else {
     lsa <- NULL
     doc_emb <- dtm_tfidf

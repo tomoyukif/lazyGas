@@ -27,12 +27,16 @@ calcCredibleSet(
 
 \item{prior_W, prior_V}{Wakefield ABF prior parameters.}
 
-\item{use_conditional}{If \code{TRUE}, run \code{\link[=conditionalAssoc]{conditionalAssoc()}} first.}
+\item{use_conditional}{If \code{TRUE}, use step-1 results from
+\code{\link[=conditionalAssoc]{conditionalAssoc()}} (unconditioned on other leads).}
 
 \item{recalc}{Use recalculated peak blocks.}
 
 \item{store}{If \code{TRUE}, write results to the companion store.}
 }
 \description{
-Calculate credible sets within a peak using Wakefield ABF
+Approximate Bayes factors are used to rank variants and form a credible set.
+Large credible sets indicate limited resolution (often due to LD, sample size,
+or weak signals) rather than confident causal-variant identification.
+See \code{\link[=summarizeFineMapping]{summarizeFineMapping()}} for interpretation-ready summaries.
 }

@@ -33,6 +33,7 @@ strings:
 \item{"qq"}{Draw a QQ plot}
 \item{"qc"}{Draw a GWAS QC summary table}
 \item{"cross_trait"}{Draw cross-trait peak clustering (requires multiple phenotypes)}
+\item{"fine_mapping"}{Draw fine-mapping interpretation summary (conditional signals and credible-set resolution)}
 }
 }
 \seealso{

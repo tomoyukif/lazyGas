@@ -178,8 +178,15 @@ setMethod("recalcAssoc",
                      subset = variant_ID %in% unlist(new_peaks$member),
                      select = c(peak_ID, variant_ID,
                                 P.model:negLog10P))
+      peak_id_map <- unique(subset(peak_obj$peakcall,
+                                   subset = variant_ID == peak_variant_ID,
+                                   select = c(peak_ID, variant_ID)))
       grouped_with <- lapply(seq_along(new_peaks$member), function(i){
-        return(data.frame(new_peak = new_peaks$newpeaks[i], member = new_peaks$member[[i]]))
+        return(data.frame(
+          new_peak = peak_id_map$peak_ID[match(new_peaks$newpeaks[i],
+                                               peak_id_map$variant_ID)],
+          member = new_peaks$member[[i]]
+        ))
       })
       grouped_with <- do.call("rbind", grouped_with)
       hit <- match(out3$variant_ID, grouped_with$member)
@@ -200,8 +207,15 @@ setMethod("recalcAssoc",
                      subset = variant_ID %in% unlist(new_peaks$member) & variant_ID == peak_variant_ID,
                      select = c(peak_ID, variant_ID,
                                 FDR:negLog10P))
+      peak_id_map <- unique(subset(peak_obj$peakcall,
+                                   subset = variant_ID == peak_variant_ID,
+                                   select = c(peak_ID, variant_ID)))
       grouped_with <- lapply(seq_along(new_peaks$member), function(i){
-        return(data.frame(new_peak = new_peaks$newpeaks[i], member = new_peaks$member[[i]]))
+        return(data.frame(
+          new_peak = peak_id_map$peak_ID[match(new_peaks$newpeaks[i],
+                                               peak_id_map$variant_ID)],
+          member = new_peaks$member[[i]]
+        ))
       })
       grouped_with <- do.call("rbind", grouped_with)
       hit <- match(out3$variant_ID, grouped_with$member)

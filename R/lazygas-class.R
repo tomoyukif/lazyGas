@@ -51,6 +51,9 @@ setMethod("closeGDS",
 #' @param load_filter A logical value to indicate whether apply filrering stored in the input GDS file to samples and markers.
 #' @param overwrite If `TRUE`, replace existing lazyGas results in the companion store (or GDS `lazygas/` folder when `lazygas_store = "gds"`).
 #' @param lazygas_store Where to store association results: `"parquet"` (default companion folder `{stem}.lazygas/`), `"sqlite"`, `"gds"` (legacy GDS subtree), or `"auto"`.
+#' @param companion_path Optional path to an existing companion store when it
+#'   does not sit next to \code{gds_fn} (e.g. Shiny file uploads). See
+#'   [resolveLazyGasPaths()].
 #' @param create_gds A named list to create a new GDS file with specified genotype and marker information. See the Details section.
 #'
 #' @details
@@ -84,7 +87,8 @@ buildLazyGas <- function(gds_fn = "",
                          load_filter = TRUE,
                          overwrite = FALSE,
                          create_gds = NULL,
-                         lazygas_store = c("parquet", "sqlite", "gds", "auto")){
+                         lazygas_store = c("parquet", "sqlite", "gds", "auto"),
+                         companion_path = NULL){
   if(!all(sapply(X = create_gds, FUN = is.null))){
     raw_gds <- .createGDS(gds_fn = gds_fn, create_gds = create_gds)
     closefn.gds(gdsfile = raw_gds)
@@ -119,7 +123,8 @@ buildLazyGas <- function(gds_fn = "",
     object = out,
     gds_fn = gds_fn,
     store = lazygas_store,
-    overwrite = overwrite
+    overwrite = overwrite,
+    companion_path = companion_path
   )
   return(out)
 }
@@ -255,6 +260,20 @@ buildLazyGas <- function(gds_fn = "",
                  new_node = "data",
                  val = genotype,
                  storage = "bit2")
+  }
+
+  # GBScleanR::loadGDS() runs seqOptimize when genotype/~data is absent;
+  # SeqArray requires a phase/data node (sample x SNP, unphased = 0).
+  if (!exist.gdsn(node = index.gdsn(gds, ""), path = "phase/data")) {
+    if (!exist.gdsn(node = index.gdsn(gds, ""), path = "phase")) {
+      addfolder.gdsn(node = index.gdsn(gds, ""), name = "phase")
+    }
+    phase <- matrix(0L, nrow = n_sample, ncol = n_snp)
+    .create_gdsn(root_node = gds,
+                 target_node = "phase",
+                 new_node = "data",
+                 val = phase,
+                 storage = "bit1")
   }
 
   if(!check$haplotype){

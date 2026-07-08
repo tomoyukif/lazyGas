@@ -68,7 +68,12 @@ getVariantViewerData <- function(object,
     plot_df = plot_df,
     cds_df = cds_df,
     geno_df = geno_df,
-    ggplot = .variant_viewer_ggplot(plot_df = plot_df, cds_df = cds_df)
+    ggplot = .variant_viewer_ggplot(
+      plot_df = plot_df,
+      cds_df = cds_df,
+      gene_id = gene_id,
+      pheno = pheno_name
+    )
   )
 }
 
@@ -454,24 +459,81 @@ makeInteractiveDashboard <- function(object,
   list(plot_df = plot_df, cds_df = cds_df, y_lab = y_lab, tx_levels = tx_levels)
 }
 
-.variant_viewer_point_tooltip <- function(df) {
-  p_val <- signif(as.numeric(df$P_value), digits = 3)
-  neg_log <- signif(as.numeric(df$negLog10p), digits = 3)
-  paste0(
-    "ID: ", df$ID,
-    "<br>Start: ", df$Start,
-    "<br>End: ", df$End,
-    "<br>Allele: ", df$Allele,
-    "<br>CDS pos: ", df$Position_in_CDS,
-    "<br>DNA change: ", df$Change_in_DNA,
-    "<br>AA pos: ", df$Position_in_AA,
-    "<br>AA change: ", df$Change_in_AA,
-    "<br>P: ", p_val,
-    "<br>-log10(P): ", neg_log
-  )
+.variant_viewer_is_coding <- function(position_in_cds, position_in_aa, change_in_aa) {
+  cds_chr <- trimws(as.character(position_in_cds))
+  aa_pos_chr <- trimws(as.character(position_in_aa))
+  aa_chg_chr <- trimws(as.character(change_in_aa))
+  cds_ok <- !is.na(position_in_cds) && nzchar(cds_chr) && cds_chr != "."
+  aa_pos_ok <- !is.na(position_in_aa) && nzchar(aa_pos_chr) && aa_pos_chr != "."
+  aa_chg_ok <- !is.na(change_in_aa) && nzchar(aa_chg_chr) && aa_chg_chr != "."
+  cds_ok || aa_pos_ok || aa_chg_ok
 }
 
-.variant_viewer_ggplot <- function(plot_df, cds_df, scale = 5) {
+.variant_viewer_format_tooltip_field <- function(label, value) {
+  val <- trimws(as.character(value))
+  if (is.na(val) || !nzchar(val) || val == ".") {
+    val <- "."
+  }
+  paste0(label, ": ", val)
+}
+
+.variant_viewer_variant_tooltip <- function(df) {
+  n <- nrow(df)
+  if (n == 0L) {
+    return(character())
+  }
+  vapply(seq_len(n), function(i) {
+    row <- df[i, , drop = FALSE]
+    allele <- as.character(row$Allele)
+    if (is.na(allele) || !nzchar(trimws(allele))) {
+      allele <- "."
+    }
+    if (.variant_viewer_is_coding(
+      position_in_cds = row$Position_in_CDS,
+      position_in_aa = row$Position_in_AA,
+      change_in_aa = row$Change_in_AA
+    )) {
+      paste(
+        .variant_viewer_format_tooltip_field("Allele", allele),
+        .variant_viewer_format_tooltip_field("CDS pos", row$Position_in_CDS),
+        .variant_viewer_format_tooltip_field("AA pos", row$Position_in_AA),
+        .variant_viewer_format_tooltip_field("AA change", row$Change_in_AA),
+        sep = "<br>"
+      )
+    } else {
+      .variant_viewer_format_tooltip_field("Allele", allele)
+    }
+  }, character(1L))
+}
+
+.variant_viewer_gwas_tooltip <- function(df) {
+  n <- nrow(df)
+  if (n == 0L) {
+    return(character())
+  }
+  vapply(seq_len(n), function(i) {
+    row <- df[i, , drop = FALSE]
+    pos <- if ("Start" %in% names(row)) row$Start else row$Pos
+    neg <- as.numeric(row$negLog10p)
+    if (!is.finite(neg)) {
+      neg <- -log10(as.numeric(row$P_value))
+    }
+    paste(
+      .variant_viewer_format_tooltip_field("Pos", pos),
+      .variant_viewer_format_tooltip_field(
+        "negLog10P",
+        if (is.finite(neg)) signif(neg, digits = 6) else "."
+      ),
+      sep = "<br>"
+    )
+  }, character(1L))
+}
+
+.variant_viewer_ggplot <- function(plot_df,
+                                   cds_df,
+                                   scale = 5,
+                                   gene_id = NULL,
+                                   pheno = NULL) {
   laid <- .variant_viewer_layout_y(plot_df = plot_df, cds_df = cds_df, scale = scale)
   plot_df <- laid$plot_df
   cds_df <- laid$cds_df
@@ -489,8 +551,8 @@ makeInteractiveDashboard <- function(object,
     max_neg <- 1
   }
   plot_man$scaled_score <- plot_man$negLog10p / max_neg * scale
-  plot_df$tooltip <- .variant_viewer_point_tooltip(plot_df)
-  plot_man$tooltip <- .variant_viewer_point_tooltip(plot_man)
+  plot_df$tooltip <- .variant_viewer_variant_tooltip(plot_df)
+  plot_man$tooltip <- .variant_viewer_gwas_tooltip(plot_man)
 
   p <- ggplot2::ggplot()
   if (nrow(cds_df) > 0L) {
@@ -507,14 +569,19 @@ makeInteractiveDashboard <- function(object,
     ggplot2::geom_point(
       data = plot_df,
       ggplot2::aes(
-        y = .data$y_pos, x = .data$x_pos, color = .data$Effect
+        y = .data$y_pos,
+        x = .data$x_pos,
+        color = .data$Effect,
+        text = .data$tooltip
       ),
       size = 0.8
     ) +
     ggplot2::geom_point(
       data = plot_man,
       ggplot2::aes(
-        y = .data$scaled_score, x = .data$x_pos
+        y = .data$scaled_score,
+        x = .data$x_pos,
+        text = .data$tooltip
       ),
       size = 0.8
     ) +
@@ -531,7 +598,30 @@ makeInteractiveDashboard <- function(object,
     ggplot2::ylab("") +
     ggplot2::xlab("Physical position (bp)")
 
+  title <- .variant_viewer_plot_title(gene_id = gene_id, pheno = pheno)
+  if (!is.null(title)) {
+    p <- p +
+      ggplot2::labs(title = title) +
+      ggplot2::theme(plot.title = ggplot2::element_text(hjust = 0.5))
+  }
+
   p
+}
+
+.variant_viewer_plot_title <- function(gene_id = NULL, pheno = NULL) {
+  gene_id <- if (is.null(gene_id)) NULL else as.character(gene_id)[1L]
+  pheno <- if (is.null(pheno)) NULL else as.character(pheno)[1L]
+  if (!is.null(gene_id) && !is.na(gene_id) && nzchar(gene_id) &&
+      !is.null(pheno) && !is.na(pheno) && nzchar(pheno)) {
+    return(paste0(gene_id, " — ", pheno))
+  }
+  if (!is.null(pheno) && !is.na(pheno) && nzchar(pheno)) {
+    return(pheno)
+  }
+  if (!is.null(gene_id) && !is.na(gene_id) && nzchar(gene_id)) {
+    return(gene_id)
+  }
+  NULL
 }
 
 .variant_viewer_geno_table <- function(plot_df) {
@@ -585,7 +675,7 @@ makeInteractiveDashboard <- function(object,
     p,
     height = plot_h,
     width = NULL,
-    tooltip = "tooltip"
+    tooltip = "text"
   ) |>
     plotly::layout(autosize = TRUE) |>
     plotly::config(responsive = TRUE)

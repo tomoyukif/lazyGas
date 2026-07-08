@@ -23,6 +23,7 @@
 #'  \item{"qq"}{Draw a QQ plot}
 #'  \item{"qc"}{Draw a GWAS QC summary table}
 #'  \item{"cross_trait"}{Draw cross-trait peak clustering (requires multiple phenotypes)}
+#'  \item{"fine_mapping"}{Draw fine-mapping interpretation summary (conditional signals and credible-set resolution)}
 #' }
 #'
 #' @seealso [makeInteractiveDashboard()]
@@ -51,7 +52,8 @@ makeInteractiveSummary <- function(object, pheno,
   what <- match.arg(
     arg = what,
     choices = c("scan", "scan_png", "peakcall", "recalc", "groups",
-                "peakcall_haplo", "recalc_haplo", "candidate", "qq", "qc", "cross_trait"),
+                "peakcall_haplo", "recalc_haplo", "candidate", "qq", "qc", "cross_trait",
+                "fine_mapping"),
     several.ok = TRUE
   )
 
@@ -218,6 +220,53 @@ makeInteractiveSummary <- function(object, pheno,
           )
         }
       }
+    }
+  }
+
+  if ("fine_mapping" %in% what) {
+    fm <- tryCatch(
+      summarizeFineMapping(
+        object = object,
+        pheno = pheno,
+        recalc = TRUE,
+        run_if_missing = TRUE,
+        store = TRUE
+      ),
+      error = function(e) NULL
+    )
+    if (!is.null(fm) && nrow(fm) > 0L) {
+      fm_col_names <- colnames(fm)
+      fm_col_def <- vector("list", length(fm_col_names))
+      names(fm_col_def) <- fm_col_names
+      for (i in seq_along(fm_col_names)) {
+        nm <- fm_col_names[i]
+        if (nm %in% c("conditional_message", "credible_set_message")) {
+          fm_col_def[[i]] <- colDef(minWidth = 360, wrap = TRUE)
+        } else {
+          fm_col_def[[i]] <- colDef(minWidth = max(nchar(nm) * 12, 90))
+        }
+      }
+      tag_list <- tagList(
+        tag_list,
+        div(h1("Fine-mapping interpretation"), style = "text-align:center"),
+        p(
+          "Credible-set size reflects mapping resolution, not proof of causality. ",
+          "Large sets indicate the locus could not be narrowed beyond the LD block.",
+          style = "text-align:center;color:#555;max-width:80vw;margin:0.5em auto 1em;"
+        ),
+        div(
+          reactable(
+            data = fm,
+            columns = fm_col_def,
+            sortable = TRUE,
+            resizable = TRUE,
+            striped = TRUE,
+            wrap = TRUE,
+            defaultPageSize = 10L
+          ),
+          style = "margin:auto;width:98vw;overflow-x:auto;"
+        )
+      )
     }
   }
 

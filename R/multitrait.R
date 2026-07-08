@@ -73,6 +73,14 @@ summarizeCrossTraitPeaks <- function(object, recalc = TRUE) {
 #' @param object A \code{LazyGas} object.
 #' @param recalc Use recalculated peaks when clustering.
 #' @param dist_threshold,r2_threshold Passed to [clusterCrossTraitPeaks()].
+#'
+#' @return A list with \code{heatmap} (genome-wide trait-by-chromosome tile plot),
+#'   \code{clusters}, \code{summary}, and \code{shared_genes}. The heatmap shows
+#'   all chromosomes in the marker set; colored tiles mark chromosomes with a
+#'   peak for that trait (fill = \code{cluster_id}). \code{shared_genes} lists
+#'   candidate genes that appear in two or more traits within the same cluster
+#'   window; it is empty when [listCandidate()] has not been run or no gene is
+#'   shared across traits in that region.
 #' @export
 plotMultiTraitOverview <- function(object,
                                    recalc = TRUE,
@@ -90,20 +98,36 @@ plotMultiTraitOverview <- function(object,
     stop("No peaks found across traits.", call. = FALSE)
   }
 
-  heat_df <- aggregate(
-    cluster_id ~ trait + chr,
-    data = clusters,
-    FUN = function(x) paste(unique(x), collapse = ",")
+  heat_df <- .multitrait_heatmap_df(object = object, clusters = clusters)
+  cluster_levels <- sort(unique(clusters$cluster_id))
+  cluster_cols <- c(
+    "#4C78A8", "#F58518", "#E45756", "#72B7B2", "#54A24B",
+    "#EECA3B", "#B279A2", "#FF9DA6", "#9D755D", "#BAB0AC"
   )
-  heat_df$present <- 1L
+  cluster_cols <- stats::setNames(
+    cluster_cols[seq_along(cluster_levels)],
+    as.character(cluster_levels)
+  )
 
   p_heat <- ggplot2::ggplot(
     heat_df,
-    ggplot2::aes(x = chr, y = trait, fill = factor(present))
+    ggplot2::aes(x = .data$chr, y = .data$trait, fill = .data$cluster_id)
   ) +
     ggplot2::geom_tile(color = "white") +
-    ggplot2::scale_fill_manual(values = c("1" = "#4C78A8"), guide = "none") +
-    ggplot2::labs(title = "Cross-trait peak presence", x = "Chromosome", y = "Trait") +
+    ggplot2::scale_fill_manual(
+      values = cluster_cols,
+      na.value = "gray97",
+      name = "Cluster",
+      drop = FALSE
+    ) +
+    ggplot2::labs(
+      title = "Cross-trait peak presence",
+      subtitle = paste0(
+        length(cluster_levels), " cluster(s); colored tiles = peak on chromosome"
+      ),
+      x = "Chromosome",
+      y = "Trait"
+    ) +
     ggplot2::theme_bw() +
     ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 45, hjust = 1))
 
@@ -118,6 +142,45 @@ plotMultiTraitOverview <- function(object,
     summary = summary_df,
     shared_genes = shared_genes
   )
+}
+
+.multitrait_empty_shared_genes <- function() {
+  data.frame(
+    cluster_id = integer(),
+    Gene_ID = character(),
+    trait = character(),
+    n_traits = integer(),
+    stringsAsFactors = FALSE
+  )
+}
+
+.multitrait_heatmap_df <- function(object, clusters) {
+  chr_lev <- as.character(.get_chromosome_data(object = object)$chr_lev)
+  traits <- sort(unique(clusters$trait))
+  presence <- stats::aggregate(
+    cluster_id ~ trait + chr,
+    data = clusters,
+    FUN = function(x) {
+      ux <- unique(x)
+      if (length(ux) == 1L) {
+        ux[[1L]]
+      } else {
+        paste(ux, collapse = ",")
+      }
+    },
+    simplify = TRUE
+  )
+  presence$chr <- as.character(presence$chr)
+  grid <- expand.grid(
+    trait = traits,
+    chr = chr_lev,
+    stringsAsFactors = FALSE
+  )
+  merged <- merge(grid, presence, by = c("trait", "chr"), all.x = TRUE)
+  merged$chr <- factor(merged$chr, levels = chr_lev)
+  merged$trait <- factor(merged$trait, levels = traits)
+  merged$cluster_id <- factor(as.character(merged$cluster_id), levels = as.character(sort(unique(clusters$cluster_id))))
+  merged
 }
 
 .multitrait_collect_peaks <- function(object, recalc = TRUE) {
@@ -165,7 +228,6 @@ plotMultiTraitOverview <- function(object,
     return(data.frame())
   }
   rownames(out) <- NULL
-  out$peak_key <- paste(out$trait, out$peak_ID, sep = ":")
   out
 }
 
@@ -228,7 +290,13 @@ plotMultiTraitOverview <- function(object,
     if (length(rs) == 0L) "singleton" else paste(unique(rs), collapse = ";")
   }, character(1L))
 
-  cbind(peaks, data.frame(cluster_id = cluster_id, merge_reason = merge_reason))
+  cbind(
+    data.frame(cluster_id = cluster_id, merge_reason = merge_reason),
+    peaks
+  )[, c(
+    "cluster_id", "merge_reason", "trait", "peak_ID", "peak_variant_ID",
+    "chr", "pos", "negLog10P"
+  ), drop = FALSE]
 }
 
 .multitrait_peak_r2 <- function(object, variant_i, variant_j, chr) {
@@ -277,13 +345,13 @@ plotMultiTraitOverview <- function(object,
   })
   cand_all <- do.call(rbind, cand_list)
   if (is.null(cand_all) || nrow(cand_all) == 0L) {
-    return(data.frame())
+    return(.multitrait_empty_shared_genes())
   }
 
   multi_clusters <- unique(clusters$cluster_id[duplicated(clusters$cluster_id) |
                                                  duplicated(clusters$cluster_id, fromLast = TRUE)])
   if (length(multi_clusters) == 0L) {
-    return(data.frame())
+    return(.multitrait_empty_shared_genes())
   }
 
   rows <- lapply(multi_clusters, function(cid) {
@@ -297,14 +365,14 @@ plotMultiTraitOverview <- function(object,
     if (!"Gene_chr" %in% names(sub)) {
       return(NULL)
     }
-    hit <- sub$Gene_chr == chr &
+    hit <- as.character(sub$Gene_chr) == as.character(chr) &
       sub$Gene_start <= end &
       sub$Gene_end >= start
     sub <- sub[hit, , drop = FALSE]
     if (nrow(sub) == 0L) {
       return(NULL)
     }
-    gene_tab <- aggregate(
+    gene_tab <- stats::aggregate(
       trait ~ Gene_ID,
       data = sub,
       FUN = function(x) paste(sort(unique(x)), collapse = ",")
@@ -319,7 +387,7 @@ plotMultiTraitOverview <- function(object,
   })
   out <- do.call(rbind, rows)
   if (is.null(out)) {
-    return(data.frame())
+    return(.multitrait_empty_shared_genes())
   }
   rownames(out) <- NULL
   out
