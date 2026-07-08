@@ -27,6 +27,6 @@ companion store are preferred; an optional SnpEff GDS path is used when
 stored annotations are missing.
 }
 \seealso{
-\code{\link[=makeInteractiveDashboard]{makeInteractiveDashboard()}}, \code{\link[=runExplorerDemo]{runExplorerDemo()}},
+\code{\link[=runLazyGasRunner]{runLazyGasRunner()}}, \code{\link[=makeInteractiveDashboard]{makeInteractiveDashboard()}}, \code{\link[=runExplorerDemo]{runExplorerDemo()}},
 \code{\link[=rankPhenotypeCandidates]{rankPhenotypeCandidates()}}
 }

@@ -87,7 +87,10 @@ ui <- fluidPage(
       actionButton("load_btn", "Load project", class = "btn-primary"),
       helpText(
         "Use the filesystem path to the GDS file, not a file-upload copy. ",
-        "The companion folder (sample.lazygas) must sit beside the GDS."
+        "The companion folder (sample.lazygas) must sit beside the GDS. ",
+        "To run scan → candidate first, use ",
+        tags$code("runLazyGasRunner()"),
+        "."
       ),
       hr(),
       selectInput("pheno_name", "Phenotype", choices = character()),

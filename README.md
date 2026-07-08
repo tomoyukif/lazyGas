@@ -4,8 +4,9 @@
 loads genotypes from GDS files (via [GBScleanR](https://github.com/tomoyukif/GBScleanR)),
 stores association outputs in a companion Parquet dataset, and provides peak
 calling, candidate-gene listing, variant visualization, interactive HTML reports,
-cross-trait analysis, fine-mapping helpers, and a phenotype explorer Shiny app
-(GWAS / locus plots plus optional local LLM support).
+cross-trait analysis, fine-mapping helpers, a thin **pipeline runner** Shiny app
+(`runLazyGasRunner()`), and a **phenotype explorer** Shiny app (`runLazyGasExplorer()`;
+GWAS / locus plots plus optional local LLM support).
 
 ## Environment setup
 
@@ -51,7 +52,7 @@ devtools::load_all("/path/to/lazyGas")
 | Package | Used for |
 |---------|----------|
 | `text2vec` | Semantic candidate search (`searchCandidateGenes(..., mode = "semantic")`) |
-| `shiny` | `runLazyGasExplorer()` phenotype explorer UI |
+| `shiny` | `runLazyGasRunner()` pipeline UI; `runLazyGasExplorer()` phenotype explorer |
 | `base64enc` | Static Manhattan PNGs in HTML reports / explorer (`what = "scan_png"` style) |
 | `DBI`, `RSQLite` | Companion store `lazygas_store = "sqlite"` |
 | `processx` | Background Ollama server from R |
@@ -145,15 +146,20 @@ runMvpDemo(out_dir = "demo_output/mvp")
 ```
 
 **Phenotype explorer demo** (v0.7+ evidence ranking + optional local LLM;
-v0.9+ also embeds GWAS / locus dashboard plots in the Shiny UI):
+v0.9.0+ GWAS / locus dashboard plots in the explorer; v0.9.1+ separate pipeline
+runner):
 
 ```R
 runExplorerDemo(out_dir = "demo_output/explorer")
 # -> demo_output/explorer/phenotype_explorer_report.md
 
-runLazyGasExplorer()   # Shiny UI — GDS path: demo_output/explorer/sample.gds
+runLazyGasRunner()       # Shiny UI — run scan → candidate (paths on disk)
+runLazyGasExplorer()     # Shiny UI — explore / rank (after runner or demo)
 # Tabs: GWAS overview, Ranked genes, Evidence, Locus / variants, Chat
 ```
+
+**Two-app workflow:** use **`runLazyGasRunner()`** once to build companion-store
+results, then **`runLazyGasExplorer()`** to explore and rank candidates.
 
 After **Load project**, open **GWAS overview** for phenotype / Manhattan /
 peaks. After **Rank candidates**, select a gene and use **Locus / variants**

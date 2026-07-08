@@ -21,7 +21,7 @@ This vignette demonstrates the process of conducting a genetic association study
 
 Companion storage for scan, peak, recalc, and candidate outputs is written by default to a Parquet-backed directory next to the GDS file (or optionally SQLite or the legacy GDS `lazygas/` subtree); see the [Where association results are stored](#where-association-results-are-stored) section. Optional refinement of candidate genes with `searchCandidateGenes()` uses keyword and/or semantic similarity search and requires the suggested package **text2vec** for semantic mode (`install.packages("text2vec")`).
 
-Since v0.5.0, lazyGas also provides a **variant viewer** (`getVariantViewerData()`, `plotVariantViewer()`) and an **interactive dashboard** (`makeInteractiveDashboard()`) that links candidate genes to per-gene variant plots in a single HTML file. Runnable demos are available via `runDashboardDemo()` and, for v0.6+ features, `runMvpDemo()` using bundled files in `inst/extdata/`. Since v0.7.0, the **phenotype explorer** (`runLazyGasExplorer()`, `runExplorerDemo()`) ranks candidates by multi-source evidence with optional local LLM support. Since v0.8.0, GWAS **`Coef.*` columns are stored in original phenotype units** for continuous traits (see [Interpreting scan coefficients](#interpreting-scan-coefficients-coef)). Since v0.9.0, the Shiny explorer also embeds **GWAS overview** and **Locus / variants** plots (same helpers as the HTML dashboard).
+Since v0.5.0, lazyGas also provides a **variant viewer** (`getVariantViewerData()`, `plotVariantViewer()`) and an **interactive dashboard** (`makeInteractiveDashboard()`) that links candidate genes to per-gene variant plots in a single HTML file. Runnable demos are available via `runDashboardDemo()` and, for v0.6+ features, `runMvpDemo()` using bundled files in `inst/extdata/`. Since v0.7.0, the **phenotype explorer** (`runLazyGasExplorer()`, `runExplorerDemo()`) ranks candidates by multi-source evidence with optional local LLM support. Since v0.8.0, GWAS **`Coef.*` columns are stored in original phenotype units** for continuous traits (see [Interpreting scan coefficients](#interpreting-scan-coefficients-coef)). Since v0.9.0, the Shiny explorer also embeds **GWAS overview** and **Locus / variants** plots (same helpers as the HTML dashboard). Since v0.9.1, a separate **pipeline runner** (`runLazyGasRunner()`) runs `buildLazyGas()` → `assignPheno()` → `runLazyGas()` from filesystem paths before handing off to the explorer.
 
 Load the lazyGas package.
 ```{r message=FALSE, results="hide", warning=FALSE}
@@ -66,7 +66,7 @@ devtools::load_all("/path/to/lazyGas")
 | Package | Feature |
 |---------|---------|
 | `text2vec` | Semantic `searchCandidateGenes()` |
-| `shiny` | `runLazyGasExplorer()` UI (GWAS / locus / ranking / chat) |
+| `shiny` | `runLazyGasRunner()` pipeline UI; `runLazyGasExplorer()` (GWAS / locus / ranking / chat) |
 | `base64enc` | Static Manhattan PNG in HTML / explorer |
 | `DBI`, `RSQLite` | `lazygas_store = "sqlite"` |
 | `processx` | Background Ollama from R |
@@ -947,6 +947,9 @@ explanations. Ranking and evidence collection are deterministic in R; the LLM is
 optional. **v0.8.0** documents GWAS effect sizes in input trait units.
 **v0.9.0** adds Shiny-embedded GWAS overview and on-demand locus / variant
 views (alongside the existing HTML `makeInteractiveDashboard()` reports).
+**v0.9.1** adds a thin **pipeline runner** Shiny app so scan through candidate
+listing can be launched from the GUI without mixing those steps into the
+explorer UI.
 
 **Official environment:** lazyGas ships an **Apptainer** workflow so you do not
 need a host `ollama` binary (typical on HPC clusters). Models and cache are stored
@@ -991,11 +994,21 @@ export LAZYGAS_OLLAMA_SIF="$HOME/.cache/lazygas/ollama/ollama.sif"
 
 Then in R: `configureLazyGasOllama(build_sif_if_missing = FALSE)`.
 
-**Phenotype explorer demo**
+**Two-app workflow (v0.9.1+)**
+
+Use **`runLazyGasRunner()`** once to build companion-store results from GDS,
+phenotype CSV, and GFF paths on disk, then **`runLazyGasExplorer()`** to
+explore and rank candidates. `runExplorerDemo()` runs the full R pipeline and
+is equivalent to using the runner plus explorer on bundled demo files.
 
 ```{r eval=FALSE}
+# Option A: CLI demo (writes demo_output/explorer/)
 runExplorerDemo(out_dir = "demo_output/explorer", overwrite = TRUE)
 runLazyGasExplorer()   # GDS path: demo_output/explorer/sample.gds
+
+# Option B: GUI pipeline, then explorer
+runLazyGasRunner()     # set GDS / pheno CSV / GFF paths, Run pipeline
+runLazyGasExplorer(gds_path = "demo_output/explorer/sample.gds")
 ```
 
 In the Shiny UI, use **Setup Ollama (Apptainer)** once, then **Start Ollama** /
@@ -1019,8 +1032,9 @@ stopOllamaServer()   # stops only processes started from this R session
 Host-installed Ollama (https://ollama.com) still works when `ollama` is on `PATH`
 and no Apptainer wrapper is configured.
 
-The Shiny explorer and Quarto templates ship under `inst/shiny/explorer/` and
-`inst/quarto/`. Launch the Shiny explorer with `runLazyGasExplorer()`.
+The Shiny apps and Quarto templates ship under `inst/shiny/runner/`,
+`inst/shiny/explorer/`, and `inst/quarto/`. Launch the pipeline runner with
+`runLazyGasRunner()` and the phenotype explorer with `runLazyGasExplorer()`.
 
 <br><br>
 

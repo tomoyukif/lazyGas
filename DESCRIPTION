@@ -1,7 +1,7 @@
 Package: lazyGas
 Type: Package
 Title: Lazies' genetic association study (lazyGas): genetic association study pipeline for lazy guys
-Version: 0.9.0
+Version: 0.9.1
 Date: 2026-07-09
 Authors@R: person("Tomoyuki", "Furuta", 
            email = "f.tomoyuki@okayama-u.ac.jp",
@@ -9,17 +9,17 @@ Authors@R: person("Tomoyuki", "Furuta",
            comment = c(ORCID = "0000-0002-0869-6626"))
 Description: Genetic association study pipeline with companion Parquet storage,
   peak calling, candidate gene listing, variant viewer, interactive HTML reports,
-  and a phenotype explorer Shiny app with GWAS / locus plots and optional local
-  LLM support. GWAS effect coefficients for continuous traits are reported in
-  original phenotype units.
+  a phenotype explorer Shiny app with GWAS / locus plots and optional local LLM
+  support, and a thin pipeline runner Shiny app. GWAS effect coefficients for
+  continuous traits are reported in original phenotype units.
 License: GPL-3 + file LICENSE
 Encoding: UTF-8
 Depends: GBScleanR
-Imports: stats, utils, methods, ggplot2, gdsfmt, GenomeInfoDb, GenomicRanges, IRanges,
-  S4Vectors, SNPRelate, SeqArray, cowplot, dplyr, parameters, rtracklayer, vcfR,
-  arrow, jsonlite, gaston, plotly, htmltools, reactable
+Imports: stats, utils, methods, parallel, ggplot2, gdsfmt, GenomeInfoDb, GenomicRanges,
+  IRanges, S4Vectors, SNPRelate, SeqArray, cowplot, dplyr, parameters, rtracklayer, vcfR,
+  arrow, jsonlite, gaston, plotly, htmltools, reactable, BiocGenerics
 Suggests: DBI, RSQLite, testthat, BiocStyle, knitr, rmarkdown, text2vec, base64enc,
-  shiny, quarto, httr2, curl, rentrez, processx
+  shiny, httr2, curl, rentrez, processx
 SystemRequirements: GNU make, C++11
 VignetteBuilder: knitr
 Roxygen: list(markdown = TRUE)
@@ -55,4 +55,5 @@ Collate:
     'phenotype-rank.R'
     'explorer-demo.R'
     'shiny-explorer.R'
+    'shiny-runner.R'
     'resolve-paths.R'

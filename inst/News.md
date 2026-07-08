@@ -5,6 +5,25 @@ the release or documentation update for that version.
 
 ---
 
+## Changes in version 0.9.1 (2026-07-09)
+
+### Pipeline runner (thin Shiny app)
++ Add **`runLazyGasRunner()`** (`inst/shiny/runner/`) — a separate Shiny app to
+  run `buildLazyGas()` → `assignPheno()` → `runLazyGas()` (scan through
+  candidate) from filesystem paths, then hand off to **`runLazyGasExplorer()`**
+  for exploration and ranking.
++ Explorer sidebar links to **`runLazyGasRunner()`** when companion-store
+  results are missing.
++ Bump package version to **0.9.1**; refresh **README.md**, vignette, and
+  **`runLazyGasRunner()`** man page.
+
+### Note for upgrades
++ Install Suggested **`shiny`** and **`rtracklayer`** (already required for GFF
+  import elsewhere) to use the runner UI:
+  `install.packages("shiny")`.
+
+---
+
 ## Changes in version 0.9.0 (2026-07-09)
 
 ### Phenotype explorer (dashboard plots in Shiny)

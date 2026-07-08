@@ -309,8 +309,34 @@ test_that("Phase4 exports are registered", {
     "buildLazyGasOllamaSif",
     "lazyGasOllamaHome",
     "runExplorerDemo",
-    "runLazyGasExplorer"
+    "runLazyGasExplorer",
+    "runLazyGasRunner"
   ) %in% exports))
+})
+
+test_that("runner Shiny app is a thin pipeline launcher", {
+  skip_if_not_installed("lazyGas")
+  candidates <- c(
+    system.file("shiny", "runner", "app.R", package = "lazyGas"),
+    normalizePath(
+      file.path(testthat::test_path(), "..", "..", "inst", "shiny", "runner", "app.R"),
+      winslash = "/",
+      mustWork = FALSE
+    ),
+    normalizePath(
+      file.path(getwd(), "inst", "shiny", "runner", "app.R"),
+      winslash = "/",
+      mustWork = FALSE
+    )
+  )
+  app_path <- candidates[nzchar(candidates) & file.exists(candidates)][1L]
+  skip_if(is.na(app_path) || !nzchar(app_path), "runner app.R not found")
+  src <- paste(readLines(app_path, warn = FALSE), collapse = "\n")
+  expect_true(grepl("runLazyGas", src, fixed = TRUE))
+  expect_true(grepl("assignPheno", src, fixed = TRUE))
+  expect_true(grepl("runLazyGasExplorer", src, fixed = TRUE))
+  expect_false(grepl("rankPhenotypeCandidates", src, fixed = TRUE))
+  expect_error(parse(file = app_path), NA)
 })
 
 test_that("explorer Shiny app embeds dashboard plot tabs", {

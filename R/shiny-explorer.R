@@ -17,7 +17,7 @@
 #' companion store are preferred; an optional SnpEff GDS path is used when
 #' stored annotations are missing.
 #'
-#' @seealso [makeInteractiveDashboard()], [runExplorerDemo()],
+#' @seealso [runLazyGasRunner()], [makeInteractiveDashboard()], [runExplorerDemo()],
 #'   [rankPhenotypeCandidates()]
 #'
 #' @export
