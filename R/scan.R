@@ -891,22 +891,6 @@ setMethod("plotManhattan",
   return(x)
 }
 
-## Function to evaluate significant points
-.evaluate_signif <- function(x, signif) {
-  if(is.null(signif)){
-    signif <- rep(TRUE, nrow(x))
-  }
-  if(!is.logical(signif)){
-    if(is.character(signif)){
-      signif <- eval(parse(text = paste0("x$", signif)))
-    } else {
-      stop("signif should be a string or a vector of logical values.", call. = FALSE)
-    }
-  }
-  signif[is.na(signif)] <- FALSE
-  return(signif)
-}
-
 ## Function to create ggplot object
 .create_ggplot <- function(x, x_signif) {
   p <- ggplot() +

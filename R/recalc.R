@@ -341,22 +341,6 @@ setMethod("recalcAssoc",
                        output_all = FALSE,
                        n_threads,
                        mode){
-  # if(mode == "all"){
-  #   null_df <- NULL
-  #   subject_peak <- peak_obj$peak_variant_id
-  #   target_geno <- peak_obj$geno
-  #
-  #   if(peak_obj$geno_format == "haplotype"){
-  #     target_geno <- apply(X = target_geno, MARGIN = 3, FUN = list)
-  #     target_geno <- lapply(X = target_geno, FUN = "[[", 1)
-  #
-  #   } else {
-  #     target_geno <- apply(X = target_geno, MARGIN = 2, FUN = list)
-  #     target_geno <- lapply(X = target_geno, FUN = "[[", 1)
-  #   }
-  #
-  #
-  # } else if(mode == "composite"){
   if(mode == "composite"){
     formula_terms <- unlist(strsplit(peak_obj$formula, split = "\\+|\\*|\\:"))
     formula_terms <- gsub("\\s", "", formula_terms)
@@ -575,7 +559,7 @@ setMethod("recalcAssoc",
   target_variants <- peakcall$peak_ID %in% peakcall$peak_ID[peakcall$variant_ID %in% peak_id]
   target_variants <- sort(peakcall$variant_ID[target_variants])
 
-  variables <- .initialize_variables(object = object)
+  variables <- .peakcall_variables(object = object)
   index <- which(variables$snp_id == peak_id)
   chr <- variables$chr[index]
   chr_with_peak <- which(variables$chr == chr)

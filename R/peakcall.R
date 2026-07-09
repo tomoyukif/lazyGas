@@ -111,7 +111,7 @@ setMethod("callPeakBlock",
     return()
   }
 
-  variables <- .initialize_variables(object = object)
+  variables <- .peakcall_variables(object = object)
 
   .call_peaks(object = object,
               pvalues = pvalues,
@@ -151,13 +151,13 @@ setMethod("callPeakBlock",
   }
 }
 
-## Function to initialize variables
-.initialize_variables <- function(object) {
-  list(
-    n_sample = nsam(object = object),
+## Function to initialize peak-calling marker table
+.peakcall_variables <- function(object) {
+  data.frame(
     snp_id = getMarID(object = object),
     chr = getChromosome(object = object),
-    pos = getPosition(object = object)
+    pos = getPosition(object = object),
+    stringsAsFactors = FALSE
   )
 }
 

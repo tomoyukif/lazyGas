@@ -317,7 +317,7 @@ plotMultiTraitOverview <- function(object,
     selection = selection,
     geno_format = geno_format
   ))
-  variables <- .initialize_variables(object = object)
+  variables <- .multitrait_marker_table(object = object)
   chr_ids <- variables$snp_id[variables$chr == chr]
   idx_i <- match(variant_i, chr_ids)
   idx_j <- match(variant_j, chr_ids)
@@ -393,7 +393,7 @@ plotMultiTraitOverview <- function(object,
   out
 }
 
-.initialize_variables <- function(object) {
+.multitrait_marker_table <- function(object) {
   data.frame(
     snp_id = getMarID(object = object),
     chr = getChromosome(object = object),

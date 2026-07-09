@@ -29,6 +29,5 @@ Writes an HTML report and prints summaries for the new APIs introduced in
 lazyGas v0.6+.
 }
 \seealso{
-\code{\link[=runDashboardDemo]{runDashboardDemo()}},
-\code{\link[=runExplorerDemo]{runExplorerDemo()}}
+\code{\link[=runDashboardDemo]{runDashboardDemo()}}, \code{\link[=runExplorerDemo]{runExplorerDemo()}}
 }
