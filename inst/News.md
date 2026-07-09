@@ -5,6 +5,35 @@ the release or documentation update for that version.
 
 ---
 
+## Changes in version 0.9.2 (2026-07-09)
+
+### Explorer UI and workflow polish
++ Reorganize **`runLazyGasExplorer()`** sidebar controls by tab so only
+  context-relevant inputs are shown:
+  + **GWAS overview**: project loading, phenotype selection, Manhattan mode.
+  + **Local LLM**: LLM configuration and Ollama actions.
+  + **Ranked genes**: phenotype-query inputs and ranking controls.
+  + **Locus / variants** and **Chat / explanation**: tab-specific controls.
++ Add a dedicated **Local LLM** tab in the main panel (before **Ranked genes**)
+  that summarizes runtime/model status and diagnostics.
++ Keep phenotype selection anchored to **GWAS overview** as the primary place
+  to set active analysis context.
+
+### Progress and interaction behavior
++ Add explicit progress feedback for **Rank candidates**,
+  **Generate explanation**, and **Ask** actions.
++ Lock action buttons while long-running rank/chat/explanation tasks are active
+  to prevent duplicate submissions and conflicting operations.
++ Remove cancel-button UI after reliability review; retain progress display and
+  busy-state locking for stable synchronous execution.
+
+### Packaging and docs
++ Bump package version to **0.9.2**.
++ Refresh **README.md** and vignette wording for updated explorer tabs and
+  sidebar behavior.
+
+---
+
 ## Changes in version 0.9.1 (2026-07-09)
 
 ### Pipeline runner (thin Shiny app)

@@ -193,6 +193,7 @@ ui <- fluidPage(
 )
 
 server <- function(input, output, session) {
+  session$userData$lg <- NULL
   log_lines <- reactiveVal(character())
   lg_obj <- reactiveVal(NULL)
   last_gds <- reactiveVal("")
@@ -287,13 +288,14 @@ server <- function(input, output, session) {
 
     running(TRUE)
     log_lines(character())
-    lg_obj(NULL)
     last_gds("")
 
-    old_lg <- lg_obj()
+    old_lg <- session$userData$lg
     if (!is.null(old_lg)) {
       try(closeGDS(old_lg, verbose = FALSE), silent = TRUE)
     }
+    session$userData$lg <- NULL
+    lg_obj(NULL)
 
     shiny::withProgress(
       message = "Running lazyGas pipeline",
@@ -400,6 +402,7 @@ server <- function(input, output, session) {
           if (!is.null(lg)) {
             try(closeGDS(lg, verbose = FALSE), silent = TRUE)
             lg <<- NULL
+            session$userData$lg <- NULL
           }
         }, finally = {
           if (!is.null(snpeff)) {
@@ -410,6 +413,7 @@ server <- function(input, output, session) {
         if (!is.null(err)) {
           showNotification(err, type = "error", duration = NULL)
         } else {
+          session$userData$lg <- lg
           lg_obj(lg)
           last_gds(gds_norm)
           showNotification("Pipeline finished. Open the explorer to continue.", type = "message")
@@ -420,9 +424,10 @@ server <- function(input, output, session) {
   })
 
   session$onSessionEnded(function() {
-    lg <- lg_obj()
+    lg <- session$userData$lg
     if (!is.null(lg)) {
       try(closeGDS(lg, verbose = FALSE), silent = TRUE)
+      session$userData$lg <- NULL
     }
   })
 }

@@ -21,7 +21,7 @@ This vignette demonstrates the process of conducting a genetic association study
 
 Companion storage for scan, peak, recalc, and candidate outputs is written by default to a Parquet-backed directory next to the GDS file (or optionally SQLite or the legacy GDS `lazygas/` subtree); see the [Where association results are stored](#where-association-results-are-stored) section. Optional refinement of candidate genes with `searchCandidateGenes()` uses keyword and/or semantic similarity search and requires the suggested package **text2vec** for semantic mode (`install.packages("text2vec")`).
 
-Since v0.5.0, lazyGas also provides a **variant viewer** (`getVariantViewerData()`, `plotVariantViewer()`) and an **interactive dashboard** (`makeInteractiveDashboard()`) that links candidate genes to per-gene variant plots in a single HTML file. Runnable demos are available via `runDashboardDemo()` and, for v0.6+ features, `runMvpDemo()` using bundled files in `inst/extdata/`. Since v0.7.0, the **phenotype explorer** (`runLazyGasExplorer()`, `runExplorerDemo()`) ranks candidates by multi-source evidence with optional local LLM support. Since v0.8.0, GWAS **`Coef.*` columns are stored in original phenotype units** for continuous traits (see [Interpreting scan coefficients](#interpreting-scan-coefficients-coef)). Since v0.9.0, the Shiny explorer also embeds **GWAS overview** and **Locus / variants** plots (same helpers as the HTML dashboard). Since v0.9.1, a separate **pipeline runner** (`runLazyGasRunner()`) runs `buildLazyGas()` → `assignPheno()` → `runLazyGas()` from filesystem paths before handing off to the explorer.
+Since v0.5.0, lazyGas also provides a **variant viewer** (`getVariantViewerData()`, `plotVariantViewer()`) and an **interactive dashboard** (`makeInteractiveDashboard()`) that links candidate genes to per-gene variant plots in a single HTML file. Runnable demos are available via `runDashboardDemo()` and, for v0.6+ features, `runMvpDemo()` using bundled files in `inst/extdata/`. Since v0.7.0, the **phenotype explorer** (`runLazyGasExplorer()`, `runExplorerDemo()`) ranks candidates by multi-source evidence with optional local LLM support. Since v0.8.0, GWAS **`Coef.*` columns are stored in original phenotype units** for continuous traits (see [Interpreting scan coefficients](#interpreting-scan-coefficients-coef)). Since v0.9.0, the Shiny explorer also embeds **GWAS overview** and **Locus / variants** plots (same helpers as the HTML dashboard). Since v0.9.1, a separate **pipeline runner** (`runLazyGasRunner()`) runs `buildLazyGas()` → `assignPheno()` → `runLazyGas()` from filesystem paths before handing off to the explorer. Since v0.9.2, explorer sidebar controls are tab-scoped with a dedicated Local LLM diagnostics tab and busy-state progress/locking for rank/chat actions.
 
 Load the lazyGas package.
 ```{r message=FALSE, results="hide", warning=FALSE}
@@ -949,7 +949,8 @@ optional. **v0.8.0** documents GWAS effect sizes in input trait units.
 views (alongside the existing HTML `makeInteractiveDashboard()` reports).
 **v0.9.1** adds a thin **pipeline runner** Shiny app so scan through candidate
 listing can be launched from the GUI without mixing those steps into the
-explorer UI.
+explorer UI. **v0.9.2** further reorganizes explorer controls by tab and adds a
+dedicated **Local LLM** tab with runtime/model diagnostics.
 
 **Official environment:** lazyGas ships an **Apptainer** workflow so you do not
 need a host `ollama` binary (typical on HPC clusters). Models and cache are stored
@@ -1011,15 +1012,21 @@ runLazyGasRunner()     # set GDS / pheno CSV / GFF paths, Run pipeline
 runLazyGasExplorer(gds_path = "demo_output/explorer/sample.gds")
 ```
 
-In the Shiny UI, use **Setup Ollama (Apptainer)** once, then **Start Ollama** /
-**Pull model**. Chat and comparisons work without the LLM (rule-based fallback);
-enable **Use local LLM** for richer parsing and explanations.
+In the Shiny UI, open the **Local LLM** tab to run **Setup Ollama
+(Apptainer)** once, then **Start Ollama** / **Pull model**. Chat and
+comparisons work without the LLM (rule-based fallback); enable
+**Use local LLM** for richer parsing and explanations.
 
-After **Load project**, the **GWAS overview** tab shows phenotype, Manhattan
-(static PNG by default), peakcall / recalc, and peak-group tables. After
-ranking, select a gene and open **Locus / variants** for haplotype and
-on-demand variant-viewer plots (provide a GFF path; demo default is
-`inst/extdata/demo_annotation.gff`).
+After **Load project**, the **GWAS overview** tab is the primary place to set
+the active phenotype and review phenotype/Manhattan/peak plots (static PNG
+Manhattan by default). Use **Ranked genes** for phenotype-query inputs and
+ranking. After ranking, select a gene and open **Locus / variants** for
+haplotype and on-demand variant-viewer plots (provide a GFF path; demo default
+is `inst/extdata/demo_annotation.gff`).
+
+During long-running **Rank candidates**, **Generate explanation**, and **Ask**
+actions, the explorer shows progress and temporarily disables action buttons to
+avoid duplicate submissions.
 
 **Diagnostics**
 

@@ -155,16 +155,22 @@ runExplorerDemo(out_dir = "demo_output/explorer")
 
 runLazyGasRunner()       # Shiny UI — run scan → candidate (paths on disk)
 runLazyGasExplorer()     # Shiny UI — explore / rank (after runner or demo)
-# Tabs: GWAS overview, Ranked genes, Evidence, Locus / variants, Chat
+# Tabs: GWAS overview, Local LLM, Ranked genes, Evidence, Locus / variants, Chat
 ```
 
 **Two-app workflow:** use **`runLazyGasRunner()`** once to build companion-store
 results, then **`runLazyGasExplorer()`** to explore and rank candidates.
 
-After **Load project**, open **GWAS overview** for phenotype / Manhattan /
-peaks. After **Rank candidates**, select a gene and use **Locus / variants**
+After **Load project**, use **GWAS overview** to set the active phenotype and
+inspect phenotype/Manhattan/peak views. Configure optional local LLM settings
+on **Local LLM**. Use **Ranked genes** for phenotype-query inputs and
+**Rank candidates**. Then select a gene and open **Locus / variants**
 (set a GFF path in the sidebar for the variant viewer; demo default is
 `inst/extdata/demo_annotation.gff`).
+
+During long-running **Rank candidates** / **Generate explanation** / **Ask**
+actions, the explorer shows progress and temporarily disables action buttons to
+avoid duplicate submissions.
 
 In the explorer, enter the **filesystem path** to the GDS (not an uploaded copy).
 The companion folder `sample.lazygas` must sit in the same directory.
