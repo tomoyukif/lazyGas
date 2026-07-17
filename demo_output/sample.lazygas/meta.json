@@ -1,0 +1,22 @@
+{
+  "lazygas_schema_version": 1,
+  "scan_phenotypes": "Demo_trait",
+  "scan_colnames": {
+    "Demo_trait": ["P.model", "P.add", "Coef.add", "PVE", "FDR", "negLog10P"]
+  },
+  "kruskal": [],
+  "formula": "add",
+  "null_formula": "NULL",
+  "conv_fun": "NULL",
+  "geno_format": "dosage",
+  "fixed_effect": [
+    [null]
+  ],
+  "peakcall_signif": 0.05,
+  "peakcall_threshold": 0.8,
+  "peakcall_peaks_col_names": ["peak_ID", "peak_variant_ID"],
+  "peakcall_blocks_col_names": ["peak_ID", "variant_ID", "dist2peak", "LD2peak", "chr_start", "chr_end"],
+  "recalc_groups_col_names": ["peak_ID", "variant_ID", "FDR", "negLog10P", "grouped_with", "full_vs_reduce_pvalue"],
+  "candidate_col_names": ["peak_ID", "Gene_ID", "Gene_chr", "Gene_start", "dist2peak", "negLog10P", "HIGH", "MODERATE", "LOW", "MODIFIER", "HIGH_at_var", "MODERATE_at_var", "LOW_at_var", "MODIFIER_at_var", "Name", "Description"],
+  "snpeff_col_names": ["Allele", "Annotation", "Annotation_Impact", "Gene_Name", "Gene_ID", "Feature_Type", "Feature_ID", "Transcript_BioType", "Rank", "HGVS.c", "HGVS.p", "Pos.in.tx", "Pos.in.CDS", "Pos.in.AA", "Distance", "INFO", "Chr", "Pos", "negLog10P"]
+}

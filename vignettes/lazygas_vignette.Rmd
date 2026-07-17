@@ -1,29 +1,105 @@
 ---
 title: "Association Study with lazyGas"
-author: 
-  -name: "Tomoyuki Furuta"
-  affiliation: Institute of Plant Science and Resources, Okayama University, Okayama, Japan
-  email: f.tomoyuki@okayama-u.ac.jp
-date: "Apr 4, 2025"
+author:
+  - name: "Tomoyuki Furuta"
+    affiliation: Institute of Plant Science and Resources, Okayama University, Okayama, Japan
+    email: f.tomoyuki@okayama-u.ac.jp
+date: "July 9, 2026"
 package: lazyGas
 output: 
   BiocStyle::html_document:
     toc: true
     toc_float: true
 vignette: >
-  %\VignetteIndexEntry{Genetic Association Study with lazyGa}
+  %\VignetteIndexEntry{Genetic Association Study with lazyGas}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 ---
 
 ## Introduction
-This vignette demonstrates the process of conducting a genetic association study using the `lazyGas` package. We will go through the steps of loading input files, preprocessing data, performing association analysis, and visualizing results.  
-<br>
-  
+This vignette demonstrates the process of conducting a genetic association study using the `lazyGas` package. We will go through the steps of loading input files, preprocessing data, performing association analysis, and visualizing results.
+
+Companion storage for scan, peak, recalc, and candidate outputs is written by default to a Parquet-backed directory next to the GDS file (or optionally SQLite or the legacy GDS `lazygas/` subtree); see the [Where association results are stored](#where-association-results-are-stored) section. Optional refinement of candidate genes with `searchCandidateGenes()` uses keyword and/or semantic similarity search and requires the suggested package **text2vec** for semantic mode (`install.packages("text2vec")`).
+
+Since v0.5.0, lazyGas also provides a **variant viewer** (`getVariantViewerData()`, `plotVariantViewer()`) and an **interactive dashboard** (`makeInteractiveDashboard()`) that links candidate genes to per-gene variant plots in a single HTML file. Runnable demos are available via `runDashboardDemo()` and, for v0.6+ features, `runMvpDemo()` using bundled files in `inst/extdata/`. Since v0.7.0, the **phenotype explorer** (`runLazyGasExplorer()`, `runExplorerDemo()`) ranks candidates by multi-source evidence with optional local LLM support. Since v0.8.0, GWAS **`Coef.*` columns are stored in original phenotype units** for continuous traits (see [Interpreting scan coefficients](#interpreting-scan-coefficients-coef)). Since v0.9.0, the Shiny explorer also embeds **GWAS overview** and **Locus / variants** plots (same helpers as the HTML dashboard). Since v0.9.1, a separate **pipeline runner** (`runLazyGasRunner()`) runs `buildLazyGas()` → `assignPheno()` → `runLazyGas()` from filesystem paths before handing off to the explorer. Since v0.9.2, explorer sidebar controls are tab-scoped with a dedicated Local LLM diagnostics tab and busy-state progress/locking for rank/chat actions.
+
 Load the lazyGas package.
 ```{r message=FALSE, results="hide", warning=FALSE}
 library(lazyGas)
+have_demo_ann <- FALSE
 ```
+<br><br>
+
+## Setting up your environment
+
+Use this checklist before running the examples below or the bundled demos.
+
+### System and core dependencies
+
+| Requirement | Notes |
+|-------------|-------|
+| R ≥ 4.1 | Recommended; cache paths use `tools::R_user_dir()` |
+| GNU make, C++11 | Required to build some dependencies (`SystemRequirements` in `DESCRIPTION`) |
+| **GBScleanR** | Hard dependency — install from [GitHub](https://github.com/tomoyukif/GBScleanR) before `lazyGas` |
+| **arrow** | Parquet companion storage (installed with lazyGas imports) |
+
+Install CRAN dependencies and lazyGas:
+
+```{r eval=FALSE}
+install.packages(c(
+  "ggplot2", "arrow", "jsonlite", "dplyr", "cowplot",
+  "parameters", "gaston", "vcfR", "plotly", "htmltools",
+  "reactable", "devtools"
+))
+# Install GBScleanR from GitHub, then:
+devtools::install_github("tomoyukif/lazyGas", build_vignettes = TRUE)
+```
+
+From a local source tree during development:
+
+```{r eval=FALSE}
+devtools::load_all("/path/to/lazyGas")
+```
+
+### Optional packages by feature
+
+| Package | Feature |
+|---------|---------|
+| `text2vec` | Semantic `searchCandidateGenes()` |
+| `shiny` | `runLazyGasRunner()` pipeline UI; `runLazyGasExplorer()` (GWAS / locus / ranking / chat) |
+| `base64enc` | Static Manhattan PNG in HTML / explorer |
+| `DBI`, `RSQLite` | `lazygas_store = "sqlite"` |
+| `processx` | Background Ollama from R |
+| `httr2`, `curl` | Local LLM HTTP API |
+| `rentrez` | PubMed literature evidence (explorer; optional) |
+
+`plotly`, `htmltools`, and `reactable` are package **Imports** (HTML reports and
+explorer plots).
+
+```{r eval=FALSE}
+install.packages(c("text2vec", "shiny", "base64enc", "DBI", "RSQLite", "processx", "httr2", "curl"))
+```
+
+### Optional local LLM (phenotype explorer)
+
+Evidence ranking works without an LLM. For richer query parsing and explanations:
+
+1. **Apptainer / Singularity** (recommended on clusters; no host `ollama` binary):
+   - Install Apptainer or Singularity; ensure `apptainer` or `singularity` is on `PATH`.
+   - One-time in R: `configureLazyGasOllama(model = "llama3.2:3b")` then `startLocalLLM(model = "llama3.2:3b")`.
+   - Shell: `bash inst/apptainer/build_ollama_sif.sh` (see [Phenotype explorer and local LLM](#phenotype-explorer-and-local-llm-apptainer-official-setup)).
+2. **Host Ollama**: install from https://ollama.com and run `startLocalLLM()`.
+
+Cache and models default to `lazyGasOllamaHome()` (override with `LAZYGAS_OLLAMA_HOME`).
+
+### Verify installation
+
+```{r eval=FALSE}
+out_dir <- tempfile("lazygas_check_")
+runDashboardDemo(out_dir = out_dir)
+file.exists(file.path(out_dir, "lazygas_dashboard.html"))
+```
+
 <br><br>
 
 ## Loading Input GDS file and Building a LazyGas Object
@@ -39,11 +115,29 @@ lg <- buildLazyGas(gds_fn = gds_fn, load_filter = TRUE, overwrite = FALSE)
 If you applied filtering on markers and/or samples using the functions in the 
 `r Biocpkg("GBScleanR")` package, please set `load_filter = TRUE` that apply the
 same filters on the given data during building a `LazyGas` class object.
-The setting `overwrite = FALSE` ensures that all outputs stored in the input GDS 
-file, which were created by functions in the `lazyGas` package, are preserved as 
-they are. If `overwrite = TRUE`, those outputs will be removed. This setting has 
-no effect when creating a `LazyGas` class object for the first time, but it does
-apply when reloading the GDS file for reanalysis.  
+
+The setting `overwrite = FALSE` ensures that existing lazyGas outputs in the chosen
+result store are preserved. If `overwrite = TRUE`, those outputs will be removed.
+This setting has no effect when creating a `LazyGas` class object for the first
+time, but it does apply when reloading the GDS file for reanalysis.  
+<br>
+
+### Where association results are stored
+Genotypes and marker coordinates stay in the GDS file. Since lazyGas v0.5.0,
+association outputs (`scan`, `peakcall`, `recalc`, `candidate`, and related
+metadata) are written to a **companion store** by default, not into a `lazygas/`
+subtree inside the GDS. Choose the backend with `lazygas_store` in
+`buildLazyGas()`:
+
+| `lazygas_store` | Location |
+|-----------------|----------|
+| `"parquet"` (default) | `{gds_stem}.lazygas/` (Parquet files and `meta.json`) |
+| `"sqlite"` | `{gds_stem}.lazygas.sqlite` (requires **DBI** and **RSQLite**) |
+| `"gds"` | `lazygas/` subtree inside the GDS file (legacy layout) |
+| `"auto"` | GDS subtree if it already exists; otherwise Parquet companion |
+
+For the sample data above, scan results are written under
+`sample.lazygas/scan/` next to `sample.gds` when the default is used.
 <br>
   
 If you have genotype information that are not stored in a GDS file, you can build 
@@ -275,6 +369,30 @@ scanAssoc(object = lg,
   
 <br>
 
+### Interpreting scan coefficients (`Coef.*`)
+
+For **continuous** phenotypes, `scanAssoc()` standardizes trait values internally
+before regression (zero mean, unit variance). Stored **`Coef.*` columns** (for
+example `Coef.add`, `Coef.dom`) are **rescaled to the original phenotype units**:
+each coefficient is the expected change in the input trait per one unit of the
+corresponding genotype term (e.g. per dosage allele). **P-values, FDR, and
+`-log10P` are unchanged** by this rescaling.
+
+For **binary** phenotypes, standardization is skipped; coefficients remain on
+the GLM scale (log-odds).
+
+Re-run `scanAssoc()` if you need rescaled coefficients for results saved with
+lazyGas versions before v0.8.0.
+
+```{r}
+scan <- lazyData(object = lg, dataset = "scan", pheno = "Fruit weight")
+if ("Coef.add" %in% names(scan)) {
+  knitr::kable(scan[which.max(scan$negLog10P), c("variant_ID", "negLog10P", "Coef.add", "Coef.dom")])
+}
+```
+
+<br>
+
 For GWAS, set `method = "mlm"`. When `method = "mlm"` is specified, only 
 `geno_format = "genotype"` or `geno_format = "corrected"` is accepted. 
 If `geno_format = "corrected"` is specified, corrected genotype data generated by
@@ -288,18 +406,28 @@ scanAssoc(object = lg,
 <br>
 
 If you conducted association tests using another tool and have p values,
-you can assign those p values to the `LazyGas` class object. In this case, you
-also need to specify `geno_format`, `conv_fun`, and `formula` as they will be 
-used in the later steps. A phenotype name should be specified via the
-`pheno_name` argument. When you have multiple phenotypes, you can assign p 
-values by repeating the `assignPvalues()` function for each phenotype.
+you can register those results with **`assignPvalues()`**. This writes a
+**new** scan table for the phenotype; it does not update an existing
+`scanAssoc()` result in place. Also pass **`coef`** (effect sizes, e.g.
+`Coef.add`) and/or **`any_data`** (any other per-marker columns) when you
+have them—downstream plots such as **`haploPlot()`** use stored coefficients
+when present. Specify `geno_format`, `conv_fun`, and `formula` for later
+pipeline steps. Repeat the call for each phenotype when you have several
+traits.
 ```{r}
-# As an example, extract p values from the LazyGas object and assign them to the object again.
-scan <- lazyData(object = lg, dataset = "scan", pheno = "Fruit weight")
-lg <- assignPvalues(object = lg, pheno_name = "Fruit weight", 
-                    p_values = scan$P.model, 
-                    geno_format = "dosage", conv_fun = conv_fun, 
-                    formula = formula)
+# Example: external p-values and additive coefficients (synthetic demo values)
+n_ext <- nmar(lg)
+ext_p <- runif(n_ext, min = 1e-6, max = 0.5)
+ext_coef <- rnorm(n_ext, sd = 0.5)
+lg <- assignPvalues(
+  object = lg,
+  pheno_name = "Fruit weight",
+  p_values = ext_p,
+  coef = ext_coef,
+  geno_format = "dosage",
+  conv_fun = conv_fun,
+  formula = formula
+)
 ```
 
 <br><br>
@@ -353,7 +481,8 @@ includes only one of the peaks. If the full model is preferred over the reduced
 model at a p-value threshold (the default is 0.05), the two peaks are considered
 independent. Otherwise, the higher peak (the one with the greater -log10(P)
 value) is retained, and the other is removed and recorded as grouped with the 
-higher peak under the `groups` node in the GDS file.
+higher peak in the `groups` dataset (companion store by default, or the GDS
+`lazygas/recalc/groups/` subtree when `lazygas_store = "gds"`).
   
 <br>
 
@@ -365,7 +494,7 @@ The `grouping_threshold` argument specifies the threshold for grouping peaks.
 The default is 0.05.
 ```{r}
 recalcAssoc(object = lg, 
-            n_threads = 10, 
+            n_threads = 1, 
             refine_position = FALSE, 
             grouping_threshold = 0.05)
 ```
@@ -386,6 +515,9 @@ for(i in seq_along(pheno$pheno_names)){
 ## Visualizing Haplotype and Phenotype Data
 You can generate haplotype-wise phenotype distribution plots using the 
 `haploPlot()` function for peaks both before and after applying `recalcAssoc()`.
+Plot titles include peak location, `-log10P`, and when scan results are available,
+the additive effect `Coef.add` with allele direction (original phenotype units
+for continuous traits).
 ```{r}
 for(i in seq_along(pheno$pheno_names)){
   out <- haploPlot(object = lg, pheno = i, recalc = FALSE)
@@ -408,35 +540,107 @@ for(i in seq_along(pheno$pheno_names)){
   
 ## List up candidate genes
 The `listCandidate()` function helps you list candidate genes for the detected 
-association peaks. You are required to provide a GFF file containing gene 
-annotations. If you have a VCF file output from SnpEff, you can also provide it 
+association peaks. You are required to provide gene annotation as a `GRanges` object (for example from `rtracklayer::import.gff()` or `rtracklayer::import.gff3()`); chromosome names must be consistent with the GDS.
+If you have a VCF file output from SnpEff, you can also provide it 
 to the function to summarize variant impacts on gene functions. Since a VCF file
 output from SnpEff is large and takes a long time to load into the R 
 environment, the `snpeff2gds()` function allows you to convert the VCF file into
 a GDS file. The converted GDS file must then be provided to the `listCandidate()`
 function after opening a connection to the file using the `open_snpeff()`
-function, as shown below. In addition, a data.frame containing other gene 
+function. In addition, a data.frame containing other gene 
 annotations can be provided to the `listCandidate()` function to include that
 information in the output candidate list. The data.frame must contain a column 
-named "GeneID", which should match the gene IDs in the GFF file.
+named `Gene_ID`, which should match the gene IDs in the GFF (`gff$ID`).
+
+### Example with your own annotation files
 ```{r eval=FALSE}
 # Do not run.
-# GFF file 
 gff_fn <- "path/to/gff/gene_annotation.gff"
 gff <- rtracklayer::import.gff(gff_fn)
 
-# SnpEff output VCF file
 snpeff_fn <- "path/to/SnpEff/output/variants.snpeff.vcf"
 gds_fn <- sub("\\.vcf", ".gds", snpeff_fn)
 snpeff2gds(vcf_fn = snpeff_fn, out_fn = gds_fn)
 snpeff_gds <- open_snpeff(gds_fn = gds_fn)
 
-# Any CSV format file for gene annotations
-# The given matrix stored in the CSV file must contain a column named "GeneID"
-# that should match the gene IDs in the GFF file.
-ann <- read.csv("~/01_wd/genomeData/rice/cultivar_sativa/nb_combined/version_2023/gff/nb_combined_summarized_annotation.tsv")
+ann <- read.csv("path/to/gene_annotation.csv")
 names(ann)[1] <- "Gene_ID"
 listCandidate(object = lg, gff = gff, snpeff = snpeff_gds, ann = ann, recalc = TRUE)
+```
+
+### Example with bundled demo annotation
+The package ships synthetic GFF, SnpEff VCF, and gene-description files that overlap
+peaks detected in `sample.gds`. The following chunk lists demo candidate genes for
+the trait analysed above.
+
+```{r message=FALSE, warning=FALSE}
+gff_fn <- system.file("extdata", "demo_annotation.gff", package = "lazyGas")
+vcf_fn <- system.file("extdata", "demo_snpeff.vcf", package = "lazyGas")
+ann_fn <- system.file("extdata", "demo_ann.csv", package = "lazyGas")
+
+have_demo_ann <- nzchar(gff_fn) && file.exists(gff_fn) &&
+  nzchar(vcf_fn) && file.exists(vcf_fn)
+
+if (have_demo_ann) {
+  gff <- rtracklayer::import.gff(gff_fn)
+  ann <- read.csv(ann_fn, stringsAsFactors = FALSE)
+  snpeff_gds_fn <- tempfile(pattern = "lazygas_snpeff_", fileext = ".gds")
+  snpeff2gds(vcf_fn = vcf_fn, out_fn = snpeff_gds_fn, verbose = FALSE)
+  snpeff_gds <- open_snpeff(snpeff_gds_fn)
+  listCandidate(
+    object = lg,
+    gff = gff,
+    snpeff = snpeff_gds,
+    ann = ann,
+    recalc = TRUE
+  )
+  candidate <- lazyData(object = lg, dataset = "candidate", pheno = "Fruit weight")
+  knitr::kable(candidate[, c("peak_ID", "Gene_ID", "Gene_chr", "negLog10P", "Name")])
+} else {
+  message("Demo annotation files are not installed; skipping listCandidate() example.")
+}
+```
+
+<br>
+
+## Refining candidate genes (`searchCandidateGenes`)
+After `listCandidate()`, the candidate table may still be large. The function `searchCandidateGenes()` filters and ranks rows using free-text annotation columns (for example descriptions or GO terms merged via the `ann` argument in `listCandidate()`).
+
+- **`mode = "keyword"`** — fixed substring matching on the query string; with `keyword_match = "all"`, every whitespace-separated token must appear (default is `"all"`; use `"any"` for OR-style matching).
+- **`mode = "semantic"`** — latent semantic analysis with **text2vec** (cosine similarity on a TF–IDF + LSA representation); set `min_score` to control the cutoff.
+- **`mode = "both"`** — keeps genes that pass either keyword or semantic thresholds; `match_score` is the pointwise maximum of the two scores.
+
+By default, all columns except peak/SnpEff coordinate columns are concatenated as annotation text; override with `ann_cols`. Use `object` and `pheno` to read candidates from the companion store, or pass a `data.frame` as `candidate`.
+
+```{r}
+cand_demo <- data.frame(
+  peak_ID = 1L,
+  Gene_ID = c("g1", "g2", "g3"),
+  Gene_chr = "1",
+  Gene_start = 1:3,
+  dist2peak = 0,
+  negLog10P = 3,
+  Description = c(
+    "fruit weight development",
+    "root hair elongation",
+    "cell wall biosynthesis"
+  ),
+  stringsAsFactors = FALSE
+)
+searchCandidateGenes(
+  candidate = cand_demo,
+  query = "fruit weight",
+  mode = "keyword",
+  keyword_match = "all"
+)
+```
+
+Semantic search is not evaluated in this vignette build (requires **text2vec**). After installing that package, you can use for example:
+
+```{r eval=FALSE}
+searchCandidateGenes(object = lg, pheno = "Fruit weight",
+                       query = "fruit ripening carbohydrate",
+                       mode = "both", min_score = 0.15, top_n = 50)
 ```
 
 <br><br>
@@ -444,7 +648,8 @@ listCandidate(object = lg, gff = gff, snpeff = snpeff_gds, ann = ann, recalc = T
 ## Extracting Data
 The phenotype data assigned to a `LazyGas` class object, along with the output
 data generated by functions in the `lazyGas` package, can be retrieved using the 
-`lazyData()` function.
+`lazyData()` function. The API is the same regardless of `lazygas_store`; only the
+on-disk layout differs (Parquet folder, SQLite file, or GDS subtree).
 ```{r}
 pheno <- getPheno(object = lg)
 sapply(pheno, head)
@@ -485,29 +690,67 @@ head(groups)
 <br>
 
 The list of candidate genes.
-```{r eval=FALSE}
-# Do not run.
-candidate <- lazyData(object = lg, dataset = "candidate", pheno = pheno$pheno_names[1])
+```{r eval=have_demo_ann}
 head(candidate)
 ```
 
 <br>
 
-The gene-wise summarized SnpEff annotation.
-```{r eval=FALSE}
-# Do not run.
-candidate <- lazyData(object = lg, dataset = "snpeff", pheno = pheno$pheno_names[1])
-head(candidate)
+The per-variant SnpEff table stored for the variant viewer.
+```{r eval=have_demo_ann}
+snpeff_tab <- lazyData(object = lg, dataset = "snpeff", pheno = "Fruit weight")
+head(snpeff_tab[, c("Gene_ID", "Chr", "Pos", "Annotation", "Annotation_Impact")])
+```
+
+<br><br>
+
+## Variant viewer
+After `listCandidate()` with SnpEff annotation, you can inspect a single candidate
+gene with `getVariantViewerData()`. The function merges stored SnpEff rows, scan
+statistics, and GFF gene structure into a list that includes a ready-made
+`ggplot` object.
+
+```{r eval=have_demo_ann, fig.width=9, fig.height=4}
+demo_gene <- candidate$Gene_ID[1]
+vdata <- getVariantViewerData(
+  object = lg,
+  gene_id = demo_gene,
+  gff = gff,
+  pheno = "Fruit weight",
+  snpeff = snpeff_gds,
+  ann = ann,
+  recalc = TRUE
+)
+plotVariantViewer(vdata)
+```
+
+The same plot can be produced in one step from a `LazyGas` object:
+
+```{r eval=have_demo_ann, fig.width=9, fig.height=4}
+plotVariantViewer(
+  object = lg,
+  gene_id = demo_gene,
+  gff = gff,
+  pheno = "Fruit weight",
+  snpeff = snpeff_gds,
+  ann = ann,
+  recalc = TRUE
+)
 ```
 
 <br><br>
   
 ## Generating Interactive HTML Report
-To organize the results of the analysis, you can generate an interactive HTML. 
+To organize the results of the analysis, you can generate an interactive HTML file.
+`makeInteractiveSummary()` writes Manhattan plots, peak views, haplotype plots, and
+candidate tables. `makeInteractiveDashboard()` adds variant-viewer panels below the
+summary; clicking a `Gene_ID` in the candidate table scrolls to the corresponding
+gene view.
+
 The `what` argument accepts a character vector specifying one or more types of
 plots to generate. Users can choose from the following options:
 - `"scan"`: Draws an **interactive Manhattan plot**.  
-- `"scan_png"`: Draws a **static Manhattan plot**.  
+- `"scan_png"`: Draws a **static Manhattan plot** (requires suggested package **base64enc**).  
 - `"peakcall"`: Draws an **interactive peak call plot**.  
 - `"recalc"`: Draws an **interactive recalculated peak call plot**.  
 - `"groups"`: Draws an **interactive peak grouping list**.  
@@ -515,18 +758,292 @@ plots to generate. Users can choose from the following options:
 - `"recalc_haplo"`: Draws an **interactive haplotype-wise phenotype distribution plot** for peaks **after recalculation**.  
 - `"candidate"`: Draws an **interactive list of candidate genes**.
 
+### Summary report
 ```{r eval=FALSE}
-# Do not run.
-# Which phenotype should be used for the interactive HTML report is specified 
-# via `pheno` argument.
-makeInteractiveSummary(object = lg,
-                       pheno = pheno$pheno_names[1], 
-                       out_fn = "sample.html", 
-                       what = c("scan", "scan_png", 
-                                "peakcall", "recalc", "groups", 
-                                "preakcall_haplo", "recalc_haplo",
-                                "candidate"))
+makeInteractiveSummary(
+  object = lg,
+  pheno = "Fruit weight",
+  out_fn = "sample_summary.html",
+  what = c("scan", "scan_png", "peakcall", "recalc", "groups", "candidate")
+)
 ```
+
+### Dashboard with variant viewer
+Run `listCandidate()` first (as in the demo section above), then:
+
+```{r eval=FALSE}
+makeInteractiveDashboard(
+  object = lg,
+  pheno = "Fruit weight",
+  gff = gff,
+  out_fn = "lazygas_dashboard.html",
+  snpeff = snpeff_gds,
+  ann = ann,
+  recalc = TRUE,
+  what = c("scan_png", "peakcall", "recalc", "candidate")
+)
+```
+
+Open `lazygas_dashboard.html` in a browser. The `Gene_ID` column contains links;
+click a gene ID to reveal its variant viewer panel.
+
+### One-command demo
+To rebuild the sample analysis and write a dashboard without assembling the
+steps manually:
+
+```{r eval=FALSE}
+runDashboardDemo(out_dir = "demo_output")
+# Opens: demo_output/lazygas_dashboard.html
+```
+
+From the shell, after installing or loading the package from source:
+
+```{bash, eval=FALSE}
+Rscript inst/demo/run_dashboard_demo.R demo_output
+```
+
+### MVP feature demo (v0.6+)
+
+`runMvpDemo()` exercises the newer APIs on bundled data: three traits
+(`demo_pheno_multitrait.csv`), gene annotation, and SnpEff effects. It runs
+`runLazyGas()`, prints GWAS QC and cross-trait peak summaries, conditional
+association and credible-set results, then writes an HTML report.
+
+```{r eval=FALSE}
+runMvpDemo(out_dir = "demo_output/mvp")
+# -> demo_output/mvp/lazygas_mvp_report.html
+# Companion store: demo_output/mvp/sample.lazygas/
+```
+
+From the shell:
+
+```{bash, eval=FALSE}
+Rscript inst/demo/run_mvp_demo.R demo_output/mvp
+```
+
+Bundled MVP inputs in `inst/extdata/`:
+
+| File | Role |
+|------|------|
+| `sample.gds` | Genotypes (100 samples, chromosomes 1–12) |
+| `demo_pheno_multitrait.csv` | `fruit_weight`, `fruit_length`, `flowering_time` |
+| `demo_annotation.gff` | Gene models for candidate listing |
+| `demo_snpeff.vcf` | SnpEff annotations (converted to GDS on first run) |
+| `demo_ann.csv` | Gene names and descriptions |
+| `demo_orthologs.csv` | Ortholog IDs/scores for evidence ranking (`collectGeneEvidence()`, `rankPhenotypeCandidates()`) |
+| `demo_expression.csv`, `demo_expression_meta.csv` | Expression evidence for `runExplorerDemo()` |
+| `pheno.csv` | Single-trait demo phenotype for this vignette |
+
+### MVP workflow: runLazyGas, QC, and cross-trait view
+
+Run the core pipeline in one call after assigning phenotypes:
+
+```{r eval=FALSE}
+conv_fun <- makeConvFun(geno_format = "dosage", n_levels = 3)
+lg <- runLazyGas(
+  object = lg,
+  steps = c("scan", "peakcall", "recalc", "candidate", "dashboard"),
+  gff = gff,
+  snpeff = snpeff_gds,
+  ann = ann,
+  out_fn = "lazygas_dashboard.html",
+  formula = "add + dom",
+  conv_fun = conv_fun,
+  geno_format = "dosage",
+  resume = TRUE
+)
+```
+
+GWAS quality control:
+
+```{r eval=FALSE}
+summarizeGWASQC(lg, pheno = "Fruit weight")
+plotQQ(lg, pheno = "Fruit weight")
+```
+
+When multiple traits are assigned, compare shared peaks by genomic distance and
+peak-marker genotype correlation:
+
+```{r eval=FALSE}
+plotMultiTraitOverview(lg, recalc = TRUE)
+clusterCrossTraitPeaks(lg, dist_threshold = 500000, r2_threshold = 0.6)
+```
+
+Fine-mapping within a peak (conditional scan and credible set):
+
+```{r eval=FALSE}
+# Run per-peak conditional + credible-set analysis for all peaks
+runFineMapping(lg, pheno = "Fruit weight", recalc = TRUE)
+
+# Interpretation-focused summary (stored in sample.lazygas/fine_mapping/)
+summarizeFineMapping(lg, pheno = "Fruit weight", recalc = TRUE)
+```
+
+Per-peak detail:
+
+```{r eval=FALSE}
+conditionalAssoc(lg, pheno = "Fruit weight", peak_id = 1, recalc = TRUE)
+summarizeConditionalSignals(lg, pheno = "Fruit weight", peak_id = 1)
+calcCredibleSet(lg, pheno = "Fruit weight", peak_id = 1, use_conditional = TRUE)
+plotCredibleSet(lg, pheno = "Fruit weight", peak_id = 1)
+```
+
+Include fine-mapping tables in HTML reports with `what = "fine_mapping"` in
+`makeInteractiveSummary()` or `runLazyGas(..., steps = c(..., "fine_mapping", "summary"))`.
+
+### Interpreting fine-mapping results (important)
+
+Phase-2 fine-mapping in lazyGas is designed for **interpretation support**, not
+for claiming that a specific SNP is the causal variant.
+
+**What conditional analysis tells you**
+
+- `summarizeConditionalSignals()` counts **independent association signals**
+  within a peak (stepwise conditioning).
+- `n_independent_signals = 1` (or 0 below threshold): one association blob in the
+  LD block — typical for small mapping populations.
+- `n_independent_signals >= 2`: consider separate follow-up per lead variant
+  (different haplotype backgrounds or multiple QTLs in the same region).
+
+Conditional analysis does **not** identify the causal SNP; it separates correlated
+tags from potentially independent signals.
+
+**What credible sets tell you**
+
+- `calcCredibleSet()` uses Wakefield ABF under a **single-causal-variant**
+  approximation and does **not** model LD explicitly.
+- `resolution` in `summarizeFineMapping()`:
+  - `high` (≤3 variants in the 95% set): locus narrowed within the LD block
+  - `moderate` (4–10): partial narrowing
+  - `low` (>10): **not finely resolved** — treat as uncertainty, not SNP identity
+- A **large credible set** usually means limited sample size, strong LD, and/or
+  weak per-SNP separation — the same information you would already infer from a
+  broad GWAS peak.
+- **Top PIP ≈ marginal GWAS lead** is expected with ABF; a different top-PIP SNP
+  is rare and still lies in the same LD neighbourhood.
+
+**Practical guidance (especially N ≈ 200–300 in non-human studies)**
+
+1. Use fine-mapping to **flag unresolved loci** (`resolution = "low"`) before
+   investing in variant-level functional tests.
+2. Prefer **gene-level follow-up** (`listCandidate()`) when credible sets span
+   many SNPs.
+3. Do not equate PIP or “95% credible set” with a 95% chance that the causal
+   variant is identified ([Hutchinson & Wallace 2020](https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1007829)).
+4. For causal-variant claims, plan **independent populations**, higher recombination
+   (MAGIC/NAM), or functional validation — not finer PIP thresholds alone.
+
+**What lazyGas fine-mapping is not**
+
+- Not a replacement for SuSiE/FINEMAP (no explicit LD-aware multi-SNP model).
+- Not colocalization (`coloc`); trait-side PIP for eQTL integration is out of scope here.
+- Not proof of causality — a reporting aid for peak blocks you already detected.
+
+### Phenotype explorer and local LLM (Apptainer, official setup)
+
+Since v0.7.0, lazyGas can rank candidate genes by phenotype-guided evidence and
+optionally use a **local LLM** (Ollama) for query parsing and natural-language
+explanations. Ranking and evidence collection are deterministic in R; the LLM is
+optional. **v0.8.0** documents GWAS effect sizes in input trait units.
+**v0.9.0** adds Shiny-embedded GWAS overview and on-demand locus / variant
+views (alongside the existing HTML `makeInteractiveDashboard()` reports).
+**v0.9.1** adds a thin **pipeline runner** Shiny app so scan through candidate
+listing can be launched from the GUI without mixing those steps into the
+explorer UI. **v0.9.2** further reorganizes explorer controls by tab and adds a
+dedicated **Local LLM** tab with runtime/model diagnostics.
+
+**Official environment:** lazyGas ships an **Apptainer** workflow so you do not
+need a host `ollama` binary (typical on HPC clusters). Models and cache are stored
+on the host under `lazyGasOllamaHome()` (default:
+`tools::R_user_dir("lazyGas", "cache")/ollama`, or set `LAZYGAS_OLLAMA_HOME`).
+
+**Prerequisites**
+
+- [Apptainer](https://apptainer.org/) or Singularity on `PATH`
+- Network access for the first `docker://ollama/ollama` image pull
+- Suggested: **processx** (background `ollama serve` from R)
+
+**One-time setup from R**
+
+```{r eval=FALSE}
+library(lazyGas)
+
+# Pull Ollama image and install the lazygas-ollama CLI wrapper
+configureLazyGasOllama(model = "llama3.2:3b")
+
+# Start server and download the model (first run may take several minutes)
+startLocalLLM(model = "llama3.2:3b")
+```
+
+`configureLazyGasOllama()` creates:
+
+| Artifact | Default location |
+|----------|------------------|
+| Apptainer image (`.sif`) | `{lazyGasOllamaHome()}/ollama.sif` |
+| Model cache (bind mount) | `{lazyGasOllamaHome()}/` → `/root/.ollama` in container |
+| CLI wrapper | `{lazyGasOllamaHome()}/bin/lazygas-ollama` |
+
+Environment variables set for the session: `LAZYGAS_OLLAMA_SIF`, `LAZYGAS_OLLAMA_HOME`,
+`LAZYGAS_OLLAMA_CLI`, `LAZYGAS_LLM_URL`, `LAZYGAS_LLM_MODEL`.
+
+**Shell alternative** (same image as R):
+
+```bash
+bash inst/apptainer/build_ollama_sif.sh
+export LAZYGAS_OLLAMA_SIF="$HOME/.cache/lazygas/ollama/ollama.sif"
+```
+
+Then in R: `configureLazyGasOllama(build_sif_if_missing = FALSE)`.
+
+**Two-app workflow (v0.9.1+)**
+
+Use **`runLazyGasRunner()`** once to build companion-store results from GDS,
+phenotype CSV, and GFF paths on disk, then **`runLazyGasExplorer()`** to
+explore and rank candidates. `runExplorerDemo()` runs the full R pipeline and
+is equivalent to using the runner plus explorer on bundled demo files.
+
+```{r eval=FALSE}
+# Option A: CLI demo (writes demo_output/explorer/)
+runExplorerDemo(out_dir = "demo_output/explorer", overwrite = TRUE)
+runLazyGasExplorer()   # GDS path: demo_output/explorer/sample.gds
+
+# Option B: GUI pipeline, then explorer
+runLazyGasRunner()     # set GDS / pheno CSV / GFF paths, Run pipeline
+runLazyGasExplorer(gds_path = "demo_output/explorer/sample.gds")
+```
+
+In the Shiny UI, open the **Local LLM** tab to run **Setup Ollama
+(Apptainer)** once, then **Start Ollama** / **Pull model**. Chat and
+comparisons work without the LLM (rule-based fallback); enable
+**Use local LLM** for richer parsing and explanations.
+
+After **Load project**, the **GWAS overview** tab is the primary place to set
+the active phenotype and review phenotype/Manhattan/peak plots (static PNG
+Manhattan by default). Use **Ranked genes** for phenotype-query inputs and
+ranking. After ranking, select a gene and open **Locus / variants** for
+haplotype and on-demand variant-viewer plots (provide a GFF path; demo default
+is `inst/extdata/demo_annotation.gff`).
+
+During long-running **Rank candidates**, **Generate explanation**, and **Ask**
+actions, the explorer shows progress and temporarily disables action buttons to
+avoid duplicate submissions.
+
+**Diagnostics**
+
+```{r eval=FALSE}
+describeOllamaStatus()
+listOllamaModels()
+stopOllamaServer()   # stops only processes started from this R session
+```
+
+Host-installed Ollama (https://ollama.com) still works when `ollama` is on `PATH`
+and no Apptainer wrapper is configured.
+
+The Shiny apps and Quarto templates ship under `inst/shiny/runner/`,
+`inst/shiny/explorer/`, and `inst/quarto/`. Launch the pipeline runner with
+`runLazyGasRunner()` and the phenotype explorer with `runLazyGasExplorer()`.
+
+<br><br>
 
 ```{r}
 sessionInfo()

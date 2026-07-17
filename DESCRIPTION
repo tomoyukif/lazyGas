@@ -1,22 +1,59 @@
 Package: lazyGas
 Type: Package
 Title: Lazies' genetic association study (lazyGas): genetic association study pipeline for lazy guys
-Version: 0.5.1
-Date: 2026-05-18
+Version: 0.9.2
+Date: 2026-07-09
 Authors@R: person("Tomoyuki", "Furuta", 
            email = "f.tomoyuki@okayama-u.ac.jp",
            role = c("aut", "cre"),
            comment = c(ORCID = "0000-0002-0869-6626"))
-Description: Genetic analysis pipeline for lazy guys.
+Description: Genetic association study pipeline with companion Parquet storage,
+  peak calling, candidate gene listing, variant viewer, interactive HTML reports,
+  a phenotype explorer Shiny app with GWAS / locus plots and optional local LLM
+  support, and a thin pipeline runner Shiny app. GWAS effect coefficients for
+  continuous traits are reported in original phenotype units.
 License: GPL-3 + file LICENSE
 Encoding: UTF-8
 Depends: GBScleanR
-Imports: stats, utils, methods, ggplot2, gdsfmt, GenomeInfoDb, GenomicRanges, IRanges,
-  S4Vectors, SNPRelate, SeqArray, cowplot, dplyr, parameters, rtracklayer, vcfR
+Imports: stats, utils, methods, parallel, ggplot2, gdsfmt, GenomeInfoDb, GenomicRanges,
+  IRanges, S4Vectors, SNPRelate, SeqArray, cowplot, dplyr, parameters, rtracklayer, vcfR,
+  arrow, jsonlite, gaston, plotly, htmltools, reactable, BiocGenerics
+Suggests: DBI, RSQLite, testthat, BiocStyle, knitr, rmarkdown, text2vec, base64enc,
+  shiny, httr2, curl, rentrez, processx
 SystemRequirements: GNU make, C++11
-Suggests: BiocStyle, knitr, rmarkdown
 VignetteBuilder: knitr
 Roxygen: list(markdown = TRUE)
-RoxygenNote: 7.3.3
-BugReports: https://github.com/tomoyukif/lazyGeno/issues
-URL: https://github.com/tomoyukif/lazyGeno
+BugReports: https://github.com/tomoyukif/lazyGas/issues
+URL: https://github.com/tomoyukif/lazyGas
+Config/roxygen2/version: 8.0.0
+Collate:
+    'lazygas-class.R'
+    'store.R'
+    'gds-utils.R'
+    'pheno.R'
+    'scan.R'
+    'peakcall.R'
+    'recalc.R'
+    'plot.R'
+    'candidate.R'
+    'lazy-data.R'
+    'snpeff-io.R'
+    'variant_viewer.R'
+    'interactive.R'
+    'search_candidate_genes.R'
+    'demo_dashboard.R'
+    'demo_mvp.R'
+    'pipeline.R'
+    'qc.R'
+    'multitrait.R'
+    'conditional.R'
+    'llm-local.R'
+    'ollama-apptainer.R'
+    'ollama-server.R'
+    'phenotype-query.R'
+    'gene-evidence.R'
+    'phenotype-rank.R'
+    'explorer-demo.R'
+    'shiny-explorer.R'
+    'shiny-runner.R'
+    'resolve-paths.R'
