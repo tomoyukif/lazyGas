@@ -1,8 +1,8 @@
 ################################################################################
 #' Search candidate genes by functional annotation
 #'
-#' Filter and rank genes in a candidate list using keyword matching and/or
-#' semantic similarity (offline LSA via the \pkg{text2vec} package).
+#' Filter and rank genes in a candidate list using phrase-aware keyword
+#' matching (stopwords ignored; word-boundary / phrase match).
 #'
 #' @param candidate A data.frame of candidate genes (e.g. from
 #'   [lazyData()] with `dataset = "candidate"`). Used when `object` is
@@ -18,29 +18,27 @@
 #'   functional annotation text (e.g. GO terms, gene descriptions). If `NULL`
 #'   (default), all columns except peak/gene coordinates and SnpEff impact
 #'   counts are used (i.e. columns joined from `ann` in [listCandidate()]).
-#' @param mode Search mode: `"keyword"` (fixed substring match),
-#'   `"semantic"` (text2vec LSA cosine similarity), or `"both"`.
-#' @param keyword_match For keyword mode, `"all"` requires every query token to
-#'   appear in the annotation text; `"any"` requires at least one token.
-#' @param ignore.case Passed to [grepl()] for keyword matching.
-#' @param min_score Minimum cosine similarity for semantic matches (0--1).
+#' @param mode Search mode. Only \code{"keyword"} is supported (LSA / semantic
+#'   modes were removed).
+#' @param keyword_match For keyword mode, `"all"` requires every content term to
+#'   appear in the annotation text; `"any"` requires at least one term.
+#' @param ignore.case Passed to keyword matching.
 #' @param top_n If not `NULL`, return at most this many rows after ranking by
 #'   `match_score`.
 #' @param dedupe_genes If `TRUE` and `Gene_ID` is present, keep one row per
 #'   gene with the highest `match_score`.
-#' @param n_topics Number of LSA topics. Default uses up to 30 topics bounded by
-#'   corpus size.
+#' @param min_score,n_topics Ignored; retained for call compatibility with
+#'   older scripts (semantic / LSA search was removed).
 #'
 #' @return A subset of the input candidate `data.frame` with columns
-#'   `keyword_score`, `semantic_score`, `match_score`, and `match_method`
-#'   added, sorted by decreasing `match_score`.
+#'   `keyword_score`, `match_score`, and `match_method` added, sorted by
+#'   decreasing `match_score`.
 #'
 #' @details
-#' Semantic search requires the suggested package \pkg{text2vec}:
-#' `install.packages("text2vec")`.
-#'
 #' Annotation text for each row is the space-separated concatenation of
-#' non-empty values in `ann_cols`.
+#' non-empty values in `ann_cols`. Query terms drop English stopwords
+#' (e.g. \code{in}, \code{of}) and match with word boundaries (phrases use
+#' boundary-aware multi-word patterns).
 #'
 #' @seealso [lazyData()], [listCandidate()]
 #'
@@ -72,15 +70,26 @@ searchCandidateGenes <- function(candidate = NULL,
                                  pheno = NULL,
                                  query,
                                  ann_cols = NULL,
-                                 mode = c("keyword", "semantic", "both"),
+                                 mode = "keyword",
                                  keyword_match = c("all", "any"),
                                  ignore.case = TRUE,
                                  min_score = 0.1,
                                  top_n = NULL,
                                  dedupe_genes = TRUE,
                                  n_topics = NULL) {
-  mode <- match.arg(mode)
   keyword_match <- match.arg(keyword_match)
+  mode <- as.character(mode)[1L]
+  if (!identical(mode, "keyword")) {
+    stop(
+      "searchCandidateGenes() supports mode = \"keyword\" only. ",
+      "LSA / semantic search (text2vec) was removed.",
+      call. = FALSE
+    )
+  }
+  if (!missing(n_topics) && !is.null(n_topics)) {
+    warning("'n_topics' is ignored; semantic / LSA search was removed.",
+            call. = FALSE)
+  }
 
   if (!is.null(object)) {
     if (!inherits(object, "LazyGas")) {
@@ -110,61 +119,22 @@ searchCandidateGenes <- function(candidate = NULL,
   query <- trimws(query)
 
   ann_cols <- .resolve_ann_cols(candidate = candidate, ann_cols = ann_cols)
-
-  if (mode %in% c("semantic", "both")) {
-    .require_text2vec()
-    n_genes <- if ("Gene_ID" %in% names(candidate)) {
-      length(unique(candidate$Gene_ID))
-    } else {
-      nrow(candidate)
-    }
-    if (n_genes < 10L) {
-      warning(
-        "Semantic search with fewer than 10 genes is unreliable (n = ", n_genes, "). ",
-        "Consider mode = \"keyword\" or expanding the candidate list.",
-        call. = FALSE
-      )
-    }
-  }
-
   ann_text <- .candidate_annotation_text(candidate = candidate, ann_cols = ann_cols)
 
-  keyword_score <- rep(0, nrow(candidate))
-  semantic_score <- rep(NA_real_, nrow(candidate))
-
-  if (mode %in% c("keyword", "both")) {
-    keyword_score <- .keyword_match_score(
-      text = ann_text,
-      query = query,
-      match = keyword_match,
-      ignore.case = ignore.case
-    )
-  }
-
-  if (mode %in% c("semantic", "both")) {
-    semantic_score <- .text2vec_semantic_score(
-      text = ann_text,
-      query = query,
-      n_topics = n_topics
-    )
-  }
-  semantic_score[is.na(semantic_score)] <- 0
+  keyword_score <- .keyword_match_score(
+    text = ann_text,
+    query = query,
+    match = keyword_match,
+    ignore.case = ignore.case
+  )
 
   kw_hit <- if (keyword_match == "all") {
     keyword_score >= 1
   } else {
     keyword_score > 0
   }
-  sem_hit <- !is.na(semantic_score) & semantic_score >= min_score
 
-  keep <- switch(
-    mode,
-    keyword = kw_hit,
-    semantic = sem_hit,
-    both = kw_hit | sem_hit
-  )
-
-  if (!any(keep)) {
+  if (!any(kw_hit)) {
     out <- candidate[0, , drop = FALSE]
     attr(out, "searchCandidateGenes") <- list(
       query = query,
@@ -175,28 +145,10 @@ searchCandidateGenes <- function(candidate = NULL,
     return(out)
   }
 
-  out <- candidate[keep, , drop = FALSE]
-  out$keyword_score <- keyword_score[keep]
-  out$semantic_score <- semantic_score[keep]
-
-  out$match_score <- switch(
-    mode,
-    keyword = out$keyword_score,
-    semantic = out$semantic_score,
-    both = pmax(out$keyword_score, out$semantic_score, na.rm = TRUE)
-  )
-
-  out$match_method <- ifelse(
-    out$keyword_score > 0 & out$semantic_score >= min_score,
-    "both",
-    ifelse(out$keyword_score > 0, "keyword",
-           ifelse(out$semantic_score >= min_score, "semantic", "none"))
-  )
-  if (mode == "keyword") {
-    out$match_method <- ifelse(out$keyword_score > 0, "keyword", "none")
-  } else if (mode == "semantic") {
-    out$match_method <- ifelse(out$semantic_score >= min_score, "semantic", "none")
-  }
+  out <- candidate[kw_hit, , drop = FALSE]
+  out$keyword_score <- keyword_score[kw_hit]
+  out$match_score <- out$keyword_score
+  out$match_method <- ifelse(out$keyword_score > 0, "keyword", "none")
 
   if (dedupe_genes && "Gene_ID" %in% names(out)) {
     out <- .dedupe_candidate_by_gene(out)
@@ -217,7 +169,6 @@ searchCandidateGenes <- function(candidate = NULL,
     mode = mode,
     ann_cols = ann_cols,
     keyword_match = keyword_match,
-    min_score = min_score,
     n_matched = nrow(out)
   )
   out
@@ -270,22 +221,140 @@ searchCandidateGenes <- function(candidate = NULL,
   })
 }
 
-.keyword_match_score <- function(text, query, match = c("all", "any"), ignore.case = TRUE) {
+#' English function words ignored for annotation keyword matching
+#' @keywords internal
+.annotation_keyword_stopwords <- function() {
+  c(
+    "a", "an", "the", "and", "or", "but", "if", "nor", "so", "as", "at", "by",
+    "for", "from", "in", "into", "of", "off", "on", "onto", "over", "to", "up",
+    "with", "without", "within", "among", "between", "via", "vs", "per", "than",
+    "then", "that", "this", "these", "those", "it", "its", "is", "are", "was",
+    "were", "be", "been", "being", "not", "no", "also", "such", "can", "will",
+    "just", "only", "same", "other", "some", "any", "all", "each", "few", "more",
+    "most", "very", "too", "about", "above", "below", "under", "again",
+    "further", "once", "here", "there", "when", "where", "why", "how", "out",
+    "down", "own", "should", "now", "do", "does", "did", "have", "has", "had"
+  )
+}
+
+.is_content_keyword_term <- function(term) {
+  term <- tolower(trimws(as.character(term)[1L]))
+  if (!nzchar(term) || nchar(term) < 2L) {
+    return(FALSE)
+  }
+  if (!grepl("[a-z0-9]", term, perl = TRUE, ignore.case = TRUE)) {
+    return(FALSE)
+  }
+  !(term %in% .annotation_keyword_stopwords())
+}
+
+.annotation_tokenize <- function(x) {
+  x <- tolower(trimws(as.character(x)[1L]))
+  if (!nzchar(x)) {
+    return(character())
+  }
+  terms <- strsplit(x, "[^a-zA-Z0-9]+", perl = TRUE)[[1L]]
+  terms <- terms[nzchar(terms) & nchar(terms) >= 2L]
+  unique(terms)
+}
+
+.filter_keyword_terms <- function(terms) {
+  terms <- unique(trimws(as.character(unlist(terms, use.names = FALSE))))
+  terms <- terms[!is.na(terms) & nzchar(terms)]
+  if (!length(terms)) {
+    return(character())
+  }
+  keep <- vapply(
+    terms,
+    function(term) {
+      parts <- .annotation_tokenize(term)
+      if (!length(parts)) {
+        return(.is_content_keyword_term(term))
+      }
+      any(vapply(parts, .is_content_keyword_term, logical(1L)))
+    },
+    logical(1L)
+  )
+  terms[keep]
+}
+
+#' Build content keyword / phrase list from a phenotype query
+#' @keywords internal
+.keyword_terms_from_query <- function(query) {
+  if (inherits(query, "PhenotypeQuery")) {
+    raw <- c(
+      query$trait_keywords,
+      query$tissues,
+      query$developmental_stage,
+      query$conditions
+    )
+    terms <- .filter_keyword_terms(raw)
+    if (!length(terms)) {
+      trait <- if (!is.null(query$trait_text)) query$trait_text else ""
+      if (nzchar(trimws(as.character(trait)[1L]))) {
+        terms <- .filter_keyword_terms(.annotation_tokenize(trait))
+      }
+    }
+    return(terms)
+  }
+  q <- trimws(as.character(query)[1L])
+  if (!nzchar(q)) {
+    return(character())
+  }
+  .filter_keyword_terms(.annotation_tokenize(q))
+}
+
+.escape_perl_regex <- function(x) {
+  gsub("([.|()\\[\\]{}+*?^$\\\\])", "\\\\\\1", x, perl = TRUE)
+}
+
+#' Word-boundary / phrase match for one keyword term
+#' @keywords internal
+.keyword_term_matches <- function(text, term, ignore.case = TRUE) {
+  term <- trimws(as.character(term)[1L])
+  if (!nzchar(term)) {
+    return(rep(FALSE, length(text)))
+  }
+  parts <- strsplit(term, "\\s+", perl = TRUE)[[1L]]
+  parts <- parts[nzchar(parts)]
+  if (!length(parts)) {
+    return(rep(FALSE, length(text)))
+  }
+  esc <- .escape_perl_regex(parts)
+  pat <- if (length(esc) == 1L) {
+    paste0("(?i)\\b", esc, "\\b")
+  } else {
+    paste0("(?i)\\b", paste(esc, collapse = "\\s+"), "\\b")
+  }
+  if (!isTRUE(ignore.case)) {
+    pat <- if (length(esc) == 1L) {
+      paste0("\\b", esc, "\\b")
+    } else {
+      paste0("\\b", paste(esc, collapse = "\\s+"), "\\b")
+    }
+  }
+  grepl(pat, text, perl = TRUE)
+}
+
+.keyword_match_score <- function(text,
+                                 query,
+                                 match = c("all", "any"),
+                                 ignore.case = TRUE,
+                                 terms = NULL) {
   match <- match.arg(match)
-  terms <- strsplit(query, "\\s+", perl = TRUE)[[1L]]
-  terms <- terms[nzchar(terms)]
+  if (is.null(terms)) {
+    terms <- .keyword_terms_from_query(query)
+  } else {
+    terms <- .filter_keyword_terms(terms)
+  }
   n <- length(text)
   if (!length(terms)) {
     return(rep(0, n))
   }
 
-  text_cmp <- if (ignore.case) tolower(text) else text
   hits <- vapply(
     terms,
-    function(term) {
-      term_cmp <- if (ignore.case) tolower(term) else term
-      grepl(term_cmp, text_cmp, fixed = TRUE)
-    },
+    function(term) .keyword_term_matches(text, term, ignore.case = ignore.case),
     logical(n)
   )
   if (!is.matrix(hits)) {
@@ -299,113 +368,35 @@ searchCandidateGenes <- function(candidate = NULL,
   }
 }
 
-.require_text2vec <- function() {
-  if (!requireNamespace("text2vec", quietly = TRUE)) {
-    stop(
-      "Package 'text2vec' is required for semantic search. ",
-      "Install with install.packages(\"text2vec\").",
-      call. = FALSE
-    )
-  }
-  invisible(TRUE)
-}
-
-.with_rsparse_info_suppressed <- function(expr) {
-  if (!requireNamespace("rsparse", quietly = TRUE)) {
-    return(force(expr))
-  }
-  ns <- asNamespace("rsparse")
-  if (!exists("logger", envir = ns, inherits = FALSE)) {
-    return(force(expr))
-  }
-  log <- get("logger", envir = ns)
-  old_thresh <- log$threshold
-  log$set_threshold("warn")
-  on.exit(log$set_threshold(old_thresh), add = TRUE)
-  force(expr)
-}
-
-.text2vec_semantic_score <- function(text, query, n_topics = NULL) {
+#' Per-text keyword hit details (score, matched, unmatched)
+#' @keywords internal
+.keyword_match_details <- function(text, terms, ignore.case = TRUE) {
+  terms <- .filter_keyword_terms(terms)
   n <- length(text)
-  empty <- !nzchar(text)
-  scores <- rep(0, n)
-
-  usable <- which(!empty)
-  if (!length(usable)) {
-    return(scores)
-  }
-
-  docs <- text[usable]
-  prep <- get("tolower", envir = asNamespace("base"))
-  tok <- get("word_tokenizer", envir = asNamespace("text2vec"))
-
-  it <- text2vec::itoken(
-    docs,
-    preprocessor = prep,
-    tokenizer = tok,
-    progressbar = FALSE
+  empty <- list(
+    keyword_score = 0,
+    matched_keywords = character(),
+    unmatched_keywords = terms
   )
-  vocab <- text2vec::create_vocabulary(it)
-  if (nrow(vocab) == 0L) {
-    return(scores)
+  if (!length(terms)) {
+    return(lapply(seq_len(n), function(i) empty))
   }
 
-  vectorizer <- text2vec::vocab_vectorizer(vocab)
-  dtm <- text2vec::create_dtm(it, vectorizer)
-  if (nrow(dtm) < 1L || ncol(dtm) < 1L) {
-    return(scores)
-  }
-
-  tfidf <- text2vec::TfIdf$new()
-  dtm_tfidf <- text2vec::fit_transform(dtm, tfidf)
-
-  n_row <- nrow(dtm_tfidf)
-  n_col <- ncol(dtm_tfidf)
-  k <- if (is.null(n_topics)) {
-    min(30L, max(2L, min(n_row - 1L, n_col - 1L)))
-  } else {
-    as.integer(n_topics)[1L]
-  }
-  k <- max(2L, min(k, n_row - 1L, n_col - 1L))
-
-  if (k >= 2L && n_row >= 2L && n_col >= 2L) {
-    lsa <- text2vec::LatentSemanticAnalysis$new(n_topics = k)
-    doc_emb <- .with_rsparse_info_suppressed(
-      text2vec::fit_transform(dtm_tfidf, lsa)
+  lapply(seq_len(n), function(i) {
+    txt <- text[[i]]
+    hit <- vapply(
+      terms,
+      function(term) .keyword_term_matches(txt, term, ignore.case = ignore.case),
+      logical(1L)
     )
-  } else {
-    lsa <- NULL
-    doc_emb <- dtm_tfidf
-  }
-
-  query_it <- text2vec::itoken(
-    query,
-    preprocessor = prep,
-    tokenizer = tok,
-    progressbar = FALSE
-  )
-  query_dtm <- text2vec::create_dtm(query_it, vectorizer)
-  if (nrow(query_dtm) < 1L || ncol(query_dtm) < 1L) {
-    return(scores)
-  }
-
-  query_tfidf <- tfidf$transform(query_dtm)
-  query_emb <- if (!is.null(lsa)) {
-    lsa$transform(query_tfidf)
-  } else {
-    query_tfidf
-  }
-
-  sim <- text2vec::sim2(
-    x = doc_emb,
-    y = query_emb,
-    method = "cosine",
-    norm = "l2"
-  )
-  sim_v <- as.numeric(sim[, 1L])
-  sim_v[!is.finite(sim_v)] <- 0
-  scores[usable] <- pmax(0, sim_v)
-  scores
+    matched <- terms[hit]
+    unmatched <- terms[!hit]
+    list(
+      keyword_score = mean(hit),
+      matched_keywords = matched,
+      unmatched_keywords = unmatched
+    )
+  })
 }
 
 .dedupe_candidate_by_gene <- function(x) {

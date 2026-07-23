@@ -241,6 +241,9 @@ makeConvFun <-  function(geno_format = c("genotype", "corrected", "dosage", "hap
 #'
 #' @param object A LazyGas object
 #' @param out_fn Prefix of output file name
+#' @param omit_outlier If \code{TRUE}, set boxplot outliers to \code{NA} before
+#'   standardizing continuous phenotypes (not applied to binary traits or
+#'   Kruskal-Wallis phenotypes).
 #' @param formula The formula of the regression model
 #' @param conv_fun The function to convert genotype data to a model matrix for the regression
 #' @param fixed_effect A data.frame of fixed effect(s) incorporated in the regression model. The column names must match the terms specified in `formula` and `null_formula.` The number of rows must match the number of samples.
@@ -257,6 +260,7 @@ setGeneric("scanAssoc", function(object,
                                  geno_format = c("genotype", "corrected", "dosage", "haplotype"),
                                  kruskal = NULL,
                                  method = c("glm", "mlm"),
+                                 omit_outlier = FALSE,
                                  ...)
   standardGeneric("scanAssoc"))
 
@@ -270,7 +274,8 @@ setMethod("scanAssoc",
                    fixed_effect = NULL,
                    geno_format = c("genotype", "corrected", "dosage", "haplotype"),
                    kruskal = NULL,
-                   method = c("glm", "mlm")){
+                   method = c("glm", "mlm"),
+                   omit_outlier = FALSE){
 
             method <- match.arg(arg = method, choices = c("glm", "mlm"))
             geno_format <- match.arg(arg = geno_format, choices = c("genotype", "corrected", "dosage", "haplotype"))
@@ -347,6 +352,17 @@ setMethod("scanAssoc",
               # Retrieve the phenotype data from the GDS object
               binary <- getPheno(object = object)$pheno_type$binary[i]
               i_pheno_raw <- getPheno(object = object)$pheno[, i_pheno_names]
+              if (isTRUE(omit_outlier) && !isTRUE(binary) && !isTRUE(dokruskal)) {
+                out_mask <- .pheno_boxplot_outlier_mask(i_pheno_raw)
+                n_omit <- sum(out_mask, na.rm = TRUE)
+                if (n_omit > 0L) {
+                  i_pheno_raw[out_mask] <- NA
+                  message(
+                    "Boxplot outliers omitted for ", i_pheno_names, ": ",
+                    n_omit, " sample value(s) set to NA."
+                  )
+                }
+              }
               pheno_scale <- if (isTRUE(binary)) {
                 1
               } else {
@@ -870,8 +886,23 @@ setMethod("plotManhattan",
   x_signif <- subset(x, subset = FDR <= signif)
   x <- subset(x, subset = FDR > signif)
 
+  coord_input <- rbind(x, x_signif)
+  coords <- .genome_plot_coords(coord_input, chr_col = "Chr", pos_col = "Pos")
+  n_x <- nrow(x)
+  df_coord <- coords$df
+  if (n_x > 0L) {
+    x <- df_coord[seq_len(n_x), , drop = FALSE]
+  } else {
+    x <- df_coord[0, , drop = FALSE]
+  }
+  if (nrow(x_signif) > 0L) {
+    x_signif <- df_coord[seq_len(nrow(x_signif)) + n_x, , drop = FALSE]
+  } else {
+    x_signif <- df_coord[0, , drop = FALSE]
+  }
+
   # Create ggplot object
-  p <- .create_ggplot(x, x_signif)
+  p <- .create_ggplot(x, x_signif, breaks = coords$breaks, labels = coords$labels)
 
   # Return the plot
   return(p)
@@ -891,44 +922,114 @@ setMethod("plotManhattan",
   return(x)
 }
 
-## Function to create ggplot object
-.create_ggplot <- function(x, x_signif) {
-  p <- ggplot() +
-    geom_point(data = x,
-               mapping = aes(x = Pos, y = negLog10P),
-               color = "darkgray",
-               size = 1,
-               shape = 20)
+## Continuous genome axis for Manhattan / peak plots
+#'
+#' Chromosome order follows \code{chr_levels} if given; otherwise factor
+#' levels of \code{df[[chr_col]]}; otherwise first-appearance order.
+#' Peakcall tables are often ordered by peak discovery, so callers should
+#' set \code{Chr} as a factor with genome (scan) order before calling this.
+.genome_plot_coords <- function(df,
+                                chr_col = "Chr",
+                                pos_col = "Pos",
+                                chr_levels = NULL) {
+  if (is.null(df) || nrow(df) == 0L) {
+    if (is.null(df)) {
+      df <- data.frame()
+    }
+    df$genome_x <- numeric()
+    df$chr_color <- integer()
+    return(list(df = df, breaks = numeric(), labels = character()))
+  }
+  chr_vals <- df[[chr_col]]
+  present <- unique(as.character(chr_vals))
+  if (!is.null(chr_levels)) {
+    chr_lev <- as.character(chr_levels)
+    chr_lev <- chr_lev[chr_lev %in% present]
+    # append any unexpected chromosomes at the end (stable)
+    chr_lev <- c(chr_lev, setdiff(present, chr_lev))
+  } else if (is.factor(chr_vals)) {
+    chr_lev <- levels(chr_vals)
+    chr_lev <- chr_lev[chr_lev %in% present]
+    chr_lev <- c(chr_lev, setdiff(present, chr_lev))
+  } else {
+    chr_lev <- present
+  }
+  offset <- 0
+  breaks <- numeric(length(chr_lev))
+  names(breaks) <- chr_lev
+  labels <- chr_lev
+  genome_x <- rep(NA_real_, nrow(df))
+  chr_color <- integer(nrow(df))
 
-  if(nrow(x_signif) != 0){
-    p <- p + geom_point(data = x_signif,
-                        mapping = aes(x = Pos, y = negLog10P),
-                        color = "magenta", size = 1, shape = 18)
+  for (i in seq_along(chr_lev)) {
+    ch <- chr_lev[i]
+    idx <- which(as.character(chr_vals) == ch)
+    pos <- as.numeric(df[idx, pos_col])
+    pos_min <- min(pos, na.rm = TRUE)
+    pos_max <- max(pos, na.rm = TRUE)
+    W <- pos_max - pos_min
+    if (!is.finite(W) || W == 0) {
+      W <- 1
+    }
+    genome_x[idx] <- pos - pos_min + offset
+    chr_color[idx] <- if (i %% 2L == 1L) 1L else 2L
+    breaks[i] <- offset + W / 2
+    if (i < length(chr_lev)) {
+      offset <- offset + W + 0.01 * W
+    }
+  }
+  df$genome_x <- genome_x
+  df$chr_color <- factor(chr_color, levels = c(1L, 2L))
+  list(df = df, breaks = breaks, labels = labels)
+}
+
+## Function to create ggplot object
+.create_ggplot <- function(x, x_signif, breaks = NULL, labels = NULL) {
+  chr_cols <- c("1" = "darkgray", "2" = "gray50")
+  p <- ggplot()
+  if (nrow(x) > 0L) {
+    p <- p + geom_point(
+      data = x,
+      mapping = aes(x = genome_x, y = negLog10P, color = chr_color),
+      size = 1,
+      shape = 20
+    ) +
+      scale_color_manual(values = chr_cols, guide = "none")
   }
 
-  p <- p + facet_wrap(~ Chr,
-                      nrow = 1,
-                      scales = "free_x",
-                      strip.position = "bottom") +
+  if (nrow(x_signif) != 0) {
+    p <- p + geom_point(
+      data = x_signif,
+      mapping = aes(x = genome_x, y = negLog10P),
+      color = "magenta",
+      size = 1,
+      shape = 18
+    )
+  }
+
+  if (is.null(breaks) || !length(breaks)) {
+    breaks <- numeric()
+    labels <- character()
+  }
+
+  p <- p +
     ylab("-log10(P)") +
     xlab("Chromosome") +
-    scale_x_continuous(breaks = NULL) +
+    scale_x_continuous(breaks = unname(breaks), labels = labels) +
     scale_y_continuous(expand = expansion(mult = c(0, 0.1))) +
-    theme(axis.text.x = element_blank(),
-          axis.text.y = element_text(size = 14),
-          axis.title.y = element_text(size = 15),
-          axis.title.x = element_text(size = 15),
-          strip.text.x = element_text(size = 12),
-          plot.title = element_text(hjust = 0.5, size = 20),
-          legend.position = "none",
-          axis.line.x.bottom = element_line(colour = "black"),
-          panel.spacing.x = unit(0.2, "lines"),
-          panel.border = element_blank(),
-          panel.background = element_rect(fill = "gray90"),
-          panel.grid.major.x = element_blank(),
-          panel.grid.minor.x = element_blank(),
-          strip.placement = "outside",
-          strip.background = element_rect(fill = "white", colour = "white"))
+    theme(
+      axis.text.x = element_text(size = 12),
+      axis.text.y = element_text(size = 14),
+      axis.title.y = element_text(size = 15),
+      axis.title.x = element_text(size = 15),
+      plot.title = element_text(hjust = 0.5, size = 20),
+      legend.position = "none",
+      axis.line.x.bottom = element_line(colour = "black"),
+      panel.border = element_blank(),
+      panel.background = element_rect(fill = "gray90"),
+      panel.grid.major.x = element_blank(),
+      panel.grid.minor.x = element_blank()
+    )
 
   return(p)
 }

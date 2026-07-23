@@ -12,7 +12,8 @@ explainPhenotypeCandidates(
   use_llm = TRUE,
   language = c("ja", "en"),
   model = NULL,
-  base_url = NULL
+  base_url = NULL,
+  timeout = NULL
 )
 }
 \arguments{
@@ -30,6 +31,8 @@ explainPhenotypeCandidates(
 \item{language}{Response language: \code{"ja"} or \code{"en"}.}
 
 \item{model, base_url}{LLM settings passed to \code{\link[=llmChat]{llmChat()}}.}
+
+\item{timeout}{Request timeout in seconds (default 600).}
 }
 \value{
 A character string (Markdown).
@@ -38,4 +41,8 @@ A character string (Markdown).
 Generates a Markdown summary of the top-ranked genes using only evidence
 collected during ranking. When \code{use_llm = FALSE}, a template-based
 report is returned.
+}
+\details{
+For Phase 1, prefer the public entry point \code{\link[=llm_report]{llm_report()}}, which ranks
+candidates, verifies claims, and saves under \code{lazygas/ai_report/}.
 }

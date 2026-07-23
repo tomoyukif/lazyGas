@@ -55,7 +55,7 @@ jobs:
           Rscript -e 'install.packages(c(
             "gaston", "arrow", "jsonlite", "ggplot2", "cowplot", "dplyr",
             "parameters", "vcfR", "plotly", "reactable", "htmltools",
-            "htmlwidgets", "testthat", "text2vec"
+            "htmlwidgets", "testthat"
           ), repos = "https://cloud.r-project.org")'
 
       - uses: r-lib/actions/check-r-package@v2

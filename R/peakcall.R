@@ -174,6 +174,9 @@ setMethod("callPeakBlock",
   # Get the genotype format from the object
   geno_format <- .get_geno_format(object = object)
   geno_cache <- new.env(parent = emptyenv())
+  selection_cache <- new.env(parent = emptyenv())
+  id_is_rowindex <- .peakcall_snp_id_is_rowindex(variables$snp_id)
+  rows_by_chr <- .peakcall_rows_by_chr(variables$chr)
 
   # Loop until there are no more p-values to process
   while (nrow(pvalues) > 0) {
@@ -185,28 +188,51 @@ setMethod("callPeakBlock",
     message("Calling peak: ", peak_id)
 
     # Identify the peak information
-    peak_info <- .identify_peak(pvalues = pvalues,
-                                variables = variables)
+    peak_info <- .identify_peak(
+      pvalues = pvalues,
+      variables = variables,
+      rows_by_chr = rows_by_chr,
+      id_is_rowindex = id_is_rowindex
+    )
 
     # Set the selection criteria based on the genotype format
-    selection <- .set_selection_criteria_for_peakcall(object = object,
-                                                      geno_format = geno_format,
-                                                      chr = peak_info$chr)
+    sel_key <- as.character(peak_info$chr)
+    if (!exists(sel_key, envir = selection_cache, inherits = FALSE)) {
+      assign(
+        sel_key,
+        .set_selection_criteria_for_peakcall(
+          object = object,
+          geno_format = geno_format,
+          chr = peak_info$chr
+        ),
+        envir = selection_cache
+      )
+    }
+    selection <- get(sel_key, envir = selection_cache, inherits = FALSE)
 
     cache_key <- paste(geno_format, peak_info$chr, sep = ":")
     if (!exists(cache_key, envir = geno_cache, inherits = FALSE)) {
-      assign(
-        cache_key,
-        .retrieve_geno(object = object,
-                       selection = selection,
-                       geno_format = geno_format),
-        envir = geno_cache
+      message("Loading genotypes for chr ", peak_info$chr, " ...")
+      t_load <- proc.time()[[3L]]
+      geno_chr <- .retrieve_geno(object = object,
+                                 selection = selection,
+                                 geno_format = geno_format)
+      if (!is.matrix(geno_chr)) {
+        geno_chr <- as.matrix(geno_chr)
+      }
+      storage.mode(geno_chr) <- "double"
+      assign(cache_key, geno_chr, envir = geno_cache)
+      message(
+        sprintf(
+          "Loaded chr %s genotypes: %d markers in %.1fs",
+          peak_info$chr, ncol(geno_chr), proc.time()[[3L]] - t_load
+        )
       )
     }
     geno <- get(cache_key, envir = geno_cache, inherits = FALSE)
 
     # Calculate linkage disequilibrium (LD) for the identified peak
-    peak_ld <- .calculate_ld(geno = as.matrix(geno),
+    peak_ld <- .calculate_ld(geno = geno,
                              peak_variant_idx = peak_info$peak_index_in_chr,
                              is_categorical = selection$is_categorical,
                              n_threads = n_threads)
@@ -227,10 +253,15 @@ setMethod("callPeakBlock",
                     peak_ld = peak_ld)
 
     # Remove markers spanning the peak "mountain" on the chromosome. variant_ID
-    # values are sequential integers per lazyGas / GDS import; seq(min, max)
+    # values are sequential integers per lazyGas / GDS import; inclusive range
     # drops all markers between the LD block ends, not only strict LD members.
-    rm_ids <- seq(min(peak_block$ids), max(peak_block$ids))
-    pvalues <- subset(pvalues, subset = !variant_ID %in% rm_ids)
+    rm_lo <- min(peak_block$ids)
+    rm_hi <- max(peak_block$ids)
+    pvalues <- pvalues[
+      pvalues$variant_ID < rm_lo | pvalues$variant_ID > rm_hi,
+      ,
+      drop = FALSE
+    ]
   }
 
   # Finalize GDS nodes by setting them to read mode
@@ -238,16 +269,40 @@ setMethod("callPeakBlock",
 }
 
 ## Function to identify the peak
-.identify_peak <- function(pvalues, variables, peak_index = NULL) {
-  if(is.null(peak_index)){
-    peak_index <- which.max(pvalues$negLog10P)  # Find the index of the maximum p-value
+.identify_peak <- function(pvalues,
+                           variables,
+                           peak_index = NULL,
+                           rows_by_chr = NULL,
+                           id_is_rowindex = NULL) {
+  if (is.null(peak_index)) {
+    peak_index <- which.max(pvalues$negLog10P)
   }
-  peak_variant_ID <- pvalues$variant_ID[peak_index]  # Get the variant ID of the peak
-  peak_chr <- variables$chr[variables$snp_id == peak_variant_ID]  # Get the chromosome of the peak
+  peak_variant_ID <- pvalues$variant_ID[peak_index]
 
-  chr_with_peak <- which(variables$chr == peak_chr)
+  if (is.null(id_is_rowindex)) {
+    id_is_rowindex <- .peakcall_snp_id_is_rowindex(variables$snp_id)
+  }
+  peak_row <- if (isTRUE(id_is_rowindex)) {
+    as.integer(peak_variant_ID)
+  } else {
+    match(peak_variant_ID, variables$snp_id)
+  }
+  if (is.na(peak_row)) {
+    stop("Peak variant_ID not found in marker table: ", peak_variant_ID, call. = FALSE)
+  }
+  peak_chr <- variables$chr[[peak_row]]
+
+  if (is.null(rows_by_chr)) {
+    chr_with_peak <- which(variables$chr == peak_chr)
+  } else {
+    key <- as.character(peak_chr)
+    chr_with_peak <- rows_by_chr[[key]]
+    if (is.null(chr_with_peak)) {
+      chr_with_peak <- which(variables$chr == peak_chr)
+    }
+  }
   id_in_chr <- variables$snp_id[chr_with_peak]
-  peak_index_in_chr <- which(id_in_chr == peak_variant_ID)
+  peak_index_in_chr <- match(peak_variant_ID, id_in_chr)
 
   list(
     index = peak_index,
@@ -257,6 +312,21 @@ setMethod("callPeakBlock",
     id_in_chr = id_in_chr,
     peak_index_in_chr = peak_index_in_chr
   )
+}
+
+.peakcall_snp_id_is_rowindex <- function(snp_id) {
+  n <- length(snp_id)
+  if (!n) {
+    return(TRUE)
+  }
+  is.integer(snp_id) &&
+    snp_id[[1L]] == 1L &&
+    snp_id[[n]] == n &&
+    !is.unsorted(snp_id, strictly = TRUE)
+}
+
+.peakcall_rows_by_chr <- function(chr) {
+  split(seq_along(chr), chr, drop = FALSE)
 }
 
 ## Get Genotype Format
@@ -323,49 +393,94 @@ setMethod("callPeakBlock",
 }
 
 .collapse_geno_alleles <- function(out) {
-  if (length(dim(out)) == 2L) {
+  d <- dim(out)
+  if (is.null(d)) {
+    return(out)
+  }
+  if (length(d) == 2L) {
     return(matrix(colSums(out, na.rm = TRUE), nrow = 1L))
   }
-  if (length(dim(out)) == 3L) {
-    return(apply(out, c(2L, 3L), sum, na.rm = TRUE))
+  if (length(d) == 3L) {
+    # alleles x samples x markers → samples x markers (same as apply(..., sum, na.rm=TRUE))
+    a <- out
+    a[is.na(a)] <- 0
+    if (d[1] == 2L) {
+      return(a[1, , ] + a[2, , ])
+    }
+    res <- a[1, , ]
+    if (d[1] > 1L) {
+      for (i in seq_len(d[1])[-1]) {
+        res <- res + a[i, , ]
+      }
+    }
+    return(res)
   }
   out
 }
 
+.peakcall_resolve_n_threads <- function(n_threads) {
+  if (is.null(n_threads) || !is.finite(n_threads) || n_threads < 1) {
+    cores <- parallel::detectCores()
+    if (is.na(cores) || cores < 2) {
+      return(1L)
+    }
+    return(max(1L, as.integer(round(cores / 2))))
+  }
+  max(1L, as.integer(n_threads))
+}
+
+#' Identity / match rate LD for categorical (e.g. haplotype) genotypes.
+#'
+#' @keywords internal
+.ld_identity_categorical <- function(geno, peak_variant_idx, n_threads = NULL) {
+  n <- ncol(geno)
+  geno_col <- as.integer(geno[, peak_variant_idx])
+  n_threads <- .peakcall_resolve_n_threads(n_threads)
+  # Chunk columns instead of one mclapply task per marker
+  mc_cores <- min(n_threads, 16L, max(1L, as.integer(ceiling(n / 20000L))))
+  if (mc_cores > 1L && n >= 2000L) {
+    chunk <- ceiling(n / mc_cores)
+    parts <- split(seq_len(n), ceiling(seq_len(n) / chunk))
+    vals <- parallel::mclapply(
+      parts,
+      function(idx) {
+        vapply(idx, function(j) {
+          geno_col_j <- as.integer(geno[, j])
+          geno_match <- geno_col == geno_col_j
+          sum(geno_match, na.rm = TRUE) / sum(!is.na(geno_match))
+        }, numeric(1))
+      },
+      mc.cores = mc_cores,
+      mc.preschedule = TRUE
+    )
+    return(unlist(vals, use.names = FALSE))
+  }
+  vapply(seq_len(n), function(j) {
+    geno_col_j <- as.integer(geno[, j])
+    geno_match <- geno_col == geno_col_j
+    sum(geno_match, na.rm = TRUE) / sum(!is.na(geno_match))
+  }, numeric(1))
+}
+
 #' @import parallel
 .calculate_ld <- function(geno, peak_variant_idx, is_categorical, n_threads = NULL) {
-  n <- ncol(geno)
-  peak_ld <- numeric(n)
-
-  if (is_categorical) {
-    geno_col <- as.integer(geno[, peak_variant_idx])
-    levels <- sort(unique(geno_col))
-    num_levels <- length(levels)
-
-    # Parallel processing setup
-    if(is.null(n_threads)){
-      cores <- detectCores()
-      if(cores > 1){
-        n_threads <- round(cores / 2)
-      }
-    }
-
-    geno_identity <- mclapply(X = 1:n, mc.cores = n_threads, mc.preschedule = TRUE,
-                              FUN = function(j) {
-                                geno_col_j <- as.integer(geno[, j])
-                                geno_match <- geno_col == geno_col_j
-                                geno_identity <- sum(geno_match, na.rm = TRUE) / sum(!is.na(geno_match))
-                                return(geno_identity)
-                              })
-    peak_ld <- unlist(geno_identity)
-
-  } else {
-    # Parallel processing setup
-    corr_values <- cor(geno[, peak_variant_idx], geno, use = "pairwise.complete.obs") ^ 2
-    peak_ld <- corr_values
+  if (!is.matrix(geno)) {
+    geno <- as.matrix(geno)
   }
-
-  return(peak_ld)
+  if (is_categorical) {
+    .ld_identity_categorical(geno, peak_variant_idx, n_threads = n_threads)
+  } else {
+    # Single-vector vs matrix Pearson r^2. pairwise.complete.obs is already
+    # fast enough in C for ~1e5–1e6 markers; avoid R-level clean/dirty splits
+    # that copy huge submatrices and regress wall time.
+    as.numeric(
+      stats::cor(
+        geno[, peak_variant_idx],
+        geno,
+        use = "pairwise.complete.obs"
+      )^2
+    )
+  }
 }
 
 # Function to identify peak block
@@ -395,8 +510,9 @@ setMethod("callPeakBlock",
   ld_block <- which(ld_block)
   peak_block <- peak_info$id_in_chr[ld_block]
   ld_to_peak <- peak_ld[ld_block]
-  pos <- variables$pos[variables$snp_id %in% peak_info$id_in_chr]
-  dist2peak <- na.omit(pos[ld_block] - pos[peak_info$peak_index_in_chr])
+  # positions on this chromosome (same order as id_in_chr / peak_ld)
+  pos <- variables$pos[peak_info$chr_with_peak]
+  dist2peak <- pos[ld_block] - pos[peak_info$peak_index_in_chr]
 
   return(list(ids = peak_block, ld = ld_to_peak, dist = dist2peak,
               chr_start = chr_start, chr_end = chr_end))

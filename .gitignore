@@ -6,6 +6,10 @@
 # Cursor local notes (reviews, agent context)
 .cursor/
 
+# Local plans and demo / Phase 1 run outputs
+plan/
+demo_output/
+
 # Local development datasets (too large for GitHub)
 R/dev/**/*.gds
 R/dev/**/*.pdf

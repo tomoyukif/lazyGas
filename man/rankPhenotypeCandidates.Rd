@@ -8,16 +8,24 @@ rankPhenotypeCandidates(
   object,
   pheno,
   query,
-  sources = c("annotation", "gwas", "expression", "literature", "ortholog"),
-  weights = c(annotation = 0.35, gwas = 0.25, expression = 0.2, literature = 0.15,
-    ortholog = 0.05),
+  sources = phase1DefaultSources(),
+  weights = phase1DefaultWeights(),
   top_n = 30L,
+  candidate = NULL,
   expression_matrix = NULL,
   expression_meta = NULL,
   ortholog_table = NULL,
   ortholog_cols = c(gene_id = "gene_id", ortholog_id = "ortholog_id", score = "score"),
   use_cache = TRUE,
-  save = TRUE
+  save = TRUE,
+  use_keyword = NULL,
+  use_semantic = NULL,
+  use_llm_relevance = NULL,
+  download_tenor = TRUE,
+  query_use_llm = FALSE,
+  llm_model = NULL,
+  llm_base_url = NULL,
+  llm_timeout = NULL
 )
 }
 \arguments{
@@ -27,15 +35,18 @@ store.}
 \item{pheno}{Phenotype name or index.}
 
 \item{query}{A \link{PhenotypeQuery} object or character string. Character input
-is parsed via \code{\link[=phenotypeQuery]{phenotypeQuery()}} with \code{use_llm = FALSE}.}
+is parsed via \code{\link[=phenotypeQuery]{phenotypeQuery()}} with \code{use_llm = FALSE} unless
+\code{query_use_llm = TRUE}.}
 
 \item{sources}{Evidence sources to use (see \code{\link[=collectGeneEvidence]{collectGeneEvidence()}}).}
 
-\item{weights}{Named numeric vector of source weights (must sum to 1 when
-all sources are used; missing names default to equal weight among active
-sources).}
+\item{weights}{Named numeric vector of source weights (renormalized over
+active sources). Default: \code{\link[=phase1DefaultWeights]{phase1DefaultWeights()}}.}
 
 \item{top_n}{Return at most this many rows after ranking.}
+
+\item{candidate}{Optional candidate \code{data.frame}; when \code{NULL},
+candidates are loaded from the companion store.}
 
 \item{expression_matrix, expression_meta}{Passed to \code{\link[=collectGeneEvidence]{collectGeneEvidence()}}.}
 
@@ -45,6 +56,13 @@ sources).}
 
 \item{save}{Save ranked results to the companion store (\code{phenotype_rank}
 section).}
+
+\item{use_keyword, use_llm_relevance, download_tenor, query_use_llm}{Passed through to evidence / query helpers.}
+
+\item{use_semantic}{Ignored; LSA annotation scoring was removed.}
+
+\item{llm_model, llm_base_url, llm_timeout}{LLM settings for annotation
+relevance (when enabled).}
 }
 \value{
 A \code{data.frame} sorted by \code{composite_score} with per-source
@@ -52,16 +70,22 @@ score columns and \code{evidence_json}. Attributes include
 \code{phenotypeRank} metadata.
 }
 \description{
-Integrates annotation, GWAS, expression, literature, and ortholog evidence
-into a composite score for each candidate gene near GWAS peaks.
+Integrates annotation, SnpEff, GWAS, and expression (and optionally
+literature / ortholog) evidence into a composite score for each candidate
+gene near GWAS peaks.
+}
+\details{
+Phase 1 defaults: sources
+\code{c("annotation","snpeff","gwas","expression")} with weights
+annotation 0.30 / snpeff 0.35 / gwas 0.25 / expression 0.10.
 }
 \examples{
 \dontrun{
-q <- phenotypeQuery("fruit weight", tissues = "fruit", use_llm = FALSE)
-ranked <- rankPhenotypeCandidates(lg, pheno = "Fruit weight", query = q)
-head(ranked[, c("Gene_ID", "composite_score", "score_annotation", "score_gwas")])
+q <- phenotypeQuery("heading date", tissues = "leaf", use_llm = FALSE)
+ranked <- rankPhenotypeCandidates(lg, pheno = "Heading date", query = q)
+head(ranked[, c("Gene_ID", "composite_score", "score_annotation", "score_snpeff")])
 }
 }
 \seealso{
-\code{\link[=phenotypeQuery]{phenotypeQuery()}}, \code{\link[=collectGeneEvidence]{collectGeneEvidence()}}, \code{\link[=explainPhenotypeCandidates]{explainPhenotypeCandidates()}}
+\code{\link[=phenotypeQuery]{phenotypeQuery()}}, \code{\link[=collectGeneEvidence]{collectGeneEvidence()}}, \code{\link[=llm_report]{llm_report()}}
 }

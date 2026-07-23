@@ -13,6 +13,7 @@ scanAssoc(
   geno_format = c("genotype", "corrected", "dosage", "haplotype"),
   kruskal = NULL,
   method = c("glm", "mlm"),
+  omit_outlier = FALSE,
   ...
 )
 }
@@ -24,6 +25,10 @@ scanAssoc(
 \item{conv_fun}{The function to convert genotype data to a model matrix for the regression}
 
 \item{fixed_effect}{A data.frame of fixed effect(s) incorporated in the regression model. The column names must match the terms specified in \code{formula} and \code{null_formula.} The number of rows must match the number of samples.}
+
+\item{omit_outlier}{If \code{TRUE}, set boxplot outliers to \code{NA} before
+standardizing continuous phenotypes (not applied to binary traits or
+Kruskal-Wallis phenotypes).}
 
 \item{out_fn}{Prefix of output file name}
 }

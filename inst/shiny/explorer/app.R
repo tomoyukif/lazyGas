@@ -70,8 +70,8 @@ library(lazyGas)
 .sidebar_llm_controls <- function() {
   tagList(
     checkboxInput("use_llm", "Use local LLM for query parsing", value = FALSE),
-    textInput("llm_model", "LLM model", value = Sys.getenv("LAZYGAS_LLM_MODEL", "llama3.2:3b")),
-    textInput("llm_url", "LLM URL", value = Sys.getenv("LAZYGAS_LLM_URL", "http://127.0.0.1:11434")),
+    textInput("llm_model", "LLM model", value = Sys.getenv("LAZYGAS_LLM_MODEL", "gemma4-31b-64k:latest")),
+    textInput("llm_url", "LLM URL", value = Sys.getenv("LAZYGAS_LLM_URL", "http://127.0.0.1:11435")),
     hr(),
     h5("Server actions"),
     actionButton(
@@ -328,8 +328,8 @@ server <- function(input, output, session) {
   task_value <- reactiveVal(0)
   ollama_status_text <- reactiveVal(
     describeOllamaStatus(
-      base_url = Sys.getenv("LAZYGAS_LLM_URL", "http://127.0.0.1:11434"),
-      model = Sys.getenv("LAZYGAS_LLM_MODEL", "llama3.2:3b")
+      base_url = Sys.getenv("LAZYGAS_LLM_URL", "http://127.0.0.1:11435"),
+      model = Sys.getenv("LAZYGAS_LLM_MODEL", "gemma4-31b-64k:latest")
     )
   )
 
@@ -712,7 +712,7 @@ server <- function(input, output, session) {
     pheno <- active_pheno()
     req(lg, pheno)
     p <- plotPeaks(object = lg, pheno = pheno, recalc = FALSE)
-    .ggplotly_safe(p)
+    .ggplotly_safe(p, tooltip = "text")
   })
 
   output$recalc_panel <- renderUI({
@@ -734,7 +734,7 @@ server <- function(input, output, session) {
     pheno <- active_pheno()
     req(lg, pheno)
     p <- plotPeaks(object = lg, pheno = pheno, recalc = TRUE)
-    .ggplotly_safe(p)
+    .ggplotly_safe(p, tooltip = "text")
   })
 
   output$groups_panel <- renderUI({

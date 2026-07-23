@@ -35,11 +35,25 @@ open_snpeff <- function(gds_fn) {
   return(gds)
 }
 
-################################################################################
-# Define the LazyGas class object
-#' Class `LazyGas`
+#' Phase 1 evaluation SnpEff GDS path (JRC/WRC, pre-annotated)
 #'
-#' The `LazyGas` class is the main class of `lazyGas` and
-#' user work with this class object.
+#' Returns the existing annotated GDS used for SnpEff impact scoring in Phase 1.
+#' Does **not** re-run SnpEff on the raw VCF.
 #'
-#' @details
+#' Resolution order:
+#' 1. \code{LAZYGAS_PHASE1_SNPEFF_GDS}
+#' 2. \code{snpeff_gds} in \code{inst/config/ai-lazygas-data.yaml}
+#' 3. Built-in default under \code{/home/ftom/01_wd/galis/...}
+#'
+#' @param must_exist If \code{TRUE} (default), stop when the file is missing.
+#' @return Character scalar path.
+#' @export
+#' @seealso [open_snpeff()], [snpeff2gds()]
+phase1SnpEffGds <- function(must_exist = TRUE) {
+  phase1DataPath(
+    key = "snpeff_gds",
+    env_var = "LAZYGAS_PHASE1_SNPEFF_GDS",
+    default = "/home/ftom/01_wd/galis/nhan_gwas/input/jrc_wrc_wgs_on_nb_genome.snpeff.gds",
+    must_exist = must_exist
+  )
+}

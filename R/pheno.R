@@ -220,11 +220,21 @@ setMethod("getPheno",
           }
 )
 
-#' Assign phenotype data to the samples in the LazyGas object
+#' Plot phenotype distribution
 #'
 #' @param object A LazyGas object
-#' @param pheno A data.frame of phenotype data that must contain a sample id
-#' column named `id` or `ID`
+#' @param pheno Phenotype name, index, or logical mask (first match used)
+#' @param xlab X-axis label for the boxplot panel
+#' @param axis_title_size Axis title font size
+#' @param axis_text_size Axis text font size
+#' @param fill Fill color for non-outlier histogram / boxplot
+#' @param color Border color for histogram / boxplot
+#' @param boxplot If \code{TRUE}, stack a boxplot under the histogram
+#' @param highlight_outliers If \code{TRUE} (default), mark boxplot outliers
+#'   with a distinct fill (same Tukey rule as \code{scanAssoc(omit_outlier=TRUE)}).
+#'   Ignored for binary phenotypes.
+#' @param outlier_fill Fill / point color for outliers when highlighting
+#' @param ... Unused; for S4 compatibility
 #'
 #' @importFrom cowplot plot_grid
 #'
@@ -238,6 +248,8 @@ setGeneric("plotPheno", function(object,
                                  fill = "skyblue",
                                  color = "darkblue",
                                  boxplot = TRUE,
+                                 highlight_outliers = TRUE,
+                                 outlier_fill = "#E45756",
                                  ...)
   standardGeneric("plotPheno"))
 
@@ -250,7 +262,9 @@ setMethod("plotPheno",
                    axis_text_size,
                    fill,
                    color,
-                   boxplot){
+                   boxplot,
+                   highlight_outliers,
+                   outlier_fill){
             # Check if pheno is not NULL and process accordingly
             if(!is.null(pheno)){
               if(is.numeric(pheno)){
@@ -275,22 +289,63 @@ setMethod("plotPheno",
               phe_index <- 1
             }
 
+            phe_index <- phe_index[[1L]]
             # Create a data frame with the selected phenotype values
             df <- data.frame(value = object@lazydata$pheno[, phe_index])
+            is_binary <- isTRUE(object@lazydata$pheno_type$binary[phe_index])
+            do_highlight <- isTRUE(highlight_outliers) && !is_binary
+            if (do_highlight) {
+              out_mask <- .pheno_boxplot_outlier_mask(df$value)
+              df$status <- ifelse(out_mask, "Outlier", "Included")
+              df$status[is.na(df$value)] <- NA_character_
+              n_out <- sum(out_mask, na.rm = TRUE)
+            } else {
+              n_out <- 0L
+            }
 
             # Create a histogram plot of the phenotype values
-            p1 <- ggplot(df, aes(x = value)) +
-              geom_histogram(fill = fill, color = color) +
-              ylab('Count') +
-              theme(axis.title.y = element_text(size = axis_title_size),
-                    axis.text.y = element_text(size = axis_text_size),
-                    axis.text.x = element_blank(),
-                    axis.ticks.x = element_blank(),
-                    axis.title.x = element_blank())
+            if (do_highlight && n_out > 0L) {
+              p1 <- ggplot(
+                df[!is.na(df$value), , drop = FALSE],
+                aes(x = .data$value, fill = .data$status)
+              ) +
+                geom_histogram(color = color) +
+                scale_fill_manual(
+                  values = c(Included = fill, Outlier = outlier_fill),
+                  breaks = c("Included", "Outlier"),
+                  name = NULL
+                ) +
+                ylab("Count") +
+                labs(subtitle = paste0(
+                  n_out,
+                  " boxplot outlier(s) (same rule as omit_outlier)"
+                )) +
+                theme(axis.title.y = element_text(size = axis_title_size),
+                      axis.text.y = element_text(size = axis_text_size),
+                      axis.text.x = element_blank(),
+                      axis.ticks.x = element_blank(),
+                      axis.title.x = element_blank(),
+                      legend.position = "top")
+            } else {
+              p1 <- ggplot(df, aes(x = .data$value)) +
+                geom_histogram(fill = fill, color = color) +
+                ylab("Count") +
+                theme(axis.title.y = element_text(size = axis_title_size),
+                      axis.text.y = element_text(size = axis_text_size),
+                      axis.text.x = element_blank(),
+                      axis.ticks.x = element_blank(),
+                      axis.title.x = element_blank())
+            }
 
             # Create a boxplot of the phenotype values
-            p2 <- ggplot(df, aes(x = value)) +
-              geom_boxplot(fill = fill, color = color) +
+            p2 <- ggplot(df, aes(x = .data$value)) +
+              geom_boxplot(
+                fill = fill,
+                color = color,
+                outlier.colour = if (do_highlight) outlier_fill else color,
+                outlier.fill = if (do_highlight) outlier_fill else fill,
+                outlier.size = if (do_highlight) 2 else 1.5
+              ) +
               xlab(xlab) +
               theme(axis.title.x = element_text(size = axis_title_size),
                     axis.text.x = element_text(size = axis_text_size),
@@ -311,6 +366,22 @@ setMethod("plotPheno",
             return(p)
           }
 )
+
+#' Logical mask of Tukey boxplot outliers (same rule as scanAssoc omit_outlier)
+#' @noRd
+.pheno_boxplot_outlier_mask <- function(x) {
+  finite <- is.finite(x)
+  out <- rep(FALSE, length(x))
+  if (!any(finite)) {
+    return(out)
+  }
+  bp_out <- graphics::boxplot(x[finite], plot = FALSE)$out
+  if (!length(bp_out)) {
+    return(out)
+  }
+  out[finite] <- x[finite] %in% bp_out
+  out
+}
 
 #'
 #' @importFrom methods show

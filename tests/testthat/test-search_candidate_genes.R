@@ -22,56 +22,17 @@ make_test_candidate <- function() {
   )
 }
 
-make_semantic_test_candidate <- function() {
-  n <- 12L
-  data.frame(
-    peak_ID = rep(1L, n),
-    Gene_ID = paste0("g", seq_len(n)),
-    Gene_chr = "1",
-    Gene_start = seq_len(n),
-    dist2peak = seq_len(n) * 100L,
-    negLog10P = 3,
-    Description = c(
-      "fruit weight development and ripening",
-      "root hair elongation",
-      "seed weight regulation",
-      "photosystem II reaction center",
-      "grain yield and biomass accumulation",
-      "floral organ development",
-      "drought stress response pathway",
-      "cell wall biosynthesis enzyme",
-      "starch metabolism in endosperm",
-      "auxin transport and signaling",
-      "ethylene biosynthesis regulation",
-      "gibberellin-mediated stem elongation"
-    ),
-    GO = c(
-      "fruit development",
-      "root development",
-      "seed development",
-      "photosynthesis",
-      "grain yield",
-      "flower development",
-      "drought tolerance",
-      "cell wall",
-      "starch biosynthesis",
-      "auxin signaling",
-      "ethylene response",
-      "gibberellin pathway"
-    ),
-    stringsAsFactors = FALSE
-  )
-}
-
 test_that("searchCandidateGenes is exported", {
   skip_if_not_installed("lazyGas")
   expect_true("searchCandidateGenes" %in% getNamespaceExports("lazyGas"))
 })
 
 .load_search_fn <- function() {
-  if (requireNamespace("lazyGas", quietly = TRUE)) {
-    return(get("searchCandidateGenes", envir = asNamespace("lazyGas")))
-  }
+  env <- .load_search_env()
+  env$searchCandidateGenes
+}
+
+.load_search_env <- function() {
   fn_path <- file.path(
     testthat::test_path(),
     "..", "..", "R", "search_candidate_genes.R"
@@ -80,7 +41,7 @@ test_that("searchCandidateGenes is exported", {
   env <- new.env(parent = globalenv())
   env$lazyData <- function(object, dataset, pheno) NULL
   source(fn_path, local = env)
-  env$searchCandidateGenes
+  env
 }
 
 test_that("NULL ann_cols uses all non-core annotation columns", {
@@ -158,54 +119,7 @@ test_that("missing ann_cols errors", {
   )
 })
 
-test_that("semantic search runs when text2vec is available", {
-  skip_if_not_installed("text2vec")
-  searchCandidateGenes <- .load_search_fn()
-  cand <- make_semantic_test_candidate()
-  expect_warning(
-    searchCandidateGenes(
-      candidate = cand,
-      query = "grain yield fruit mass",
-      ann_cols = c("Description", "GO"),
-      mode = "semantic",
-      min_score = 0,
-      top_n = 3L
-    ),
-    NA
-  )
-  out <- searchCandidateGenes(
-    candidate = cand,
-    query = "grain yield fruit mass",
-    ann_cols = c("Description", "GO"),
-    mode = "semantic",
-    min_score = 0,
-    top_n = 3L
-  )
-  expect_true(nrow(out) >= 1L)
-  expect_true(all(c("semantic_score", "match_score") %in% names(out)))
-  expect_true("g1" %in% out$Gene_ID || "g3" %in% out$Gene_ID || "g5" %in% out$Gene_ID)
-})
-
-test_that("semantic mode warns when gene count is low", {
-  skip_if_not_installed("text2vec")
-  searchCandidateGenes <- .load_search_fn()
-  cand <- make_test_candidate()[1:3, , drop = FALSE]
-  expect_warning(
-    searchCandidateGenes(
-      candidate = cand,
-      query = "fruit development",
-      ann_cols = "Description",
-      mode = "semantic",
-      min_score = 0
-    ),
-    "fewer than 10 genes"
-  )
-})
-
-test_that("semantic mode errors without text2vec", {
-  if (requireNamespace("text2vec", quietly = TRUE)) {
-    skip("text2vec is installed")
-  }
+test_that("semantic mode is rejected after LSA removal", {
   searchCandidateGenes <- .load_search_fn()
   cand <- make_test_candidate()
   expect_error(
@@ -215,6 +129,53 @@ test_that("semantic mode errors without text2vec", {
       ann_cols = "Description",
       mode = "semantic"
     ),
-    "text2vec"
+    "keyword"
   )
+})
+
+test_that("stopword in does not match containing", {
+  env <- .load_search_env()
+  ph_ann <- "Similar to pleckstrin homology domain-containing protein 1."
+  score <- env$.keyword_match_score(
+    text = ph_ann,
+    query = "heading date / flowering time HESO1 in rice flowering",
+    match = "any"
+  )
+  expect_equal(score, 0)
+
+  heso_ann <- paste(
+    "Homolog of Arabidopsis thaliana HEN1 suppressor 1, Heading date",
+    "expressed protein miRNA uridylyltransferase HESO1",
+    "TO:0000137 - days to heading, TO:0002616 - flowering time"
+  )
+  score_h <- env$.keyword_match_score(
+    text = heso_ann,
+    query = "heading date flowering time",
+    match = "any"
+  )
+  expect_true(score_h > 0.5)
+
+  det <- env$.keyword_match_details(
+    text = ph_ann,
+    terms = c("heading date", "flowering time", "flowering")
+  )[[1L]]
+  expect_equal(det$keyword_score, 0)
+  expect_equal(det$matched_keywords, character())
+  expect_true(all(c("heading date", "flowering time", "flowering") %in% det$unmatched_keywords))
+})
+
+test_that("phrase match prefers multi-word trait keywords", {
+  env <- .load_search_env()
+  q <- list(
+    trait_text = "heading date / flowering time HESO1 in rice",
+    trait_keywords = c("heading date", "flowering time"),
+    tissues = character(),
+    developmental_stage = "flowering",
+    conditions = character()
+  )
+  class(q) <- c("PhenotypeQuery", "list")
+  terms <- env$.keyword_terms_from_query(q)
+  expect_true("heading date" %in% terms)
+  expect_true("flowering time" %in% terms)
+  expect_false("in" %in% terms)
 })

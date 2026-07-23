@@ -1,0 +1,21 @@
+# AI-lazyGas Phase 1 model config
+# Override with LAZYGAS_LLM_URL / LAZYGAS_LLM_MODEL if needed.
+default:
+  base_url: "http://127.0.0.1:11435"
+  timeout: 600
+
+agents:
+  main:
+    model: "gemma4-31b-64k:latest"
+    reasoning: medium
+  ranking:
+    use_keyword: true
+    use_semantic: false
+    use_llm_relevance: true
+    llm_model: "gemma4-31b-64k:latest"
+
+weights:
+  annotation: 0.30
+  snpeff: 0.35
+  gwas: 0.25
+  expression: 0.10

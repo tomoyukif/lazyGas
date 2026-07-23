@@ -5,7 +5,18 @@ the release or documentation update for that version.
 
 ---
 
-## Changes in version 0.9.2 (2026-07-09)
+## Changes in version 0.9.2 (2026-07-24)
+
+### Annotation keyword matching
++ Remove text2vec LSA / semantic cosine scoring from annotation evidence and
+  from `searchCandidateGenes()` (`mode = "semantic"` / `"both"` no longer
+  supported).
++ Rebuild keyword matching: phrase-first terms from `PhenotypeQuery`, English
+  stopword filtering, word-boundary / phrase patterns, and
+  `matched_keywords` / `unmatched_keywords` in evidence details.
++ Update LLM report prompts so keyword notes are qualitative (high / low /
+  none), list matched vs unmatched terms, never print numeric scores, and do
+  not claim a "semantic match".
 
 ### Explorer UI and workflow polish
 + Reorganize **`runLazyGasExplorer()`** sidebar controls by tab so only

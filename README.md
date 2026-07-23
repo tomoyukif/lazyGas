@@ -51,7 +51,6 @@ devtools::load_all("/path/to/lazyGas")
 
 | Package | Used for |
 |---------|----------|
-| `text2vec` | Semantic candidate search (`searchCandidateGenes(..., mode = "semantic")`) |
 | `shiny` | `runLazyGasRunner()` pipeline UI; `runLazyGasExplorer()` phenotype explorer |
 | `base64enc` | Static Manhattan PNGs in HTML reports / explorer (`what = "scan_png"` style) |
 | `DBI`, `RSQLite` | Companion store `lazygas_store = "sqlite"` |
@@ -65,7 +64,7 @@ devtools::load_all("/path/to/lazyGas")
 explorer plots). Install as needed for Suggested features, for example:
 
 ```R
-install.packages(c("text2vec", "shiny", "base64enc", "DBI", "RSQLite", "processx", "httr2", "curl"))
+install.packages(c("shiny", "base64enc", "DBI", "RSQLite", "processx", "httr2", "curl"))
 ```
 
 ### 4. Optional local LLM (phenotype explorer)

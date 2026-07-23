@@ -10,13 +10,20 @@ collectGeneEvidence(
   candidate = NULL,
   object = NULL,
   pheno = NULL,
-  sources = c("annotation", "gwas", "expression", "literature", "ortholog"),
+  sources = phase1DefaultSources(),
   expression_matrix = NULL,
   expression_meta = NULL,
   ortholog_table = NULL,
   ortholog_cols = c(gene_id = "gene_id", ortholog_id = "ortholog_id", score = "score"),
   use_cache = TRUE,
-  literature_max = 5L
+  literature_max = 5L,
+  use_keyword = NULL,
+  use_semantic = NULL,
+  use_llm_relevance = NULL,
+  download_tenor = TRUE,
+  llm_model = NULL,
+  llm_base_url = NULL,
+  llm_timeout = NULL
 )
 }
 \arguments{
@@ -27,15 +34,18 @@ collectGeneEvidence(
 \item{candidate}{Candidate-gene \code{data.frame} (optional if \code{object}
 and \code{pheno} are given).}
 
-\item{object}{\code{LazyGas} object for cache I/O and candidate lookup.}
+\item{object}{\code{LazyGas} object for cache I/O, candidate lookup, and
+TENOR cache path.}
 
 \item{pheno}{Phenotype name or index when reading candidates from \code{object}.}
 
 \item{sources}{Evidence sources to collect. Any of \code{"annotation"},
-\code{"gwas"}, \code{"expression"}, \code{"literature"}, \code{"ortholog"}.}
+\code{"snpeff"}, \code{"gwas"}, \code{"expression"}, \code{"literature"},
+\code{"ortholog"}.}
 
 \item{expression_matrix}{Optional gene x sample expression matrix
-(\code{data.frame} or matrix) with row names = gene IDs.}
+(\code{data.frame} or matrix) with row names = gene IDs. When \code{NULL}
+and \code{expression} is requested, \code{\link[=evaluateTenorExpression]{evaluateTenorExpression()}} is used.}
 
 \item{expression_meta}{Optional \code{data.frame} with one row per sample
 column in \code{expression_matrix}; should include \code{tissue} and/or
@@ -51,16 +61,33 @@ optionally scores) used as one evidence channel in ranking.}
 
 \item{literature_max}{Maximum PubMed hits per gene (when \pkg{rentrez} is
 available).}
+
+\item{use_keyword, use_llm_relevance}{Annotation channel flags
+(defaults from \code{inst/config/ai-lazygas-models.yaml}).}
+
+\item{use_semantic}{Ignored; LSA / semantic annotation scoring was removed.
+Retained for call compatibility.}
+
+\item{download_tenor}{If \code{TRUE}, download missing TENOR CSVs when using
+the expression channel without \code{expression_matrix}.}
+
+\item{llm_model, llm_base_url, llm_timeout}{LLM settings for annotation
+relevance scoring.}
 }
 \value{
 A named list keyed by gene ID; each element is a list of evidence
 records (\code{source}, \code{score}, \code{snippets}, \code{details}).
 }
 \description{
-Gathers annotation, GWAS, expression, literature, and ortholog evidence for
-each gene in \code{gene_ids}, optionally using cached results in the
-companion store.
+Gathers annotation, SnpEff, GWAS, expression (TENOR or matrix), literature,
+and ortholog evidence for each gene in \code{gene_ids}, optionally using
+cached results in the companion store.
+}
+\details{
+Phase 1 default sources are \code{annotation}, \code{snpeff}, \code{gwas},
+and \code{expression}. Annotation scores combine phrase-aware keyword
+matching and optional LLM relevance via \code{max} (LSA / text2vec removed).
 }
 \seealso{
-\code{\link[=rankPhenotypeCandidates]{rankPhenotypeCandidates()}}
+\code{\link[=rankPhenotypeCandidates]{rankPhenotypeCandidates()}}, \code{\link[=evaluateTenorExpression]{evaluateTenorExpression()}}
 }

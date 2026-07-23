@@ -10,7 +10,7 @@ searchCandidateGenes(
   pheno = NULL,
   query,
   ann_cols = NULL,
-  mode = c("keyword", "semantic", "both"),
+  mode = "keyword",
   keyword_match = c("all", "any"),
   ignore.case = TRUE,
   min_score = 0.1,
@@ -39,40 +39,37 @@ functional annotation text (e.g. GO terms, gene descriptions). If \code{NULL}
 (default), all columns except peak/gene coordinates and SnpEff impact
 counts are used (i.e. columns joined from \code{ann} in \code{\link[=listCandidate]{listCandidate()}}).}
 
-\item{mode}{Search mode: \code{"keyword"} (fixed substring match),
-\code{"semantic"} (text2vec LSA cosine similarity), or \code{"both"}.}
+\item{mode}{Search mode. Only \code{"keyword"} is supported (LSA / semantic
+modes were removed).}
 
-\item{keyword_match}{For keyword mode, \code{"all"} requires every query token to
-appear in the annotation text; \code{"any"} requires at least one token.}
+\item{keyword_match}{For keyword mode, \code{"all"} requires every content term to
+appear in the annotation text; \code{"any"} requires at least one term.}
 
-\item{ignore.case}{Passed to \code{\link[=grepl]{grepl()}} for keyword matching.}
+\item{ignore.case}{Passed to keyword matching.}
 
-\item{min_score}{Minimum cosine similarity for semantic matches (0--1).}
+\item{min_score, n_topics}{Ignored; retained for call compatibility with
+older scripts (semantic / LSA search was removed).}
 
 \item{top_n}{If not \code{NULL}, return at most this many rows after ranking by
 \code{match_score}.}
 
 \item{dedupe_genes}{If \code{TRUE} and \code{Gene_ID} is present, keep one row per
 gene with the highest \code{match_score}.}
-
-\item{n_topics}{Number of LSA topics. Default uses up to 30 topics bounded by
-corpus size.}
 }
 \value{
 A subset of the input candidate \code{data.frame} with columns
-\code{keyword_score}, \code{semantic_score}, \code{match_score}, and \code{match_method}
-added, sorted by decreasing \code{match_score}.
+\code{keyword_score}, \code{match_score}, and \code{match_method} added, sorted by
+decreasing \code{match_score}.
 }
 \description{
-Filter and rank genes in a candidate list using keyword matching and/or
-semantic similarity (offline LSA via the \pkg{text2vec} package).
+Filter and rank genes in a candidate list using phrase-aware keyword
+matching (stopwords ignored; word-boundary / phrase match).
 }
 \details{
-Semantic search requires the suggested package \pkg{text2vec}:
-\code{install.packages("text2vec")}.
-
 Annotation text for each row is the space-separated concatenation of
-non-empty values in \code{ann_cols}.
+non-empty values in \code{ann_cols}. Query terms drop English stopwords
+(e.g. \code{in}, \code{of}) and match with word boundaries (phrases use
+boundary-aware multi-word patterns).
 }
 \examples{
 cand <- data.frame(

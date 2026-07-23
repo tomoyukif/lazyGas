@@ -133,10 +133,14 @@ setMethod("recalcAssoc",
                               binary = binary)
     message("Grouping associations...")
 
+    # Cap workers for tiny peak-vs-peak GLM jobs (forking 60+ procs is slower)
+    n_peaks <- length(peak_obj$peak_variant_id)
+    grp_threads <- min(.peakcall_resolve_n_threads(n_threads), max(1L, n_peaks - 1L), 8L)
+
     cov_scan <- lapply(X = peak_obj$peak_variant_id,
                        FUN = .composite,
                        peak_obj = peak_obj,
-                       n_threads = n_threads,
+                       n_threads = grp_threads,
                        mode = "excl")
 
     peak_grp <- .group_peaks(cov_scan = cov_scan,
@@ -152,7 +156,12 @@ setMethod("recalcAssoc",
                                 peak_obj = peak_obj,
                                 peak_variant_id = new_peaks$newpeaks)
 
+    message("Recalling peak blocks...")
+    variables <- .peakcall_variables(object = object)
+    id_is_rowindex <- .peakcall_snp_id_is_rowindex(variables$snp_id)
+    rows_by_chr <- .peakcall_rows_by_chr(variables$chr)
     geno_cache <- new.env(parent = emptyenv())
+    selection_cache <- new.env(parent = emptyenv())
     peak_block <- lapply(
       X = peak_obj$peak_variant_id,
       FUN = .recallPeak,
@@ -160,7 +169,11 @@ setMethod("recalcAssoc",
       object = object,
       peakcall = peakcall,
       n_threads = n_threads,
-      geno_cache = geno_cache
+      geno_cache = geno_cache,
+      selection_cache = selection_cache,
+      variables = variables,
+      rows_by_chr = rows_by_chr,
+      id_is_rowindex = id_is_rowindex
     )
     peak_obj$peak_block <- lapply(seq_along(peak_block),
                                   function(i) {peak_block[[i]]$variant_ID} )
@@ -403,71 +416,71 @@ setMethod("recalcAssoc",
 
 
   if(peak_obj$geno_format == "haplotype"){
-    target_geno <- peak_obj$geno[, , !index]
+    target_geno <- peak_obj$geno[, , !index, drop = FALSE]
     if(length(dim(target_geno)) == 2){
       target_geno <- array(data = target_geno, dim = c(dim(target_geno), 1))
     }
-    target_geno <- apply(X = target_geno, MARGIN = 3, FUN = list)
-    target_geno <- lapply(X = target_geno, FUN = "[[", 1)
+    n_target <- dim(target_geno)[3]
+    target_list <- lapply(seq_len(n_target), function(j) target_geno[, , j])
 
   } else {
-    target_geno <- peak_obj$geno[, !index]
-    if(is.vector(target_geno)){
+    target_geno <- peak_obj$geno[, !index, drop = FALSE]
+    if(is.null(dim(target_geno))){
       target_geno <- matrix(data = target_geno, ncol = 1)
     }
-    target_geno <- apply(X = target_geno, MARGIN = 2, FUN = list)
-    target_geno <- lapply(X = target_geno, FUN = "[[", 1)
+    n_target <- ncol(target_geno)
+    target_list <- lapply(seq_len(n_target), function(j) target_geno[, j])
   }
 
-  # Parallel processing setup
-  if(is.null(n_threads)){
-    cores <- detectCores()
-    if(cores > 1){
-      n_threads <- round(cores / 2)
-    }
-  }
+  n_threads <- .peakcall_resolve_n_threads(n_threads)
+  # Small peak-count jobs: serial is faster than mass fork
+  n_threads <- min(n_threads, max(1L, n_target), 8L)
 
   na_val <- peak_obj$na_val
 
-  p_values <- mclapply(X = target_geno, mc.cores = n_threads, mc.preschedule = TRUE,
-                       function(g){
-                         g[g == na_val] <- NA
-                         if(all(is.na(g))){
-                           return(NA)
-                         }
-                         if(length(unique(na.omit(as.vector(g)))) == 1){
-                           return(NA)  # Return NA if there is no variability in the genotype data
-                         }
-                         df <- .makeDF(g = g,
-                                       phe = peak_obj$pheno,
-                                       conv_fun = peak_obj$conv_fun,
-                                       formula = peak_obj$formula)
-                         if(length(query_peak) != 0){
-                           tmp <- subset(null_df$df, select = -phe)
-                           names(tmp) <- paste0("qtl_", names(tmp))
-                           df$df <- cbind(df$df, tmp)
-                           df$fml <- paste(c(df$fml, names(tmp)),
-                                           collapse = " + ")
+  glm_one <- function(g) {
+    g[g == na_val] <- NA
+    if (all(is.na(g))) {
+      return(NA)
+    }
+    if (length(unique(stats::na.omit(as.vector(g)))) == 1) {
+      return(NA)
+    }
+    df <- .makeDF(g = g,
+                  phe = peak_obj$pheno,
+                  conv_fun = peak_obj$conv_fun,
+                  formula = peak_obj$formula)
+    if (length(query_peak) != 0) {
+      tmp <- subset(null_df$df, select = -phe)
+      names(tmp) <- paste0("qtl_", names(tmp))
+      df$df <- cbind(df$df, tmp)
+      df$fml <- paste(c(df$fml, names(tmp)), collapse = " + ")
+    }
 
-                         }
+    if (peak_obj$binary) {
+      family <- "binomial"
+    } else {
+      family <- "gaussian"
+    }
 
-                         if(peak_obj$binary){
-                           family <- "binomial"
+    if (!all(is.na(peak_obj$fixed_effect))) {
+      df$df <- cbind(df$df, peak_obj$fixed_effect)
+      null_df$df <- cbind(null_df$df, peak_obj$fixed_effect)
+    }
 
-                         } else {
-                           family <- "gaussian"
-                         }
+    .doGLM(df = df, family = family, null_df = null_df)
+  }
 
-                         if(!all(is.na(peak_obj$fixed_effect))){
-                           df$df <- cbind(df$df, peak_obj$fixed_effect)
-                           null_df$df <- cbind(null_df$df, peak_obj$fixed_effect)
-                         }
-
-                         out <- .doGLM(df = df,
-                                       family = family,
-                                       null_df = null_df)
-                         return(out)
-                       })
+  if (n_threads <= 1L || n_target <= 1L) {
+    p_values <- lapply(target_list, glm_one)
+  } else {
+    p_values <- parallel::mclapply(
+      X = target_list,
+      mc.cores = n_threads,
+      mc.preschedule = TRUE,
+      FUN = glm_one
+    )
+  }
 
   if(is.list(p_values)){
     p_values <- data.frame(do.call("rbind", p_values))
@@ -555,27 +568,66 @@ setMethod("recalcAssoc",
   return(peak_obj)
 }
 
-.recallPeak <- function(peak_id, peak_obj, object, peakcall, n_threads, geno_cache = NULL){
-  target_variants <- peakcall$peak_ID %in% peakcall$peak_ID[peakcall$variant_ID %in% peak_id]
-  target_variants <- sort(peakcall$variant_ID[target_variants])
+.recallPeak <- function(peak_id,
+                        peak_obj,
+                        object,
+                        peakcall,
+                        n_threads,
+                        geno_cache = NULL,
+                        selection_cache = NULL,
+                        variables = NULL,
+                        rows_by_chr = NULL,
+                        id_is_rowindex = NULL) {
+  if (is.null(variables)) {
+    variables <- .peakcall_variables(object = object)
+  }
+  if (is.null(id_is_rowindex)) {
+    id_is_rowindex <- .peakcall_snp_id_is_rowindex(variables$snp_id)
+  }
+  if (is.null(rows_by_chr)) {
+    rows_by_chr <- .peakcall_rows_by_chr(variables$chr)
+  }
 
-  variables <- .peakcall_variables(object = object)
-  index <- which(variables$snp_id == peak_id)
-  chr <- variables$chr[index]
-  chr_with_peak <- which(variables$chr == chr)
+  peak_row <- if (isTRUE(id_is_rowindex)) {
+    as.integer(peak_id)
+  } else {
+    match(peak_id, variables$snp_id)
+  }
+  if (is.na(peak_row)) {
+    stop("Peak variant_ID not found in marker table: ", peak_id, call. = FALSE)
+  }
+  peak_chr <- variables$chr[[peak_row]]
+  key <- as.character(peak_chr)
+  chr_with_peak <- rows_by_chr[[key]]
+  if (is.null(chr_with_peak)) {
+    chr_with_peak <- which(variables$chr == peak_chr)
+  }
   id_in_chr <- variables$snp_id[chr_with_peak]
-  peak_index_in_chr <- which(id_in_chr == peak_id)
-  peak_info <-   list(index = index,
-                      variantID = peak_id,
-                      chr = chr,
-                      chr_with_peak = chr_with_peak,
-                      id_in_chr = id_in_chr,
-                      peak_index_in_chr = peak_index_in_chr)
+  peak_index_in_chr <- match(peak_id, id_in_chr)
+  peak_info <- list(
+    index = peak_row,
+    variantID = peak_id,
+    chr = peak_chr,
+    chr_with_peak = chr_with_peak,
+    id_in_chr = id_in_chr,
+    peak_index_in_chr = peak_index_in_chr
+  )
 
-  # Set the selection criteria based on the genotype format
-  selection <- .set_selection_criteria_for_peakcall(object = object,
-                                                    geno_format = peak_obj$geno_format,
-                                                    chr = peak_info$chr)
+  if (is.null(selection_cache)) {
+    selection_cache <- new.env(parent = emptyenv())
+  }
+  if (!exists(key, envir = selection_cache, inherits = FALSE)) {
+    assign(
+      key,
+      .set_selection_criteria_for_peakcall(
+        object = object,
+        geno_format = peak_obj$geno_format,
+        chr = peak_info$chr
+      ),
+      envir = selection_cache
+    )
+  }
+  selection <- get(key, envir = selection_cache, inherits = FALSE)
 
   cache_key <- paste(peak_obj$geno_format, peak_info$chr, sep = ":")
   if (!is.null(geno_cache) && exists(cache_key, envir = geno_cache, inherits = FALSE)) {
@@ -584,30 +636,36 @@ setMethod("recalcAssoc",
     geno <- .retrieve_geno(object = object,
                            selection = selection,
                            geno_format = peak_obj$geno_format)
+    if (!is.matrix(geno)) {
+      geno <- as.matrix(geno)
+    }
+    storage.mode(geno) <- "double"
     if (!is.null(geno_cache)) {
       assign(cache_key, geno, envir = geno_cache)
     }
   }
 
-  # Calculate linkage disequilibrium (LD) for the identified peak
-  peak_ld <- .calculate_ld(geno = as.matrix(geno),
-                           peak_variant_idx = peak_info$peak_index_in_chr,
-                           is_categorical = selection$is_categorical,
-                           n_threads = n_threads)
+  peak_ld <- .calculate_ld(
+    geno = geno,
+    peak_variant_idx = peak_info$peak_index_in_chr,
+    is_categorical = selection$is_categorical,
+    n_threads = n_threads
+  )
 
-  # Identify the peak block based on the LD values
-  peak_block <- .identify_peak_block(peak_ld = peak_ld,
-                                     variables = variables,
-                                     peak_info = peak_info,
-                                     threshold = peak_obj$threshold,
-                                     geno_format = peak_obj$geno_format)
-  out <- data.frame(dist2peak = peak_block$dist,
-                    LD2peak = peak_block$ld,
-                    variant_ID = peak_block$ids,
-                    chr_start = peak_block$chr_start,
-                    chr_end = peak_block$chr_end)
-
-  return(out)
+  peak_block <- .identify_peak_block(
+    peak_ld = peak_ld,
+    variables = variables,
+    peak_info = peak_info,
+    threshold = peak_obj$threshold,
+    geno_format = peak_obj$geno_format
+  )
+  data.frame(
+    dist2peak = peak_block$dist,
+    LD2peak = peak_block$ld,
+    variant_ID = peak_block$ids,
+    chr_start = peak_block$chr_start,
+    chr_end = peak_block$chr_end
+  )
 }
 
 .make_newblocks <- function(i, object, peak_obj, n_threads){

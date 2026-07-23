@@ -33,7 +33,7 @@ conditions (optional).}
 \code{\link[=llmChat]{llmChat()}}.}
 
 \item{llm_model}{Model name passed to Ollama (default from
-\code{LAZYGAS_LLM_MODEL} or \code{"llama3.2:3b"}).}
+\code{LAZYGAS_LLM_MODEL} or \code{"gemma4-31b-64k:latest"}).}
 
 \item{llm_base_url}{Ollama base URL (default from \code{LAZYGAS_LLM_URL}).}
 

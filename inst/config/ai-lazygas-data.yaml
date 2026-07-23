@@ -1,0 +1,17 @@
+# AI-lazyGas Phase 1 data paths (local evaluation)
+# Override with env vars when needed:
+#   LAZYGAS_PHASE1_SNPEFF_GDS, LAZYGAS_PHASE1_GFF, LAZYGAS_PHASE1_ANN, etc.
+
+phase1:
+  phenotype_jrc: "/home/ftom/01_wd/genomeData/publicdata/pcp-2020-e-00329-File012.xlsx"
+  phenotype_wrc: "/home/ftom/01_wd/genomeData/publicdata/WRC_PCP_Supplementary_Table_S1_updated.xlsx"
+  # Raw genotypes (not SnpEff-annotated). Existing GDS from the same VCF may be reused.
+  vcf: "/home/ftom/02_nig/ma/vcf/jrc_wrc_wgs_on_nb_genome.vcf.gz"
+  genotype_gds: "/home/ftom/01_wd/galis/nhan_gwas/input/jrc_wrc_wgs_on_nb_genome.gds"
+  # Use this for SnpEff impact scoring / listCandidate — do not re-annotate
+  snpeff_gds: "/home/ftom/01_wd/galis/nhan_gwas/input/jrc_wrc_wgs_on_nb_genome.snpeff.gds"
+  gff: "/home/ftom/01_wd/genomeData/rice/cultivar_sativa/nb_combined/version_2023/gff/nb_combined_all_annotated.gff"
+  ann: "/home/ftom/01_wd/genomeData/rice/cultivar_sativa/nb_combined/version_2023/gff/nb_combined_summarized_annotation.tsv"
+  work_dir: "/home/ftom/01_wd/softDevel/lazyGas/demo_output/phase1_jrc_wrc"
+  # Package API uses method = "mlm" (mixed linear model / LMM). "lmm" is accepted as an alias.
+  scan_method: "mlm"

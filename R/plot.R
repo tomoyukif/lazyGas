@@ -69,13 +69,18 @@ setMethod("plotPeaks",
   paste0("lazygas/", section)
 }
 
-# Get chromosome and position data
+# Get chromosome and position data (order = GDS / scan marker order)
 .get_chromosome_data <- function(object) {
   chr_data <- getChromosome(object = object)
   pos_data <- getPosition(object = object)
-  chr_min <- tapply(pos_data, chr_data, min)
-  chr_max <- tapply(pos_data, chr_data, max)
-  return(list(chr_min = chr_min, chr_max = chr_max, chr_lev = unique(chr_data)))
+  chr_lev <- unique(as.character(chr_data))
+  chr_fac <- factor(chr_data, levels = chr_lev)
+  chr_min <- tapply(pos_data, chr_fac, min)
+  chr_max <- tapply(pos_data, chr_fac, max)
+  # tapply drops unused levels; restore genome order explicitly
+  chr_min <- chr_min[chr_lev]
+  chr_max <- chr_max[chr_lev]
+  list(chr_min = chr_min, chr_max = chr_max, chr_lev = chr_lev)
 }
 
 # Generate peak plots
@@ -147,47 +152,111 @@ setMethod("plotPeaks",
   }
 
   # Set peak ID for dummy data
-  dummy$peak_ID <- peakcall$peak_ID[1]
+  dummy$peak_ID <- if (nrow(peakcall)) peakcall$peak_ID[1] else NA
+  dummy$is_peak <- FALSE
 
   # Subset significant peaks
-  att <- attributes(peakcall)
   signif_peak <- subset(peakcall, subset = peak_variant_ID == variant_ID)
+
+  # Align columns before continuous-genome coord transform
+  keep_cols <- c("Chr", "Pos", "negLog10P", "peak_ID", "is_peak")
+  peak_min <- as.data.frame(peakcall[, keep_cols, drop = FALSE], stringsAsFactors = FALSE)
+  dummy_min <- as.data.frame(dummy[, keep_cols, drop = FALSE], stringsAsFactors = FALSE)
+  signif_min <- if (nrow(signif_peak)) {
+    as.data.frame(signif_peak[, keep_cols, drop = FALSE], stringsAsFactors = FALSE)
+  } else {
+    peak_min[0, , drop = FALSE]
+  }
+  plot_df <- rbind(peak_min, dummy_min, signif_min)
+  # Keep genome (scan) chromosome order even though peak rows are peak-ordered
+  plot_df$Chr <- factor(as.character(plot_df$Chr), levels = as.character(chr_lev))
+  coords <- .genome_plot_coords(
+    plot_df,
+    chr_col = "Chr",
+    pos_col = "Pos",
+    chr_levels = as.character(chr_lev)
+  )
+  plot_df <- coords$df
+  n_peak <- nrow(peak_min)
+  n_dummy <- nrow(dummy_min)
+  peakcall <- plot_df[seq_len(n_peak), , drop = FALSE]
+  dummy <- plot_df[n_peak + seq_len(n_dummy), , drop = FALSE]
+  signif_peak <- plot_df[n_peak + n_dummy + seq_len(nrow(signif_min)), , drop = FALSE]
+
+  # Hover shows chromosome physical position (bp), not concatenated genome_x
+  if (nrow(peakcall)) {
+    peakcall$hover <- .peak_hover_label(peakcall)
+  }
+  if (nrow(signif_peak)) {
+    signif_peak$hover <- .peak_hover_label(signif_peak)
+  }
 
   # Create ggplot object
   p <- ggplot() +
     geom_line(data = peakcall,
-              mapping = aes(x = Pos, y = negLog10P, color = peak_ID),
+              mapping = aes(
+                x = .data$genome_x,
+                y = .data$negLog10P,
+                color = .data$peak_ID,
+                text = .data$hover,
+                group = .data$peak_ID
+              ),
               linewidth = 1) +
     geom_point(data = signif_peak,
-               mapping = aes(x = Pos, y = negLog10P, group = peak_ID),
+               mapping = aes(
+                 x = .data$genome_x,
+                 y = .data$negLog10P,
+                 group = .data$peak_ID,
+                 text = .data$hover
+               ),
                color = "magenta",
                size = 2,
                shape = 20) +
     geom_point(data = dummy,
-               mapping = aes(x = Pos, y = negLog10P),
+               mapping = aes(x = .data$genome_x, y = .data$negLog10P),
                size = 0,
                color = NA) +
-    facet_wrap(~ Chr, nrow = 1, scales = "free_x", strip.position = "bottom") +
     ylab("-log10(P)") +
     xlab("Chromosome") +
-    scale_x_continuous(breaks = NULL) +
+    scale_x_continuous(breaks = unname(coords$breaks), labels = coords$labels) +
     scale_y_continuous(expand = expansion(mult = c(0, 0.1))) +
-    theme(axis.text.x = element_blank(),
+    theme(axis.text.x = element_text(size = 12),
           axis.text.y = element_text(size = 14),
           axis.title.y = element_text(size = 15),
           axis.title.x = element_text(size = 15),
-          strip.text.x = element_text(size = 12),
           plot.title = element_text(hjust = 0.5, size = 20),
           legend.position = "none",
           axis.line.x.bottom = element_line(colour = "black"),
-          panel.spacing.x = unit(0.2, "lines"),
           panel.border = element_blank(),
           panel.background = element_rect(fill = "gray90"),
           panel.grid.major.x = element_blank(),
-          panel.grid.minor.x = element_blank(),
-          strip.placement = "outside",
-          strip.background = element_rect(fill = "white", colour = "white"))
+          panel.grid.minor.x = element_blank())
   return(p)
+}
+
+#' Hover label for peak plots (physical bp, not genome_x)
+#' @noRd
+.peak_hover_label <- function(df) {
+  pos <- as.numeric(df$Pos)
+  pos_lab <- ifelse(
+    is.na(pos),
+    "NA",
+    format(pos, scientific = FALSE, trim = TRUE, big.mark = ",")
+  )
+  pval <- as.numeric(df$negLog10P)
+  pval_lab <- ifelse(is.na(pval), "NA", as.character(signif(pval, 4)))
+  paste0(
+    "Chr: ", as.character(df$Chr),
+    "<br>Pos: ", pos_lab, " bp",
+    "<br>-log10(P): ", pval_lab,
+    "<br>peak_ID: ", as.character(df$peak_ID)
+  )
+}
+
+#' ggplotly wrapper for peak plots (hide concatenated genome_x)
+#' @noRd
+.ggplotly_peak_plot <- function(p, ...) {
+  plotly::ggplotly(p, tooltip = "text", ...)
 }
 
 ################################################################################

@@ -19,7 +19,7 @@ vignette: >
 ## Introduction
 This vignette demonstrates the process of conducting a genetic association study using the `lazyGas` package. We will go through the steps of loading input files, preprocessing data, performing association analysis, and visualizing results.
 
-Companion storage for scan, peak, recalc, and candidate outputs is written by default to a Parquet-backed directory next to the GDS file (or optionally SQLite or the legacy GDS `lazygas/` subtree); see the [Where association results are stored](#where-association-results-are-stored) section. Optional refinement of candidate genes with `searchCandidateGenes()` uses keyword and/or semantic similarity search and requires the suggested package **text2vec** for semantic mode (`install.packages("text2vec")`).
+Companion storage for scan, peak, recalc, and candidate outputs is written by default to a Parquet-backed directory next to the GDS file (or optionally SQLite or the legacy GDS `lazygas/` subtree); see the [Where association results are stored](#where-association-results-are-stored) section. Optional refinement of candidate genes with `searchCandidateGenes()` uses phrase-aware keyword matching (stopwords ignored; word-boundary / phrase patterns).
 
 Since v0.5.0, lazyGas also provides a **variant viewer** (`getVariantViewerData()`, `plotVariantViewer()`) and an **interactive dashboard** (`makeInteractiveDashboard()`) that links candidate genes to per-gene variant plots in a single HTML file. Runnable demos are available via `runDashboardDemo()` and, for v0.6+ features, `runMvpDemo()` using bundled files in `inst/extdata/`. Since v0.7.0, the **phenotype explorer** (`runLazyGasExplorer()`, `runExplorerDemo()`) ranks candidates by multi-source evidence with optional local LLM support. Since v0.8.0, GWAS **`Coef.*` columns are stored in original phenotype units** for continuous traits (see [Interpreting scan coefficients](#interpreting-scan-coefficients-coef)). Since v0.9.0, the Shiny explorer also embeds **GWAS overview** and **Locus / variants** plots (same helpers as the HTML dashboard). Since v0.9.1, a separate **pipeline runner** (`runLazyGasRunner()`) runs `buildLazyGas()` → `assignPheno()` → `runLazyGas()` from filesystem paths before handing off to the explorer. Since v0.9.2, explorer sidebar controls are tab-scoped with a dedicated Local LLM diagnostics tab and busy-state progress/locking for rank/chat actions.
 
@@ -65,7 +65,6 @@ devtools::load_all("/path/to/lazyGas")
 
 | Package | Feature |
 |---------|---------|
-| `text2vec` | Semantic `searchCandidateGenes()` |
 | `shiny` | `runLazyGasRunner()` pipeline UI; `runLazyGasExplorer()` (GWAS / locus / ranking / chat) |
 | `base64enc` | Static Manhattan PNG in HTML / explorer |
 | `DBI`, `RSQLite` | `lazygas_store = "sqlite"` |
@@ -77,7 +76,7 @@ devtools::load_all("/path/to/lazyGas")
 explorer plots).
 
 ```{r eval=FALSE}
-install.packages(c("text2vec", "shiny", "base64enc", "DBI", "RSQLite", "processx", "httr2", "curl"))
+install.packages(c("shiny", "base64enc", "DBI", "RSQLite", "processx", "httr2", "curl"))
 ```
 
 ### Optional local LLM (phenotype explorer)
@@ -606,9 +605,7 @@ if (have_demo_ann) {
 ## Refining candidate genes (`searchCandidateGenes`)
 After `listCandidate()`, the candidate table may still be large. The function `searchCandidateGenes()` filters and ranks rows using free-text annotation columns (for example descriptions or GO terms merged via the `ann` argument in `listCandidate()`).
 
-- **`mode = "keyword"`** — fixed substring matching on the query string; with `keyword_match = "all"`, every whitespace-separated token must appear (default is `"all"`; use `"any"` for OR-style matching).
-- **`mode = "semantic"`** — latent semantic analysis with **text2vec** (cosine similarity on a TF–IDF + LSA representation); set `min_score` to control the cutoff.
-- **`mode = "both"`** — keeps genes that pass either keyword or semantic thresholds; `match_score` is the pointwise maximum of the two scores.
+- **`mode = "keyword"`** (only supported mode) — phrase-aware matching with English stopwords ignored and word-boundary / multi-word phrase patterns; with `keyword_match = "all"`, every content term must appear (default is `"all"`; use `"any"` for OR-style matching).
 
 By default, all columns except peak/SnpEff coordinate columns are concatenated as annotation text; override with `ann_cols`. Use `object` and `pheno` to read candidates from the companion store, or pass a `data.frame` as `candidate`.
 
@@ -635,12 +632,10 @@ searchCandidateGenes(
 )
 ```
 
-Semantic search is not evaluated in this vignette build (requires **text2vec**). After installing that package, you can use for example:
-
 ```{r eval=FALSE}
 searchCandidateGenes(object = lg, pheno = "Fruit weight",
                        query = "fruit ripening carbohydrate",
-                       mode = "both", min_score = 0.15, top_n = 50)
+                       mode = "keyword", keyword_match = "any", top_n = 50)
 ```
 
 <br><br>

@@ -2,7 +2,7 @@
 % Please edit documentation in R/pheno.R
 \name{plotPheno}
 \alias{plotPheno}
-\title{Assign phenotype data to the samples in the LazyGas object}
+\title{Plot phenotype distribution}
 \usage{
 plotPheno(
   object,
@@ -13,15 +13,36 @@ plotPheno(
   fill = "skyblue",
   color = "darkblue",
   boxplot = TRUE,
+  highlight_outliers = TRUE,
+  outlier_fill = "#E45756",
   ...
 )
 }
 \arguments{
 \item{object}{A LazyGas object}
 
-\item{pheno}{A data.frame of phenotype data that must contain a sample id
-column named \code{id} or \code{ID}}
+\item{pheno}{Phenotype name, index, or logical mask (first match used)}
+
+\item{xlab}{X-axis label for the boxplot panel}
+
+\item{axis_title_size}{Axis title font size}
+
+\item{axis_text_size}{Axis text font size}
+
+\item{fill}{Fill color for non-outlier histogram / boxplot}
+
+\item{color}{Border color for histogram / boxplot}
+
+\item{boxplot}{If \code{TRUE}, stack a boxplot under the histogram}
+
+\item{highlight_outliers}{If \code{TRUE} (default), mark boxplot outliers
+with a distinct fill (same Tukey rule as \code{scanAssoc(omit_outlier=TRUE)}).
+Ignored for binary phenotypes.}
+
+\item{outlier_fill}{Fill / point color for outliers when highlighting}
+
+\item{...}{Unused; for S4 compatibility}
 }
 \description{
-Assign phenotype data to the samples in the LazyGas object
+Plot phenotype distribution
 }

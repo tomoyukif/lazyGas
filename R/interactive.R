@@ -98,7 +98,7 @@ makeInteractiveSummary <- function(object, pheno,
       tag_list <- tagList(
         tag_list,
         div(h1("Peakcall plot"), style = "text-align:center"),
-        div(ggplotly(plot_peak1), style = "margin:auto;width:80vw;")
+        div(.ggplotly_peak_plot(plot_peak1), style = "margin:auto;width:80vw;")
       )
     }
   }
@@ -110,7 +110,7 @@ makeInteractiveSummary <- function(object, pheno,
       tag_list <- tagList(
         tag_list,
         div(h1("Recalculated peakcall plot"), style = "text-align:center"),
-        div(ggplotly(plot_peak2), style = "margin:auto;width:80vw;")
+        div(.ggplotly_peak_plot(plot_peak2), style = "margin:auto;width:80vw;")
       )
     }
   }
@@ -169,11 +169,20 @@ makeInteractiveSummary <- function(object, pheno,
   }
 
   if ("qq" %in% what) {
+    # Genome-wide QQ via ggplotly can be multi-GB; embed a static PNG instead.
     plot_qq <- plotQQ(object = object, pheno = pheno)
     tag_list <- tagList(
       tag_list,
       div(h1("QQ plot"), style = "text-align:center"),
-      div(ggplotly(plot_qq), style = "margin:auto;width:80vw;")
+      div(
+        .interactive_ggplot_img_tag(
+          plot_qq,
+          alt = paste0("QQ plot for ", pheno),
+          width = 800,
+          height = 600
+        ),
+        style = "text-align:center;margin:auto;width:80vw;"
+      )
     )
   }
 
@@ -276,42 +285,54 @@ makeInteractiveSummary <- function(object, pheno,
       candidate <- NULL
     }
     if (!is.null(candidate)) {
-      col_names <- colnames(candidate)
-      col_def <- vector("list", length(col_names))
-      names(col_def) <- col_names
-      for (i in seq_along(col_names)) {
-        min_width <- max(nchar(col_names[i]) * 16, 100)
-        col_def[[i]] <- colDef(minWidth = min_width)
-      }
-      if (candidate_gene_links && "Gene_ID" %in% col_names) {
-        col_def[["Gene_ID"]] <- colDef(
-          name = "Gene_ID",
-          minWidth = 120,
-          html = TRUE,
-          cell = function(value) {
-            if (is.na(value) || !nzchar(value)) {
-              return("")
+      if (requireNamespace("DT", quietly = TRUE)) {
+        table_block <- .interactive_candidate_table_dt(
+          candidate = candidate,
+          candidate_gene_links = candidate_gene_links
+        )
+      } else {
+        candidate <- .interactive_candidate_display_df(candidate)
+        col_names <- colnames(candidate)
+        col_def <- vector("list", length(col_names))
+        names(col_def) <- col_names
+        for (i in seq_along(col_names)) {
+          min_width <- max(nchar(col_names[i]) * 16, 100)
+          col_def[[i]] <- colDef(minWidth = min_width)
+        }
+        if (candidate_gene_links && "Gene_ID" %in% col_names) {
+          col_def[["Gene_ID"]] <- colDef(
+            name = "Gene_ID",
+            minWidth = 120,
+            html = TRUE,
+            cell = function(value) {
+              if (is.na(value) || !nzchar(value)) {
+                return("")
+              }
+              safe <- .variant_viewer_safe_id(value)
+              sprintf(
+                '<a href="#" onclick="lazyGasShowGene(\'%s\'); return false;">%s</a>',
+                safe,
+                htmltools::htmlEscape(value)
+              )
             }
-            safe <- .variant_viewer_safe_id(value)
-            sprintf(
-              '<a href="#" onclick="lazyGasShowGene(\'%s\'); return false;">%s</a>',
-              safe,
-              htmltools::htmlEscape(value)
-            )
-          }
+          )
+        }
+        table_block <- div(
+          reactable(
+            data = candidate,
+            columns = col_def,
+            sortable = TRUE,
+            resizable = TRUE,
+            filterable = TRUE,
+            searchable = TRUE,
+            showPageSizeOptions = TRUE,
+            defaultPageSize = 20L,
+            wrap = FALSE,
+            striped = TRUE
+          ),
+          style = "margin:auto;width:90vw;"
         )
       }
-      table <- reactable(
-        data = candidate,
-        columns = col_def,
-        sortable = TRUE,
-        resizable = TRUE,
-        filterable = TRUE,
-        searchable = TRUE,
-        showPageSizeOptions = TRUE,
-        wrap = TRUE,
-        striped = TRUE
-      )
       hint <- if (candidate_gene_links) {
         p("Click Gene_ID to open the variant viewer below.",
           style = "text-align:center;color:#555;margin-bottom:0.5em;")
@@ -322,12 +343,130 @@ makeInteractiveSummary <- function(object, pheno,
         tag_list,
         div(h1("Candidate list"), style = "text-align:center"),
         hint,
-        div(table, style = "margin:auto;width:90vw;")
+        table_block
       )
     }
   }
 
   tag_list
+}
+
+#' Trim/prioritize candidate columns for HTML tables
+#' @noRd
+.interactive_candidate_display_df <- function(candidate, max_text = 120L) {
+  prefer <- c(
+    "peak_ID", "Gene_ID", "Gene_chr", "Gene_start", "dist2peak", "negLog10P",
+    "HIGH", "MODERATE", "LOW", "MODIFIER",
+    "RAPDB_geneSymbol", "Oryzabase_geneSymbol", "CGSNL_geneSymbol",
+    "RAP_Note", "MSU_Note", "EGGNog_Description", "MapMan_DESCRIPTION"
+  )
+  keep <- unique(c(intersect(prefer, names(candidate)),
+                   setdiff(names(candidate), prefer)))
+  # Drop very wide ontology dumps from the default HTML table
+  drop <- intersect(
+    keep,
+    c("EGGNog_GOs", "EGGNog_KEGG_Pathway", "InterPro_Description",
+      "Oryzabase_Trait_Ontology", "Oryzabase_Plant_Ontology", "ID", "gene_id")
+  )
+  keep <- setdiff(keep, drop)
+  out <- as.data.frame(candidate[, keep, drop = FALSE], stringsAsFactors = FALSE)
+  for (nm in names(out)) {
+    if (is.character(out[[nm]]) || is.factor(out[[nm]])) {
+      x <- as.character(out[[nm]])
+      long <- !is.na(x) & nchar(x) > max_text
+      x[long] <- paste0(substr(x[long], 1L, max_text - 3L), "...")
+      out[[nm]] <- x
+    }
+  }
+  out
+}
+
+#' DT candidate table with peak filter (falls back to reactable if DT missing)
+#' @noRd
+.interactive_candidate_table_dt <- function(candidate,
+                                            candidate_gene_links = FALSE) {
+  display <- .interactive_candidate_display_df(candidate)
+  table_id <- paste0(
+    "lazygas_cand_",
+    substr(
+      gsub("[^a-zA-Z0-9]", "", paste(c(names(display), nrow(display)), collapse = "")),
+      1L,
+      16L
+    )
+  )
+  peak_col0 <- if ("peak_ID" %in% names(display)) {
+    which(names(display) == "peak_ID")[1L] - 1L
+  } else {
+    NA_integer_
+  }
+  filter_ui <- if (!is.na(peak_col0)) {
+    peaks <- sort(unique(display$peak_ID))
+    tags$div(
+      style = "margin:0.5em auto 1em;max-width:90vw;",
+      tags$label(`for` = paste0(table_id, "_peak"), "Filter by peak_ID: "),
+      tags$select(
+        id = paste0(table_id, "_peak"),
+        tags$option(value = "All", "All peaks"),
+        lapply(as.character(peaks), function(pid) {
+          tags$option(value = pid, pid)
+        }),
+        onchange = sprintf(
+          paste0(
+            "var v=document.getElementById('%s_peak').value;",
+            "var t=$('#%s table').DataTable();",
+            "if(v==='All'){t.column(%d).search('').draw();}",
+            "else{t.column(%d).search('^'+v+'$', true, false).draw();}"
+          ),
+          table_id,
+          table_id,
+          peak_col0,
+          peak_col0
+        )
+      )
+    )
+  } else {
+    NULL
+  }
+  if (isTRUE(candidate_gene_links) && "Gene_ID" %in% names(display)) {
+    display$Gene_ID <- vapply(as.character(display$Gene_ID), function(value) {
+      if (is.na(value) || !nzchar(value)) {
+        return("")
+      }
+      safe <- .variant_viewer_safe_id(value)
+      sprintf(
+        '<a href="#" onclick="lazyGasShowGene(\'%s\'); return false;">%s</a>',
+        safe,
+        htmltools::htmlEscape(value)
+      )
+    }, character(1))
+  }
+  dt <- DT::datatable(
+    display,
+    extensions = c("Buttons", "ColReorder"),
+    rownames = FALSE,
+    escape = if (isTRUE(candidate_gene_links)) {
+      setdiff(seq_along(display), which(names(display) == "Gene_ID"))
+    } else {
+      TRUE
+    },
+    elementId = table_id,
+    options = list(
+      dom = "Blfrtip",
+      buttons = list("colvis"),
+      colReorder = TRUE,
+      pageLength = 20L,
+      lengthMenu = list(c(10L, 20L, 50L, 100L, -1L), c("10", "20", "50", "100", "All")),
+      scrollX = TRUE
+    )
+  )
+  tagList(
+    tags$p(
+      style = "text-align:center;color:#555;margin:0.25em auto;",
+      "Use Colvis to show/hide columns; drag headers to reorder; change page length or peak filter above."
+    ),
+    filter_ui,
+    div(dt, style = "margin:auto;width:90vw;")
+  )
 }
 
 .interactive_ggplot_img_tag <- function(p, alt = "", width = 800, height = 600) {

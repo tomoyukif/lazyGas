@@ -16,8 +16,10 @@ calcGenomicInflation <- function(p_values) {
 #'
 #' @param object A \code{LazyGas} object, or a numeric p-value vector.
 #' @param pheno Phenotype name or index when \code{object} is \code{LazyGas}.
+#' @param max_points Maximum points drawn (full data still used for
+#'   \eqn{\lambda_{GC}}). Large genome-wide scans are thinned for plotting.
 #' @export
-plotQQ <- function(object, pheno = NULL) {
+plotQQ <- function(object, pheno = NULL, max_points = 100000L) {
   if (inherits(object, "LazyGas")) {
     pheno_name <- .determine_phenotype_name(object = object, pheno = pheno)
     scan_df <- lazyData(object = object, dataset = "scan", pheno = pheno_name)
@@ -38,17 +40,34 @@ plotQQ <- function(object, pheno = NULL) {
   expected <- -log10(ppoints(n))
   observed <- -log10(sort(p_values))
   lambda <- calcGenomicInflation(p_values)
+
+  max_points <- as.integer(max_points)[1L]
+  if (is.finite(max_points) && max_points > 0L && n > max_points) {
+    # Keep the most extreme observed points; thin the remainder evenly.
+    keep_tail <- min(max(2000L, as.integer(max_points * 0.2)), n)
+    tail_idx <- seq.int(n - keep_tail + 1L, n)
+    body_n <- max_points - length(tail_idx)
+    body_idx <- if (body_n > 0L) {
+      unique(as.integer(round(seq(1, n - keep_tail, length.out = body_n))))
+    } else {
+      integer()
+    }
+    idx <- sort(unique(c(body_idx, tail_idx)))
+    expected <- expected[idx]
+    observed <- observed[idx]
+  }
+
   ggplot2::ggplot(
     data = data.frame(expected = expected, observed = observed),
     mapping = ggplot2::aes(x = expected, y = observed)
   ) +
-    ggplot2::geom_point(alpha = 0.6) +
+    ggplot2::geom_point(alpha = 0.6, size = 0.8) +
     ggplot2::geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
     ggplot2::labs(
       title = title,
-      subtitle = sprintf("lambda GC = %.3f", lambda),
-      x = expression(Expected ~ -log[10](p)),
-      y = expression(Observed ~ -log[10](p))
+      subtitle = sprintf("lambda GC = %.3f (n = %s)", lambda, format(n, big.mark = ",")),
+      x = "Expected -log10(p)",
+      y = "Observed -log10(p)"
     ) +
     ggplot2::theme_bw()
 }

@@ -18,8 +18,8 @@ Depends: GBScleanR
 Imports: stats, utils, methods, parallel, ggplot2, gdsfmt, GenomeInfoDb, GenomicRanges,
   IRanges, S4Vectors, SNPRelate, SeqArray, cowplot, dplyr, parameters, rtracklayer, vcfR,
   arrow, jsonlite, gaston, plotly, htmltools, reactable, BiocGenerics
-Suggests: DBI, RSQLite, testthat, BiocStyle, knitr, rmarkdown, text2vec, base64enc,
-  shiny, httr2, curl, rentrez, processx
+Suggests: DBI, RSQLite, testthat, BiocStyle, knitr, rmarkdown, base64enc,
+  shiny, httr2, curl, rentrez, processx, yaml, readxl, DT
 SystemRequirements: GNU make, C++11
 VignetteBuilder: knitr
 Roxygen: list(markdown = TRUE)
@@ -37,6 +37,7 @@ Collate:
     'plot.R'
     'candidate.R'
     'lazy-data.R'
+    'ai-config.R'
     'snpeff-io.R'
     'variant_viewer.R'
     'interactive.R'
@@ -52,7 +53,9 @@ Collate:
     'ollama-server.R'
     'phenotype-query.R'
     'gene-evidence.R'
+    'tenor.R'
     'phenotype-rank.R'
+    'phase1-prep.R'
     'explorer-demo.R'
     'shiny-explorer.R'
     'shiny-runner.R'

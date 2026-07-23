@@ -4,12 +4,15 @@
 \alias{plotQQ}
 \title{QQ plot for GWAS p-values}
 \usage{
-plotQQ(object, pheno = NULL)
+plotQQ(object, pheno = NULL, max_points = 100000L)
 }
 \arguments{
 \item{object}{A \code{LazyGas} object, or a numeric p-value vector.}
 
 \item{pheno}{Phenotype name or index when \code{object} is \code{LazyGas}.}
+
+\item{max_points}{Maximum points drawn (full data still used for
+\eqn{\lambda_{GC}}). Large genome-wide scans are thinned for plotting.}
 }
 \description{
 QQ plot for GWAS p-values
