@@ -18,7 +18,8 @@
 #' @param sources Evidence sources to use (see [collectGeneEvidence()]).
 #' @param weights Named numeric vector of source weights (renormalized over
 #'   active sources). Default: [phase1DefaultWeights()].
-#' @param top_n Return at most this many rows after ranking.
+#' @param top_n Return at most this many rows after ranking. \code{NULL}
+#'   keeps every scored gene (scoring always covers the full candidate set).
 #' @param candidate Optional candidate \code{data.frame}; when \code{NULL},
 #'   candidates are loaded from the companion store.
 #' @param expression_matrix,expression_meta Passed to [collectGeneEvidence()].
@@ -204,6 +205,11 @@ rankPhenotypeCandidates <- function(object,
     score_expression = score_norm$expression,
     score_literature = score_norm$literature,
     score_ortholog = score_norm$ortholog,
+    score_finemap = if (!is.null(score_norm$finemap)) {
+      score_norm$finemap
+    } else {
+      rep(0, length(gene_ids))
+    },
     composite_score = as.numeric(composite),
     evidence_json = vapply(gene_ids, function(g) .evidence_to_json(evidence[[g]]), character(1L)),
     query_id = query$query_id,
@@ -220,9 +226,11 @@ rankPhenotypeCandidates <- function(object,
     out <- out[!duplicated(out$Gene_ID), , drop = FALSE]
   }
 
-  top_n <- as.integer(top_n)[1L]
-  if (is.finite(top_n) && top_n > 0L && nrow(out) > top_n) {
-    out <- out[seq_len(top_n), , drop = FALSE]
+  if (!is.null(top_n)) {
+    top_n <- as.integer(top_n)[1L]
+    if (is.finite(top_n) && top_n > 0L && nrow(out) > top_n) {
+      out <- out[seq_len(top_n), , drop = FALSE]
+    }
   }
 
   attr(out, "phenotypeRank") <- list(
@@ -234,22 +242,38 @@ rankPhenotypeCandidates <- function(object,
   )
 
   if (save) {
-    .store_write_section_df(
-      object,
-      "phenotype_rank",
-      paste0("rank_", .store_safe_name(query$query_id)),
-      out,
-      pheno_name
+    .store_write_phenotype_rank(
+      object = object,
+      rank_result = out,
+      pheno_name = pheno_name,
+      query_id = query$query_id
     )
-    meta <- .store_read_meta(object)
-    prev <- meta$phenotype_rank_latest
-    if (is.null(prev)) {
-      prev <- list()
-    }
-    prev[[pheno_name]] <- query$query_id
-    meta$phenotype_rank_latest <- prev
-    .store_write_meta(object, meta)
   }
 
   out
+}
+
+#' Save a phenotype-rank table to the companion store
+#' @keywords internal
+.store_write_phenotype_rank <- function(object, rank_result, pheno_name, query_id) {
+  if (is.null(query_id) || !nzchar(as.character(query_id)[1L])) {
+    return(invisible(NULL))
+  }
+  query_id <- as.character(query_id)[1L]
+  .store_write_section_df(
+    object,
+    "phenotype_rank",
+    paste0("rank_", .store_safe_name(query_id)),
+    rank_result,
+    pheno_name
+  )
+  meta <- .store_read_meta(object)
+  prev <- meta$phenotype_rank_latest
+  if (is.null(prev)) {
+    prev <- list()
+  }
+  prev[[pheno_name]] <- query_id
+  meta$phenotype_rank_latest <- prev
+  .store_write_meta(object, meta)
+  invisible(NULL)
 }

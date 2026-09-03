@@ -48,6 +48,7 @@ Collate:
     'qc.R'
     'multitrait.R'
     'conditional.R'
+    'llm-report-b2.R'
     'llm-local.R'
     'ollama-apptainer.R'
     'ollama-server.R'

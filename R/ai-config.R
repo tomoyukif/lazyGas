@@ -14,13 +14,15 @@ NULL
   annotation = 0.30,
   snpeff = 0.35,
   gwas = 0.25,
-  expression = 0.10
+  expression = 0.10,
+  finemap = 0.50
 )
 
 .PHASE1_DEFAULT_SOURCES <- c("annotation", "snpeff", "gwas", "expression")
 
 .EVIDENCE_SOURCE_CHOICES <- c(
-  "annotation", "snpeff", "gwas", "expression", "literature", "ortholog"
+  "annotation", "snpeff", "gwas", "expression", "literature", "ortholog",
+  "finemap"
 )
 
 #' Load AI-lazyGas YAML config
@@ -120,8 +122,13 @@ phase1DefaultWeights <- function() {
     out <- unlist(w)
     out <- as.numeric(out)
     names(out) <- names(w)
-    if (all(c("annotation", "snpeff", "gwas", "expression") %in% names(out))) {
-      return(out[c("annotation", "snpeff", "gwas", "expression")])
+    keep <- intersect(
+      c("annotation", "snpeff", "gwas", "expression", "finemap",
+        "literature", "ortholog"),
+      names(out)
+    )
+    if (length(keep)) {
+      return(out[keep])
     }
   }
   .PHASE1_DEFAULT_WEIGHTS

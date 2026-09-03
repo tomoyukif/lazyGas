@@ -91,6 +91,27 @@
     recalc = TRUE
   )
 
+  cand <- lazyGas::lazyData(object = lg, dataset = "candidate", pheno = pheno_name)
+  peak_ids <- unique(as.character(cand$peak_ID))
+  peak_ids <- peak_ids[!is.na(peak_ids) & nzchar(peak_ids)]
+  for (pid in peak_ids) {
+    tryCatch(
+      lazyGas::calcCredibleSet(
+        object = lg,
+        pheno = pheno_name,
+        peak_id = pid,
+        store = TRUE
+      ),
+      error = function(e) {
+        warning(
+          "calcCredibleSet failed for peak ", pid, ": ",
+          conditionMessage(e),
+          call. = FALSE
+        )
+      }
+    )
+  }
+
   list(
     lg = lg,
     pheno_name = pheno_name,

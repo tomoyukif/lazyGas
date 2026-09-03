@@ -41,7 +41,7 @@ TENOR cache path.}
 
 \item{sources}{Evidence sources to collect. Any of \code{"annotation"},
 \code{"snpeff"}, \code{"gwas"}, \code{"expression"}, \code{"literature"},
-\code{"ortholog"}.}
+\code{"ortholog"}, \code{"finemap"}.}
 
 \item{expression_matrix}{Optional gene x sample expression matrix
 (\code{data.frame} or matrix) with row names = gene IDs. When \code{NULL}

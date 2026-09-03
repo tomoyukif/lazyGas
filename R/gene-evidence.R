@@ -18,7 +18,7 @@
 #' @param pheno Phenotype name or index when reading candidates from \code{object}.
 #' @param sources Evidence sources to collect. Any of \code{"annotation"},
 #'   \code{"snpeff"}, \code{"gwas"}, \code{"expression"}, \code{"literature"},
-#'   \code{"ortholog"}.
+#'   \code{"ortholog"}, \code{"finemap"}.
 #' @param expression_matrix Optional gene x sample expression matrix
 #'   (\code{data.frame} or matrix) with row names = gene IDs. When \code{NULL}
 #'   and \code{expression} is requested, [evaluateTenorExpression()] is used.
@@ -129,6 +129,19 @@ collectGeneEvidence <- function(gene_ids,
     )
   }
 
+  finemap_lookup <- NULL
+  if ("finemap" %in% sources) {
+    if (is.null(object)) {
+      stop("'object' is required when sources include 'finemap'.", call. = FALSE)
+    }
+    pheno_name_fm <- .determine_phenotype_name(object = object, pheno = pheno)
+    finemap_lookup <- .finemap_pip_lookup(
+      object = object,
+      pheno_name = pheno_name_fm,
+      candidate = candidate
+    )
+  }
+
   out <- setNames(vector("list", length(gene_ids)), gene_ids)
 
   for (gid in gene_ids) {
@@ -181,6 +194,13 @@ collectGeneEvidence <- function(gene_ids,
         gene_id = gid,
         ortholog_table = ortholog_table,
         ortholog_cols = ortholog_cols
+      )
+    }
+    if ("finemap" %in% sources) {
+      ev$finemap <- .evidence_finemap(
+        gene_id = gid,
+        gene_rows = gene_rows,
+        lookup = finemap_lookup
       )
     }
 
@@ -556,20 +576,148 @@ collectGeneEvidence <- function(gene_ids,
       score <- score + proximity
     }
   }
-  if ("PIP" %in% names(gene_rows)) {
-    pip <- max(as.numeric(gene_rows$PIP), na.rm = TRUE)
-    if (is.finite(pip)) {
-      details$PIP <- pip
-      snippets <- c(snippets, sprintf("PIP = %.3f", pip))
-      score <- score + pip * 5
-    }
-  }
-
   list(
     source = "gwas",
     score = score,
     snippets = unique(snippets),
     details = details
+  )
+}
+
+#' Max PIP per gene from 95% credible set ∩ SnpEff Gene_ID
+#' @keywords internal
+.finemap_pip_lookup <- function(object, pheno_name, candidate) {
+  if (is.null(candidate) || !"peak_ID" %in% names(candidate)) {
+    stop(
+      "Finemap scoring requires a candidate table with peak_ID.",
+      call. = FALSE
+    )
+  }
+  snpeff <- lazyData(object = object, dataset = "snpeff", pheno = pheno_name)
+  if (is.null(snpeff) || !nrow(snpeff) || !"Gene_ID" %in% names(snpeff) ||
+      !"Pos" %in% names(snpeff)) {
+    stop(
+      "SnpEff annotations are required for finemap scoring. ",
+      "Run listCandidate(..., snpeff = ...) first.",
+      call. = FALSE
+    )
+  }
+  snpeff$Gene_ID <- as.character(snpeff$Gene_ID)
+  snpeff$Chr <- as.character(snpeff$Chr)
+  snpeff$Pos <- as.numeric(snpeff$Pos)
+
+  peak_ids <- unique(as.character(candidate$peak_ID))
+  peak_ids <- peak_ids[!is.na(peak_ids) & nzchar(peak_ids)]
+  rows <- list()
+  for (pid in peak_ids) {
+    cred <- tryCatch(
+      lazyData(
+        object = object,
+        dataset = "credible_set",
+        pheno = pheno_name,
+        kind = paste0("peak_", pid)
+      ),
+      error = function(e) NULL
+    )
+    if (is.null(cred) || !nrow(cred) || !"PIP" %in% names(cred)) {
+      stop(
+        "Credible set required for peak ", pid,
+        " (phenotype '", pheno_name, "'). Run calcCredibleSet() first.",
+        call. = FALSE
+      )
+    }
+    if (!"in_credible_set" %in% names(cred)) {
+      stop("Credible set for peak ", pid, " lacks in_credible_set.", call. = FALSE)
+    }
+    cred_in <- as.logical(cred$in_credible_set)
+    cred_in[is.na(cred_in)] <- FALSE
+    cred <- cred[cred_in, , drop = FALSE]
+    if (!nrow(cred)) {
+      next
+    }
+    block <- .get_peakcall(object = object, pheno_name = pheno_name, recalc = TRUE)
+    if (is.null(block) || !nrow(block)) {
+      block <- .get_peakcall(object = object, pheno_name = pheno_name, recalc = FALSE)
+    }
+    block <- block[as.character(block$peak_ID) == pid, , drop = FALSE]
+    if (!nrow(block) || !"variant_ID" %in% names(block)) {
+      stop("Peak block missing for peak ", pid, ".", call. = FALSE)
+    }
+    pos_map <- block[, intersect(c("variant_ID", "Chr", "Pos"), names(block)),
+                     drop = FALSE]
+    cred2 <- merge(cred, pos_map, by = "variant_ID", all.x = TRUE)
+    if (!"Pos" %in% names(cred2) || all(is.na(cred2$Pos))) {
+      stop(
+        "Could not map credible-set variants to positions for peak ", pid, ".",
+        call. = FALSE
+      )
+    }
+    cred2$Chr <- as.character(cred2$Chr)
+    cred2$Pos <- as.numeric(cred2$Pos)
+    merged <- merge(
+      cred2[, c("variant_ID", "PIP", "Chr", "Pos"), drop = FALSE],
+      snpeff[, c("Gene_ID", "Chr", "Pos"), drop = FALSE],
+      by = c("Chr", "Pos")
+    )
+    if (!nrow(merged)) {
+      next
+    }
+    merged$Gene_ID <- as.character(merged$Gene_ID)
+    merged$PIP <- as.numeric(merged$PIP)
+    agg <- tapply(merged$PIP, merged$Gene_ID, function(x) {
+      m <- max(x, na.rm = TRUE)
+      if (!is.finite(m)) NA_real_ else m
+    })
+    rows[[length(rows) + 1L]] <- data.frame(
+      peak_ID = pid,
+      Gene_ID = names(agg),
+      max_PIP = as.numeric(agg),
+      stringsAsFactors = FALSE
+    )
+  }
+  if (!length(rows)) {
+    return(data.frame(
+      peak_ID = character(),
+      Gene_ID = character(),
+      max_PIP = numeric(),
+      stringsAsFactors = FALSE
+    ))
+  }
+  do.call(rbind, rows)
+}
+
+.evidence_finemap <- function(gene_id, gene_rows, lookup) {
+  empty <- list(
+    source = "finemap",
+    score = 0,
+    snippets = character(),
+    details = list(max_PIP = NA_real_)
+  )
+  if (is.null(lookup) || !nrow(lookup)) {
+    return(empty)
+  }
+  peak_id <- if (!is.null(gene_rows) && "peak_ID" %in% names(gene_rows) &&
+                 nrow(gene_rows)) {
+    as.character(gene_rows$peak_ID[1L])
+  } else {
+    NA_character_
+  }
+  hit <- lookup$Gene_ID == as.character(gene_id)
+  if (!is.na(peak_id) && nzchar(peak_id)) {
+    hit <- hit & as.character(lookup$peak_ID) == peak_id
+  }
+  if (!any(hit)) {
+    return(empty)
+  }
+  pip <- max(as.numeric(lookup$max_PIP[hit]), na.rm = TRUE)
+  if (!is.finite(pip)) {
+    return(empty)
+  }
+  list(
+    source = "finemap",
+    score = max(0, min(1, pip)),
+    snippets = sprintf("max_PIP (95%% CS ∩ SnpEff) = %.3f", pip),
+    details = list(max_PIP = pip, peak_ID = peak_id)
   )
 }
 

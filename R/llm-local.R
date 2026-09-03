@@ -167,32 +167,32 @@ explainPhenotypeCandidates <- function(rank_result,
   )
 }
 
-#' Generate a Phase 1 AI candidate-gene report
+#' Generate a Phase 2 B2 AI candidate-gene HTML report
 #'
-#' Public Phase 1 entry point: run phenotype query structuring (optional LLM),
-#' rank candidates with Phase 1 weights/sources, render a Markdown report
-#' (keyword + SnpEff + validity comments), verify claims against evidence JSON
-#' (unsupported claims are **marked**, not removed), and save under
-#' \code{lazygas/ai_report/}.
-#'
-#' When \code{use_llm = TRUE}, an unreachable LLM raises an error. Use
-#' \code{use_llm = FALSE} for the keyword/template path.
+#' Ranks candidates (with required SnpEff + credible-set / finemap channel),
+#' then writes an HTML report: basic info, per-peak credible-set comment,
+#' scrollable score table, and evidence frames. English is canonical;
+#' \code{language = "ja"} localizes chrome via dictionary and translates LLM
+#' prose. Ranking scores appear only in the table. PIP / distance / -log10P /
+#' SnpEff counts are written by code.
 #'
 #' @param object A \code{LazyGas} object with candidate genes.
 #' @param pheno Phenotype name or index.
 #' @param query Character phenotype description or [PhenotypeQuery]. If
 #'   \code{NULL}, uses \code{pheno} name as the query text.
-#' @param language \code{"ja"} or \code{"en"}.
-#' @param top_n Number of top genes (default 10).
-#' @param sources,weights Ranking channels (defaults: Phase 1).
-#' @param use_llm Use local LLM for the report body (and optionally query parse).
+#' @param language \code{"en"} (default) or \code{"ja"}.
+#' @param top_n Number of top genes for the report body and verification
+#'   (default 10). Ranking itself keeps every scored gene.
+#' @param sources,weights Ranking channels. \code{finemap} is always added for
+#'   this report (weight default 0.5).
+#' @param use_llm Use local LLM for evidence prose (and optionally query parse).
 #' @param query_use_llm Pass \code{use_llm} to [phenotypeQuery()] when
 #'   \code{query} is character.
 #' @param model,base_url,timeout LLM connection (default timeout 600s).
-#' @param save Write Markdown + verification JSON under [aiReportDir()].
-#' @param out_dir Optional report directory override.
-#' @param rank_result Optional precomputed [rankPhenotypeCandidates()] output;
-#'   skips re-ranking when provided (single-section report).
+#' @param out_dir Optional report directory override (default [aiReportDir()]).
+#' @param rank_result Optional precomputed [rankPhenotypeCandidates()] output,
+#'   or a path to a saved \code{.rds}/\code{.csv} rank table. Skips re-ranking
+#'   when provided (still requires SnpEff + credible sets for reported peaks).
 #' @param peak_id Optional peak ID(s) to report. When \code{rank_result} is
 #'   \code{NULL}, candidates are ranked within each peak; default \code{NULL}
 #'   uses the top five peaks by lead \code{negLog10P}.
@@ -202,16 +202,18 @@ explainPhenotypeCandidates <- function(rank_result,
 #'   \code{Gene_ID} / peak columns as produced by \code{listCandidate}). When
 #'   \code{NULL}, candidates are loaded from the companion store.
 #' @param ... Passed to [rankPhenotypeCandidates()] when ranking.
+#'   \code{top_n} and \code{save} in \code{...} are ignored.
 #'
-#' @return A list with \code{markdown}, \code{path}, \code{meta_path},
-#'   \code{verification}, \code{rank_result}, and \code{query}.
+#' @return A list with \code{html}, \code{markdown} (same HTML string for
+#'   compatibility), \code{path}, \code{meta_path}, \code{rank_csv},
+#'   \code{rank_rds}, \code{verification}, \code{rank_result}, and \code{query}.
 #' @export
 #'
 #' @seealso [rankPhenotypeCandidates()], [explainPhenotypeCandidates()]
 llm_report <- function(object,
                        pheno,
                        query = NULL,
-                       language = c("ja", "en"),
+                       language = c("en", "ja"),
                        top_n = 10L,
                        sources = phase1DefaultSources(),
                        weights = phase1DefaultWeights(),
@@ -220,7 +222,6 @@ llm_report <- function(object,
                        model = NULL,
                        base_url = NULL,
                        timeout = NULL,
-                       save = TRUE,
                        out_dir = NULL,
                        rank_result = NULL,
                        peak_id = NULL,
@@ -232,9 +233,21 @@ llm_report <- function(object,
   if (!inherits(object, "LazyGas")) {
     stop("'object' must be a LazyGas object.", call. = FALSE)
   }
+  if (is.character(rank_result) && length(rank_result) == 1L &&
+      nzchar(rank_result)) {
+    rank_result <- .read_rank_result(rank_result)
+  } else if (!is.null(rank_result) && !is.data.frame(rank_result)) {
+    stop(
+      "'rank_result' must be NULL, a data.frame, or a .rds/.csv path.",
+      call. = FALSE
+    )
+  }
 
   pheno_name <- .determine_phenotype_name(object = object, pheno = pheno)
   llm <- .ai_config_llm_settings(model = model, base_url = base_url, timeout = timeout)
+  sw <- .report_sources_with_finemap(sources = sources, weights = weights)
+  sources <- sw$sources
+  weights <- sw$weights
 
   if (is.null(query)) {
     query <- pheno_name
@@ -252,11 +265,17 @@ llm_report <- function(object,
     stop("'query' must be NULL, character, or PhenotypeQuery.", call. = FALSE)
   }
 
+  ranked_in_this_call <- FALSE
   if (is.null(rank_result)) {
     peaks_plan <- .resolve_report_peaks(
       object = object,
       pheno_name = pheno_name,
       peak_id = peak_id
+    )
+    .report_require_snpeff_cs(
+      object = object,
+      pheno_name = pheno_name,
+      peak_ids = peaks_plan$peak_ID
     )
     candidate_all <- if (!is.null(candidate)) {
       candidate
@@ -271,7 +290,16 @@ llm_report <- function(object,
       stop("No candidate data found for phenotype '", pheno_name, "'.",
            call. = FALSE)
     }
-    rank_top <- max(as.integer(top_n)[1L], 30L)
+    if (!any(c("HIGH", "MODERATE") %in% names(candidate_all))) {
+      stop(
+        "Candidate table lacks SnpEff impact columns. ",
+        "Run listCandidate(..., snpeff = ...) first.",
+        call. = FALSE
+      )
+    }
+    extra_rank <- list(...)
+    extra_rank$top_n <- NULL
+    extra_rank$save <- NULL
     rank_args <- list(
       object = object,
       pheno = pheno_name,
@@ -286,150 +314,414 @@ llm_report <- function(object,
       llm_base_url = llm$base_url,
       llm_timeout = llm$timeout
     )
-    rank_args <- c(rank_args, list(...))
-    sections <- character()
+    rank_args <- c(rank_args, extra_rank)
     rank_parts <- list()
     for (i in seq_len(nrow(peaks_plan))) {
       pid <- peaks_plan$peak_ID[i]
-      chr_lab <- peaks_plan$Chr[i]
-      pos_lab <- peaks_plan$Pos[i]
-      pos_fmt <- format(as.numeric(pos_lab), big.mark = ",", scientific = FALSE,
-                        trim = TRUE)
-      header <- paste0("## Peak ", pid, " — ", chr_lab, ":", pos_fmt)
       cand_peak <- candidate_all[
         candidate_all$peak_ID == pid,
         ,
         drop = FALSE
       ]
       if (nrow(cand_peak) == 0L) {
-        sections <- c(
-          sections,
-          paste0(header, "\n\n", "No candidate genes listed for this peak.")
-        )
         next
       }
       if ("Gene_ID" %in% names(cand_peak)) {
         gid_ok <- !is.na(cand_peak$Gene_ID) & nzchar(as.character(cand_peak$Gene_ID))
         if (!any(gid_ok)) {
-          sections <- c(
-            sections,
-            paste0(
-              header, "\n\n",
-              "No candidate genes with a usable Gene_ID for this peak."
-            )
-          )
           next
         }
         cand_peak <- cand_peak[gid_ok, , drop = FALSE]
       }
-      rank_peak <- do.call(
-        rankPhenotypeCandidates,
-        c(
-          rank_args,
-          list(
-            candidate = cand_peak,
-            top_n = rank_top
+      rank_peak <- tryCatch(
+        do.call(
+          rankPhenotypeCandidates,
+          c(
+            rank_args,
+            list(
+              candidate = cand_peak,
+              top_n = NULL
+            )
           )
-        )
+        ),
+        error = function(e) {
+          stop(
+            "Ranking failed for peak ", pid, ": ", conditionMessage(e),
+            call. = FALSE
+          )
+        }
       )
       rank_parts[[length(rank_parts) + 1L]] <- rank_peak
-      body <- explainPhenotypeCandidates(
-        rank_result = rank_peak,
-        query = query,
-        object = object,
-        top_n = top_n,
-        use_llm = use_llm,
-        language = language,
-        model = llm$model,
-        base_url = llm$base_url,
-        timeout = llm$timeout
-      )
-      sections <- c(sections, paste0(header, "\n\n", body))
     }
-    markdown_body <- paste(sections, collapse = "\n\n")
     rank_result <- if (length(rank_parts)) {
-      do.call(rbind, rank_parts)
+      .bind_rank_results(rank_parts)
     } else {
       NULL
     }
+    ranked_in_this_call <- TRUE
   } else {
-    markdown_body <- explainPhenotypeCandidates(
-      rank_result = rank_result,
-      query = query,
+    peaks_plan <- .resolve_report_peaks(
       object = object,
-      top_n = top_n,
-      use_llm = use_llm,
-      language = language,
-      model = llm$model,
-      base_url = llm$base_url,
-      timeout = llm$timeout
+      pheno_name = pheno_name,
+      peak_id = if (!is.null(peak_id)) {
+        peak_id
+      } else if ("peak_ID" %in% names(rank_result)) {
+        unique(rank_result$peak_ID)
+      } else {
+        NULL
+      }
+    )
+    .report_require_snpeff_cs(
+      object = object,
+      pheno_name = pheno_name,
+      peak_ids = peaks_plan$peak_ID
     )
   }
 
+  basic_html <- .report_basic_info_html(
+    object = object,
+    pheno_name = pheno_name,
+    language = language
+  )
+  sections <- character()
+  for (i in seq_len(nrow(peaks_plan))) {
+    pid <- peaks_plan$peak_ID[i]
+    rank_peak <- if (!is.null(rank_result) && "peak_ID" %in% names(rank_result)) {
+      rank_result[as.character(rank_result$peak_ID) == as.character(pid), , drop = FALSE]
+    } else if (!is.null(rank_result) && nrow(peaks_plan) == 1L) {
+      rank_result
+    } else {
+      data.frame()
+    }
+    if (!is.null(rank_peak) && nrow(rank_peak) > 0L &&
+        "composite_score" %in% names(rank_peak)) {
+      rank_peak <- rank_peak[order(-rank_peak$composite_score, rank_peak$Gene_ID), ,
+                             drop = FALSE]
+    }
+    sections <- c(
+      sections,
+      .report_peak_section_html(
+        object = object,
+        pheno_name = pheno_name,
+        peak_id = pid,
+        chr = peaks_plan$Chr[i],
+        pos = peaks_plan$Pos[i],
+        region_start = peaks_plan$region_start[i],
+        region_end = peaks_plan$region_end[i],
+        rank_peak = rank_peak,
+        sources = sources,
+        query = query,
+        top_n = top_n,
+        language = language,
+        use_llm = use_llm,
+        llm = llm
+      )
+    )
+  }
+
+  html_body <- paste(c(basic_html, sections), collapse = "\n")
   verification <- if (!is.null(rank_result) && nrow(rank_result) > 0L) {
     .verify_report_against_evidence(
-      markdown = markdown_body,
+      markdown = gsub("<[^>]+>", " ", html_body),
       rank_result = rank_result,
       top_n = top_n,
       language = language
     )
   } else {
     list(
-      n_checked = 0L,
+      n_claims_checked = 0L,
       n_supported = 0L,
-      n_marked = 0L,
+      n_unsupported_marked = 0L,
+      congruence_rate = NA_real_,
       claims = list()
     )
   }
-
-  markdown <- .append_verification_section(
-    markdown = markdown_body,
-    verification = verification,
-    language = language
+  html_body <- paste0(
+    html_body,
+    "\n",
+    .report_verification_html(verification, language = language)
+  )
+  html <- .report_html_document(
+    body_html = html_body,
+    title = paste("lazyGas AI report —", pheno_name)
   )
 
   report_path <- NULL
   meta_path <- NULL
-  if (isTRUE(save)) {
-    report_dir <- aiReportDir(object = object, out_dir = out_dir)
-    dir.create(report_dir, recursive = TRUE, showWarnings = FALSE)
-    stamp <- format(Sys.time(), "%Y%m%d_%H%M%S")
-    safe_pheno <- .store_safe_name(pheno_name)
-    base <- paste0(safe_pheno, "_", stamp)
-    report_path <- file.path(report_dir, paste0(base, ".md"))
-    meta_path <- file.path(report_dir, paste0(base, ".meta.json"))
-    writeLines(markdown, report_path, useBytes = TRUE)
-    jsonlite::write_json(
-      list(
-        pheno = pheno_name,
-        query = unclass(query),
-        peak_id = peak_id,
-        language = language,
-        top_n = as.integer(top_n)[1L],
-        sources = sources,
-        weights = as.list(weights),
-        use_llm = isTRUE(use_llm),
-        model = llm$model,
-        base_url = llm$base_url,
-        created_at = stamp,
-        report_file = basename(report_path),
-        verification = verification,
-        rank_meta = attr(rank_result, "phenotypeRank")
-      ),
-      meta_path,
-      auto_unbox = TRUE,
-      pretty = TRUE,
-      null = "null"
+  rank_csv_path <- NULL
+  rank_rds_path <- NULL
+  report_dir <- aiReportDir(object = object, out_dir = out_dir)
+  dir.create(report_dir, recursive = TRUE, showWarnings = FALSE)
+  stamp <- format(Sys.time(), "%Y%m%d_%H%M%S")
+  safe_pheno <- .store_safe_name(pheno_name)
+  base <- paste0(safe_pheno, "_", stamp)
+  report_path <- file.path(report_dir, paste0(base, ".html"))
+  meta_path <- file.path(report_dir, paste0(base, ".meta.json"))
+  writeLines(html, report_path, useBytes = TRUE)
+  if (!is.null(rank_result) && nrow(rank_result) > 0L) {
+    rank_csv_path <- file.path(report_dir, paste0(base, "_rank.csv"))
+    rank_rds_path <- file.path(report_dir, paste0(base, "_rank.rds"))
+    .write_rank_result_files(
+      rank_result = rank_result,
+      csv_path = rank_csv_path,
+      rds_path = rank_rds_path
     )
+    if (isTRUE(ranked_in_this_call)) {
+      .store_write_phenotype_rank(
+        object = object,
+        rank_result = rank_result,
+        pheno_name = pheno_name,
+        query_id = query$query_id
+      )
+    }
   }
+  jsonlite::write_json(
+    list(
+      pheno = pheno_name,
+      query = unclass(query),
+      peak_id = peak_id,
+      language = language,
+      top_n = as.integer(top_n)[1L],
+      sources = sources,
+      weights = as.list(weights),
+      use_llm = isTRUE(use_llm),
+      model = llm$model,
+      base_url = llm$base_url,
+      created_at = stamp,
+      report_file = basename(report_path),
+      rank_csv = if (is.null(rank_csv_path)) NULL else basename(rank_csv_path),
+      rank_rds = if (is.null(rank_rds_path)) NULL else basename(rank_rds_path),
+      verification = verification,
+      rank_meta = attr(rank_result, "phenotypeRank"),
+      report_skeleton = "phase2_B2"
+    ),
+    meta_path,
+    auto_unbox = TRUE,
+    pretty = TRUE,
+    null = "null"
+  )
 
   list(
-    markdown = markdown,
+    html = html,
+    markdown = html,
     path = report_path,
     meta_path = meta_path,
+    rank_csv = rank_csv_path,
+    rank_rds = rank_rds_path,
     verification = verification,
     rank_result = rank_result,
     query = query
+  )
+}
+
+#' Bind per-peak rank tables and restore phenotypeRank metadata
+#' @keywords internal
+.bind_rank_results <- function(rank_parts) {
+  out <- do.call(rbind, rank_parts)
+  rownames(out) <- NULL
+  meta <- NULL
+  for (part in rank_parts) {
+    meta <- attr(part, "phenotypeRank")
+    if (!is.null(meta)) {
+      break
+    }
+  }
+  if (is.null(meta)) {
+    meta <- list()
+  }
+  meta$n_genes <- nrow(out)
+  attr(out, "phenotypeRank") <- meta
+  out
+}
+
+#' Write a rank table as CSV (inspection) and RDS (reuse)
+#' @keywords internal
+.write_rank_result_files <- function(rank_result, csv_path, rds_path) {
+  utils::write.csv(
+    rank_result,
+    file = csv_path,
+    row.names = FALSE,
+    fileEncoding = "UTF-8"
+  )
+  saveRDS(rank_result, rds_path)
+  invisible(list(csv = csv_path, rds = rds_path))
+}
+
+#' Load a saved rank table from .rds or .csv
+#' @keywords internal
+.read_rank_result <- function(path) {
+  if (!is.character(path) || length(path) != 1L || !nzchar(trimws(path))) {
+    stop("'rank_result' path must be a single non-empty character string.",
+         call. = FALSE)
+  }
+  path <- path.expand(trimws(path))
+  if (!file.exists(path)) {
+    stop("rank_result file not found: ", path, call. = FALSE)
+  }
+  if (grepl("\\.rds$", path, ignore.case = TRUE)) {
+    out <- readRDS(path)
+  } else if (grepl("\\.csv$", path, ignore.case = TRUE)) {
+    out <- utils::read.csv(
+      path,
+      stringsAsFactors = FALSE,
+      check.names = FALSE,
+      fileEncoding = "UTF-8"
+    )
+  } else {
+    stop("rank_result file must be .rds or .csv: ", path, call. = FALSE)
+  }
+  if (!is.data.frame(out) || nrow(out) == 0L) {
+    stop("rank_result file did not contain a non-empty data.frame: ", path,
+         call. = FALSE)
+  }
+  out
+}
+
+#' Format genomic positions for report headings
+#' @keywords internal
+.report_fmt_pos <- function(x) {
+  format(as.numeric(x), big.mark = ",", scientific = FALSE, trim = TRUE)
+}
+
+#' Basic-info Markdown block for llm_report (Phase 2 B1)
+#' @keywords internal
+.report_basic_info_md <- function(object, pheno_name, language = c("ja", "en")) {
+  language <- match.arg(language)
+  gds <- .store_gds_fn(object)
+  companion <- .store_path(object)
+  if (is.null(companion) || !nzchar(as.character(companion)[1L])) {
+    companion <- "(none)"
+  } else {
+    companion <- normalizePath(as.character(companion)[1L], winslash = "/",
+                               mustWork = FALSE)
+  }
+  n_sam <- as.integer(nsam(object))[1L]
+  n_mar <- as.integer(nmar(object))[1L]
+  pheno_df <- getPheno(object)$pheno
+  pheno_vec <- if (!is.null(pheno_df) && pheno_name %in% names(pheno_df)) {
+    pheno_df[[pheno_name]]
+  } else {
+    rep(NA, n_sam)
+  }
+  n_obs <- sum(!is.na(pheno_vec))
+  pct <- if (is.finite(n_sam) && n_sam > 0L) {
+    100 * n_obs / n_sam
+  } else {
+    NA_real_
+  }
+
+  if (identical(language, "ja")) {
+    paste(
+      c(
+        "## 基礎情報",
+        "",
+        "- 入力ファイル:",
+        paste0("  - GDS: `", gds, "`"),
+        paste0("  - companion: `", companion, "`"),
+        paste0("- サンプル数: ", n_sam),
+        paste0("- マーカー数: ", n_mar),
+        paste0("- 表現型: ", pheno_name),
+        sprintf("- 表現型非欠損: %s / %s（%.1f%%）", n_obs, n_sam, pct),
+        ""
+      ),
+      collapse = "\n"
+    )
+  } else {
+    paste(
+      c(
+        "## Basic information",
+        "",
+        "- Input files:",
+        paste0("  - GDS: `", gds, "`"),
+        paste0("  - companion: `", companion, "`"),
+        paste0("- Samples: ", n_sam),
+        paste0("- Markers: ", n_mar),
+        paste0("- Phenotype: ", pheno_name),
+        sprintf("- Non-missing phenotype: %s / %s (%.1f%%)", n_obs, n_sam, pct),
+        ""
+      ),
+      collapse = "\n"
+    )
+  }
+}
+
+#' Per-peak Markdown skeleton (Phase 2 B1 placeholders)
+#' @keywords internal
+.report_peak_section_md <- function(peak_id,
+                                    chr,
+                                    pos,
+                                    region_start,
+                                    region_end,
+                                    language = c("ja", "en")) {
+  language <- match.arg(language)
+  header <- sprintf(
+    "## Peak %s — %s:%s（%s-%s）",
+    as.character(peak_id)[1L],
+    as.character(chr)[1L],
+    .report_fmt_pos(pos),
+    .report_fmt_pos(region_start),
+    .report_fmt_pos(region_end)
+  )
+  if (identical(language, "ja")) {
+    paste(
+      c(
+        header,
+        "",
+        "### 候補一覧",
+        "",
+        "（未実装）",
+        "",
+        "### 根拠",
+        "",
+        "（未実装）",
+        ""
+      ),
+      collapse = "\n"
+    )
+  } else {
+    paste(
+      c(
+        header,
+        "",
+        "### Candidate list",
+        "",
+        "（未実装）",
+        "",
+        "### Evidence",
+        "",
+        "（未実装）",
+        ""
+      ),
+      collapse = "\n"
+    )
+  }
+}
+
+#' Region start/end per peak_ID from a peakcall table
+#' @keywords internal
+.peakcall_region_bounds <- function(peakcall) {
+  if (is.null(peakcall) || !nrow(peakcall) || !"peak_ID" %in% names(peakcall) ||
+      !"Pos" %in% names(peakcall)) {
+    return(data.frame(
+      peak_ID = integer(),
+      region_start = numeric(),
+      region_end = numeric(),
+      stringsAsFactors = FALSE
+    ))
+  }
+  parts <- split(peakcall, as.character(peakcall$peak_ID))
+  do.call(
+    rbind,
+    lapply(parts, function(block) {
+      pos <- as.numeric(block$Pos)
+      pos <- pos[is.finite(pos)]
+      data.frame(
+        peak_ID = block$peak_ID[1L],
+        region_start = if (length(pos)) min(pos) else NA_real_,
+        region_end = if (length(pos)) max(pos) else NA_real_,
+        stringsAsFactors = FALSE
+      )
+    })
   )
 }
 
@@ -443,6 +735,8 @@ llm_report <- function(object,
   if (is.null(peakcall) || nrow(peakcall) == 0L) {
     stop("No peakcall data for phenotype '", pheno_name, "'.", call. = FALSE)
   }
+
+  regions <- .peakcall_region_bounds(peakcall)
 
   leads <- peakcall[
     peakcall$peak_variant_ID == peakcall$variant_ID,
@@ -463,6 +757,10 @@ llm_report <- function(object,
     Pos = leads$Pos,
     stringsAsFactors = FALSE
   )
+  out <- merge(out, regions, by = "peak_ID", all.x = TRUE, sort = FALSE)
+  # restore lead negLog10P order after merge
+  out <- out[match(as.character(leads$peak_ID), as.character(out$peak_ID)), , drop = FALSE]
+  rownames(out) <- NULL
 
   if (is.null(peak_id)) {
     out <- out[seq_len(min(5L, nrow(out))), , drop = FALSE]
@@ -480,6 +778,7 @@ llm_report <- function(object,
     )
   }
   out <- out[match(peak_id, avail), , drop = FALSE]
+  rownames(out) <- NULL
   out
 }
 

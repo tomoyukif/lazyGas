@@ -43,7 +43,8 @@ is parsed via \code{\link[=phenotypeQuery]{phenotypeQuery()}} with \code{use_llm
 \item{weights}{Named numeric vector of source weights (renormalized over
 active sources). Default: \code{\link[=phase1DefaultWeights]{phase1DefaultWeights()}}.}
 
-\item{top_n}{Return at most this many rows after ranking.}
+\item{top_n}{Return at most this many rows after ranking. \code{NULL}
+keeps every scored gene (scoring always covers the full candidate set).}
 
 \item{candidate}{Optional candidate \code{data.frame}; when \code{NULL},
 candidates are loaded from the companion store.}

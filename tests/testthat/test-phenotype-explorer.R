@@ -121,6 +121,19 @@ test_that("rankPhenotypeCandidates ranks demo candidates", {
   stored <- lazyData(res$lg, dataset = "phenotype_rank", pheno = res$pheno_name)
   expect_false(is.null(stored))
   expect_equal(nrow(stored), nrow(ranked))
+
+  ranked_all <- rankPhenotypeCandidates(
+    object = res$lg,
+    pheno = res$pheno_name,
+    query = q,
+    sources = c("annotation", "gwas", "expression", "ortholog"),
+    expression_matrix = expr_mat,
+    expression_meta = expr_meta,
+    ortholog_table = ortho,
+    top_n = NULL,
+    save = FALSE
+  )
+  expect_true(nrow(ranked_all) >= nrow(ranked))
 })
 
 test_that("explainPhenotypeCandidates returns template without LLM", {

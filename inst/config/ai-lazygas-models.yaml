@@ -19,3 +19,4 @@ weights:
   snpeff: 0.35
   gwas: 0.25
   expression: 0.10
+  finemap: 0.50

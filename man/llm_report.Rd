@@ -2,13 +2,13 @@
 % Please edit documentation in R/llm-local.R
 \name{llm_report}
 \alias{llm_report}
-\title{Generate a Phase 1 AI candidate-gene report}
+\title{Generate a Phase 2 B2 AI candidate-gene HTML report}
 \usage{
 llm_report(
   object,
   pheno,
   query = NULL,
-  language = c("ja", "en"),
+  language = c("en", "ja"),
   top_n = 10L,
   sources = phase1DefaultSources(),
   weights = phase1DefaultWeights(),
@@ -17,7 +17,6 @@ llm_report(
   model = NULL,
   base_url = NULL,
   timeout = NULL,
-  save = TRUE,
   out_dir = NULL,
   rank_result = NULL,
   peak_id = NULL,
@@ -35,25 +34,26 @@ llm_report(
 \item{query}{Character phenotype description or \link{PhenotypeQuery}. If
 \code{NULL}, uses \code{pheno} name as the query text.}
 
-\item{language}{\code{"ja"} or \code{"en"}.}
+\item{language}{\code{"en"} (default) or \code{"ja"}.}
 
-\item{top_n}{Number of top genes (default 10).}
+\item{top_n}{Number of top genes for the report body and verification
+(default 10). Ranking itself keeps every scored gene.}
 
-\item{sources, weights}{Ranking channels (defaults: Phase 1).}
+\item{sources, weights}{Ranking channels. \code{finemap} is always added for
+this report (weight default 0.5).}
 
-\item{use_llm}{Use local LLM for the report body (and optionally query parse).}
+\item{use_llm}{Use local LLM for evidence prose (and optionally query parse).}
 
 \item{query_use_llm}{Pass \code{use_llm} to \code{\link[=phenotypeQuery]{phenotypeQuery()}} when
 \code{query} is character.}
 
 \item{model, base_url, timeout}{LLM connection (default timeout 600s).}
 
-\item{save}{Write Markdown + verification JSON under \code{\link[=aiReportDir]{aiReportDir()}}.}
+\item{out_dir}{Optional report directory override (default \code{\link[=aiReportDir]{aiReportDir()}}).}
 
-\item{out_dir}{Optional report directory override.}
-
-\item{rank_result}{Optional precomputed \code{\link[=rankPhenotypeCandidates]{rankPhenotypeCandidates()}} output;
-skips re-ranking when provided (single-section report).}
+\item{rank_result}{Optional precomputed \code{\link[=rankPhenotypeCandidates]{rankPhenotypeCandidates()}} output,
+or a path to a saved \code{.rds}/\code{.csv} rank table. Skips re-ranking
+when provided (still requires SnpEff + credible sets for reported peaks).}
 
 \item{peak_id}{Optional peak ID(s) to report. When \code{rank_result} is
 \code{NULL}, candidates are ranked within each peak; default \code{NULL}
@@ -67,22 +67,21 @@ uses the top five peaks by lead \code{negLog10P}.}
 \code{Gene_ID} / peak columns as produced by \code{listCandidate}). When
 \code{NULL}, candidates are loaded from the companion store.}
 
-\item{...}{Passed to \code{\link[=rankPhenotypeCandidates]{rankPhenotypeCandidates()}} when ranking.}
+\item{...}{Passed to \code{\link[=rankPhenotypeCandidates]{rankPhenotypeCandidates()}} when ranking.
+\code{top_n} and \code{save} in \code{...} are ignored.}
 }
 \value{
-A list with \code{markdown}, \code{path}, \code{meta_path},
-\code{verification}, \code{rank_result}, and \code{query}.
+A list with \code{html}, \code{markdown} (same HTML string for
+compatibility), \code{path}, \code{meta_path}, \code{rank_csv},
+\code{rank_rds}, \code{verification}, \code{rank_result}, and \code{query}.
 }
 \description{
-Public Phase 1 entry point: run phenotype query structuring (optional LLM),
-rank candidates with Phase 1 weights/sources, render a Markdown report
-(keyword + SnpEff + validity comments), verify claims against evidence JSON
-(unsupported claims are \strong{marked}, not removed), and save under
-\code{lazygas/ai_report/}.
-}
-\details{
-When \code{use_llm = TRUE}, an unreachable LLM raises an error. Use
-\code{use_llm = FALSE} for the keyword/template path.
+Ranks candidates (with required SnpEff + credible-set / finemap channel),
+then writes an HTML report: basic info, per-peak credible-set comment,
+scrollable score table, and evidence frames. English is canonical;
+\code{language = "ja"} localizes chrome via dictionary and translates LLM
+prose. Ranking scores appear only in the table. PIP / distance / -log10P /
+SnpEff counts are written by code.
 }
 \seealso{
 \code{\link[=rankPhenotypeCandidates]{rankPhenotypeCandidates()}}, \code{\link[=explainPhenotypeCandidates]{explainPhenotypeCandidates()}}
