@@ -7,6 +7,7 @@
 .report_translate_prose_ja(prose_by_gene, llm)
 }
 \description{
-Translate English prose blocks to Japanese without changing IDs/numbers
+All-or-nothing: on any failure, return the English input and warn.
+No partial translation and no retries.
 }
 \keyword{internal}

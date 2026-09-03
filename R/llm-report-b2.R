@@ -1,11 +1,17 @@
 ################################################################################
-# Phase 2 B2: HTML report helpers (English canonical; ja = dictionary + translate)
+# Phase 2 B2/B4: HTML report helpers (English chrome; ja = translate LLM prose only)
 
-#' Report UI strings (English canonical)
+#' Report UI strings (English only; B4)
+#'
+#' Chrome labels are always English. \code{language} is accepted for API
+#' compatibility but ignored.
+#'
 #' @keywords internal
 .report_i18n <- function(language = c("en", "ja")) {
-  language <- match.arg(language)
-  en <- list(
+  if (!missing(language)) {
+    language <- match.arg(language)
+  }
+  list(
     basic_info = "Basic information",
     input_files = "Input files",
     samples = "Samples",
@@ -36,37 +42,6 @@
     congruence = "Congruence rate",
     marked_claims = "Marked unsupported claims"
   )
-  if (identical(language, "en")) {
-    return(en)
-  }
-  ja <- en
-  ja$basic_info <- "基礎情報"
-  ja$input_files <- "入力ファイル"
-  ja$samples <- "サンプル数"
-  ja$markers <- "マーカー数"
-  ja$phenotype <- "表現型"
-  ja$non_missing <- "表現型非欠損"
-  ja$candidate_list <- "候補一覧"
-  ja$evidence <- "根拠"
-  ja$score_note <- "スコアは当該ピーク内の候補間で 0–1 に正規化した値の重み付き和"
-  ja$composite <- "総合"
-  ja$gwas_pos <- "GWAS・位置"
-  ja$snpeff <- "変異影響（SnpEff）"
-  ja$keywords <- "キーワード／アノテーション"
-  ja$expression <- "発現"
-  ja$validity <- "短い妥当性・注意"
-  ja$credible_set <- "Credible set"
-  ja$variants <- "バリアント"
-  ja$resolvable <- "分解可能"
-  ja$partially_resolvable <- "部分的に分解可能"
-  ja$not_resolved <- "分解不能"
-  ja$verification <- "根拠検証"
-  ja$claims_checked <- "照合クレーム数"
-  ja$supported <- "支持されたクレーム"
-  ja$unsupported <- "根拠なし（マークのみ）"
-  ja$congruence <- "整合率"
-  ja$marked_claims <- "根拠なしとしてマークした記述"
-  ja
 }
 
 #' @keywords internal
@@ -341,7 +316,6 @@
     ),
     has_expression = has_expr,
     ann_matched = unlist(ev$annotation$details$matched_keywords %||% list()),
-    ann_unmatched = unlist(ev$annotation$details$unmatched_keywords %||% list()),
     expr_snippets = as.character(unlist(ev$expression$snippets %||% list()))
   )
 }
@@ -350,19 +324,11 @@
 #' @keywords internal
 .report_gene_template_prose <- function(facts) {
   matched <- facts$ann_matched
-  unmatched <- facts$ann_unmatched
-  kw <- if (!length(matched) && !length(unmatched)) {
-    "No keyword match details were available."
+  matched <- matched[!is.na(matched) & nzchar(as.character(matched))]
+  kw <- if (!length(matched)) {
+    "No matched phenotype keywords."
   } else {
-    paste0(
-      "Keyword match is ",
-      if (length(matched)) "present" else "none",
-      ". Matched: ",
-      if (length(matched)) paste(matched, collapse = ", ") else "(none)",
-      ". Unmatched: ",
-      if (length(unmatched)) paste(unmatched, collapse = ", ") else "(none)",
-      "."
-    )
+    paste0("Matched keywords: ", paste(matched, collapse = ", "), ".")
   }
   expr <- if (isTRUE(facts$has_expression)) {
     if (length(facts$expr_snippets)) {
@@ -380,12 +346,15 @@
   )
 }
 
-#' Strip ranking scores from evidence bundle for LLM
+#' Strip ranking scores and unmatched keywords from evidence for LLM
 #' @keywords internal
 .report_llm_evidence_payload <- function(rank_sub) {
   lapply(seq_len(nrow(rank_sub)), function(i) {
     row <- rank_sub[i, , drop = FALSE]
     ev <- .report_row_evidence(row)
+    if (!is.null(ev$annotation$details$unmatched_keywords)) {
+      ev$annotation$details$unmatched_keywords <- NULL
+    }
     list(
       Gene_ID = as.character(row$Gene_ID[1L]),
       Name = .report_name_cell(row$Name[1L]),
@@ -407,8 +376,10 @@
     "Write all text in English.",
     "Do not invent genes. Do not print composite_score or score_* values.",
     "Do not claim a 'semantic match' or embedding similarity.",
-    "For keywords: state high/low/none qualitatively; list matched and unmatched",
-    "biological keywords from annotation.details when present.",
+    "For keywords: list only matched phenotype keywords from",
+    "annotation.details.matched_keywords when present.",
+    "Do not mention unmatched or missing keywords.",
+    "If none matched, say that briefly.",
     "For expression: summarize expression snippets if present, else use empty string.",
     "For validity: note contradictions or missing information briefly.",
     "Preserve gene IDs and numeric facts exactly when you mention them."
@@ -440,15 +411,31 @@
   parsed
 }
 
+#' System prompt for Japanese translation of LLM evidence prose (B4)
+#' @keywords internal
+.report_translate_prose_ja_system <- function() {
+  paste(
+    "Translate the JSON string values from English to Japanese.",
+    "Return ONLY JSON with the same keys and structure",
+    "(Gene_ID -> keywords / expression / validity).",
+    "Translate natural-language prose values only.",
+    "Do not change gene IDs, numbers, units, PIP, -log10P, distances,",
+    "or SnpEff impact labels (HIGH, MODERATE, LOW, MODIFIER).",
+    "Keep annotation text and matched keyword tokens exactly as in the input.",
+    "Keep scientific / technical terms in English",
+    "(gene function names, pathways, developmental stages, etc.).",
+    "Do not invent genes or claims."
+  )
+}
+
 #' Translate English prose blocks to Japanese without changing IDs/numbers
+#'
+#' All-or-nothing: on any failure, return the English input and warn.
+#' No partial translation and no retries.
+#'
 #' @keywords internal
 .report_translate_prose_ja <- function(prose_by_gene, llm) {
-  system_msg <- paste(
-    "Translate the JSON string values from English to Japanese.",
-    "Return ONLY JSON with the same keys and structure.",
-    "Do not change gene IDs, numbers, punctuation used in IDs, or PIP/distances.",
-    "Keep scientific terms when a standard Japanese term is unclear."
-  )
+  system_msg <- .report_translate_prose_ja_system()
   raw <- tryCatch(
     llmChat(
       messages = list(
@@ -464,12 +451,19 @@
       timeout = llm$timeout
     ),
     error = function(e) {
-      warning("Japanese translation failed; keeping English prose. ",
-              conditionMessage(e), call. = FALSE)
+      warning(
+        "Japanese translation failed; keeping English prose. ",
+        conditionMessage(e),
+        call. = FALSE
+      )
       NULL
     }
   )
-  if (is.null(raw)) {
+  if (is.null(raw) || !nzchar(as.character(raw)[1L])) {
+    if (!is.null(raw)) {
+      warning("Japanese translation returned empty; keeping English prose.",
+              call. = FALSE)
+    }
     return(prose_by_gene)
   }
   parsed <- tryCatch(
@@ -479,6 +473,40 @@
   if (is.null(parsed) || !is.list(parsed)) {
     warning("Japanese translation JSON parse failed; keeping English.", call. = FALSE)
     return(prose_by_gene)
+  }
+  # Reject partial translations (missing genes or required keys)
+  for (gid in names(prose_by_gene)) {
+    if (is.null(parsed[[gid]]) || !is.list(parsed[[gid]])) {
+      warning(
+        "Japanese translation incomplete for gene ", gid,
+        "; keeping English prose.",
+        call. = FALSE
+      )
+      return(prose_by_gene)
+    }
+    src <- prose_by_gene[[gid]]
+    for (key in c("keywords", "validity")) {
+      if (!is.null(src[[key]]) && nzchar(as.character(src[[key]])[1L]) &&
+          (is.null(parsed[[gid]][[key]]) ||
+           !nzchar(as.character(parsed[[gid]][[key]])[1L]))) {
+        warning(
+          "Japanese translation missing '", key, "' for gene ", gid,
+          "; keeping English prose.",
+          call. = FALSE
+        )
+        return(prose_by_gene)
+      }
+    }
+    if (!is.null(src$expression) && nzchar(as.character(src$expression)[1L]) &&
+        (is.null(parsed[[gid]]$expression) ||
+         !nzchar(as.character(parsed[[gid]]$expression)[1L]))) {
+      warning(
+        "Japanese translation missing 'expression' for gene ", gid,
+        "; keeping English prose.",
+        call. = FALSE
+      )
+      return(prose_by_gene)
+    }
   }
   parsed
 }
@@ -528,16 +556,8 @@
     }
   }
 
-  if (identical(language, "ja") && llm_ok) {
+  if (identical(language, "ja") && isTRUE(use_llm) && llm_ok) {
     prose_map <- .report_translate_prose_ja(prose_map, llm = llm)
-  } else if (identical(language, "ja") && !llm_ok) {
-    # Dictionary labels only; keep English template prose with a short note
-    for (gid in names(prose_map)) {
-      prose_map[[gid]]$validity <- paste(
-        prose_map[[gid]]$validity,
-        "(English template; enable use_llm for Japanese translation.)"
-      )
-    }
   }
 
   parts <- character()
@@ -687,7 +707,7 @@
   )
 }
 
-#' Verification section as HTML
+#' Verification section as HTML (B5 deferred; not used by llm_report)
 #' @keywords internal
 .report_verification_html <- function(verification, language = "en") {
   ui <- .report_i18n(language)

@@ -2,11 +2,11 @@
 % Please edit documentation in R/llm-report-b2.R
 \name{.report_llm_evidence_payload}
 \alias{.report_llm_evidence_payload}
-\title{Strip ranking scores from evidence bundle for LLM}
+\title{Strip ranking scores and unmatched keywords from evidence for LLM}
 \usage{
 .report_llm_evidence_payload(rank_sub)
 }
 \description{
-Strip ranking scores from evidence bundle for LLM
+Strip ranking scores and unmatched keywords from evidence for LLM
 }
 \keyword{internal}

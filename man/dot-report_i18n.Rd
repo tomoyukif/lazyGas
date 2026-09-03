@@ -2,11 +2,12 @@
 % Please edit documentation in R/llm-report-b2.R
 \name{.report_i18n}
 \alias{.report_i18n}
-\title{Report UI strings (English canonical)}
+\title{Report UI strings (English only; B4)}
 \usage{
 .report_i18n(language = c("en", "ja"))
 }
 \description{
-Report UI strings (English canonical)
+Chrome labels are always English. \code{language} is accepted for API
+compatibility but ignored.
 }
 \keyword{internal}

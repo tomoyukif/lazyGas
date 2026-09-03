@@ -2,11 +2,11 @@
 % Please edit documentation in R/llm-report-b2.R
 \name{.report_verification_html}
 \alias{.report_verification_html}
-\title{Verification section as HTML}
+\title{Verification section as HTML (B5 deferred; not used by llm_report)}
 \usage{
 .report_verification_html(verification, language = "en")
 }
 \description{
-Verification section as HTML
+Verification section as HTML (B5 deferred; not used by llm_report)
 }
 \keyword{internal}

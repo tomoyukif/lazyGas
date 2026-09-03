@@ -11,15 +11,74 @@ test_that("peakcall region bounds use min/max Pos per peak_ID", {
   expect_equal(b1$region_end, 39056110)
 })
 
-test_that("report i18n and score formatting", {
+test_that("report i18n is English-only (B4)", {
   en <- lazyGas:::.report_i18n("en")
   ja <- lazyGas:::.report_i18n("ja")
   expect_equal(en$candidate_list, "Candidate list")
-  expect_equal(ja$candidate_list, "候補一覧")
+  expect_equal(ja$candidate_list, "Candidate list")
+  expect_equal(ja$basic_info, "Basic information")
+  expect_equal(ja$resolvable, "resolvable")
+  expect_equal(ja$score_note, en$score_note)
   expect_equal(lazyGas:::.report_fmt_score(c(0.1, NA, 1)), c("0.100", "0.000", "1.000"))
   expect_equal(lazyGas:::.report_name_cell(NA_character_), "")
   expect_equal(lazyGas:::.report_name_cell("  "), "")
   expect_equal(lazyGas:::.report_name_cell("Waxy"), "Waxy")
+})
+
+test_that("B4 translation prompt keeps IDs and technical terms", {
+  msg <- lazyGas:::.report_translate_prose_ja_system()
+  expect_match(msg, "Translate the JSON string values from English to Japanese", fixed = TRUE)
+  expect_match(msg, "gene IDs", fixed = TRUE)
+  expect_match(msg, "Keep scientific / technical terms in English", fixed = TRUE)
+  expect_match(msg, "matched keyword tokens exactly", fixed = TRUE)
+  expect_match(msg, "SnpEff impact labels", fixed = TRUE)
+})
+
+test_that("ja + use_llm=FALSE keeps English chrome and template prose", {
+  ev <- list(
+    gwas = list(details = list(dist2peak = 100, negLog10P = 5)),
+    snpeff = list(details = list(worst_impact = "MODERATE", MODERATE = 2)),
+    annotation = list(details = list(matched_keywords = list("fruit")))
+  )
+  ranked <- data.frame(
+    Gene_ID = "Os01g00001",
+    Name = "Waxy",
+    evidence_json = jsonlite::toJSON(ev, auto_unbox = TRUE),
+    stringsAsFactors = FALSE
+  )
+  html <- lazyGas:::.report_evidence_html(
+    rank_sub = ranked,
+    query = list(text = "fruit weight", query_id = "q"),
+    language = "ja",
+    use_llm = FALSE,
+    llm = NULL
+  )
+  expect_match(html, "GWAS / position", fixed = TRUE)
+  expect_match(html, "Keywords / annotation", fixed = TRUE)
+  expect_match(html, "Matched keywords: fruit", fixed = TRUE)
+  expect_false(grepl("候補一覧|基礎情報|キーワード／|enable use_llm", html))
+})
+
+test_that("translate rejects incomplete JSON and keeps English", {
+  eng <- list(
+    g1 = list(
+      keywords = "Matched keywords: fruit.",
+      expression = NULL,
+      validity = "Check distance."
+    )
+  )
+  # Force llmChat failure via bogus endpoint
+  out <- suppressWarnings(
+    lazyGas:::.report_translate_prose_ja(
+      eng,
+      llm = list(
+        model = "none",
+        base_url = "http://127.0.0.1:9",
+        timeout = 1
+      )
+    )
+  )
+  expect_identical(out, eng)
 })
 
 test_that("candidate table HTML scrolls and uses 3 decimals", {
@@ -162,9 +221,50 @@ test_that("evidence HTML writes coded metrics and omits empty expression", {
   expect_match(html, "max_PIP (95% CS ∩ SnpEff) = 0.770", fixed = TRUE)
   expect_match(html, "dist2peak = 1,200 bp", fixed = TRUE)
   expect_match(html, "HIGH = 1", fixed = TRUE)
+  expect_match(html, "Matched keywords: fruit", fixed = TRUE)
+  expect_false(grepl("Unmatched", html, fixed = TRUE))
+  expect_false(grepl("\\bweight\\b", html))
   expect_false(grepl("Expression", html, fixed = TRUE))
   expect_false(grepl("composite_score", html, fixed = TRUE))
   expect_false(grepl("score_annotation", html, fixed = TRUE))
+})
+
+test_that("report template prose lists matched keywords only", {
+  expect_equal(
+    lazyGas:::.report_gene_template_prose(list(
+      ann_matched = c("fruit", "starch"),
+      has_expression = FALSE,
+      expr_snippets = character()
+    ))$keywords,
+    "Matched keywords: fruit, starch."
+  )
+  expect_equal(
+    lazyGas:::.report_gene_template_prose(list(
+      ann_matched = character(),
+      has_expression = FALSE,
+      expr_snippets = character()
+    ))$keywords,
+    "No matched phenotype keywords."
+  )
+  payload <- lazyGas:::.report_llm_evidence_payload(
+    data.frame(
+      Gene_ID = "g1",
+      Name = "",
+      evidence_json = jsonlite::toJSON(
+        list(annotation = list(details = list(
+          matched_keywords = list("fruit"),
+          unmatched_keywords = list("weight")
+        ))),
+        auto_unbox = TRUE
+      ),
+      stringsAsFactors = FALSE
+    )
+  )
+  expect_null(payload[[1]]$evidence$annotation$details$unmatched_keywords)
+  expect_equal(
+    unlist(payload[[1]]$evidence$annotation$details$matched_keywords),
+    "fruit"
+  )
 })
 
 test_that("llm_report writes HTML with table and reuses rank rds", {
@@ -236,6 +336,8 @@ test_that("llm_report writes HTML with table and reuses rank rds", {
   expect_match(rep1$html, "Candidate list", fixed = TRUE)
   expect_match(rep1$html, "candidate-table-scroll", fixed = TRUE)
   expect_match(rep1$html, "Credible set", fixed = TRUE)
+  expect_false(grepl("Evidence verification", rep1$html, fixed = TRUE))
+  expect_null(rep1$verification)
   expect_true(file.exists(rep1$rank_csv))
   expect_true(file.exists(rep1$rank_rds))
 

@@ -2,7 +2,7 @@
 % Please edit documentation in R/llm-local.R
 \name{llm_report}
 \alias{llm_report}
-\title{Generate a Phase 2 B2 AI candidate-gene HTML report}
+\title{Generate a Phase 2 B2/B4 AI candidate-gene HTML report}
 \usage{
 llm_report(
   object,
@@ -34,9 +34,11 @@ llm_report(
 \item{query}{Character phenotype description or \link{PhenotypeQuery}. If
 \code{NULL}, uses \code{pheno} name as the query text.}
 
-\item{language}{\code{"en"} (default) or \code{"ja"}.}
+\item{language}{\code{"en"} (default) or \code{"ja"}. \code{"ja"} requests
+translation of LLM evidence prose only; chrome stays English. No
+translation when \code{use_llm = FALSE}.}
 
-\item{top_n}{Number of top genes for the report body and verification
+\item{top_n}{Number of top genes for the report body
 (default 10). Ranking itself keeps every scored gene.}
 
 \item{sources, weights}{Ranking channels. \code{finemap} is always added for
@@ -73,15 +75,19 @@ uses the top five peaks by lead \code{negLog10P}.}
 \value{
 A list with \code{html}, \code{markdown} (same HTML string for
 compatibility), \code{path}, \code{meta_path}, \code{rank_csv},
-\code{rank_rds}, \code{verification}, \code{rank_result}, and \code{query}.
+\code{rank_rds}, \code{verification} (always \code{NULL} until B5),
+\code{rank_result}, and \code{query}.
 }
 \description{
 Ranks candidates (with required SnpEff + credible-set / finemap channel),
 then writes an HTML report: basic info, per-peak credible-set comment,
-scrollable score table, and evidence frames. English is canonical;
-\code{language = "ja"} localizes chrome via dictionary and translates LLM
-prose. Ranking scores appear only in the table. PIP / distance / -log10P /
-SnpEff counts are written by code.
+scrollable score table, and evidence frames. Report chrome (headings,
+tables, CS comments) is always English. \code{language = "ja"} only
+translates LLM-generated per-gene prose (keywords / expression / validity)
+when \code{use_llm = TRUE}; technical terms and input strings stay unchanged.
+Ranking scores appear only in the table. PIP / distance / -log10P /
+SnpEff counts are written by code. Evidence verification is not included
+yet (Phase 2 B5 deferred).
 }
 \seealso{
 \code{\link[=rankPhenotypeCandidates]{rankPhenotypeCandidates()}}, \code{\link[=explainPhenotypeCandidates]{explainPhenotypeCandidates()}}

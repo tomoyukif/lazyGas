@@ -140,8 +140,9 @@ explainPhenotypeCandidates <- function(rank_result,
     "(2) SnpEff impact notes when present,",
     "(3) a short validity comment for each gene.",
     "For keyword/annotation notes:",
-    "- State whether keyword match is high, low, or none (qualitative only; never print numeric scores).",
-    "- List which phenotype keywords matched and which did not, using annotation.details.matched_keywords / unmatched_keywords when present.",
+    "- List only matched phenotype keywords from annotation.details.matched_keywords when present.",
+    "- Do not mention unmatched or missing keywords.",
+    "- Never print numeric scores.",
     "- Do NOT say that a 'semantic match' was confirmed or cite LSA/embedding similarity.",
     "- Ignore matches of prepositions, conjunctions, and other non-biological function words (e.g. in, of, to, and); do not treat them as evidence.",
     lang_note
@@ -167,21 +168,26 @@ explainPhenotypeCandidates <- function(rank_result,
   )
 }
 
-#' Generate a Phase 2 B2 AI candidate-gene HTML report
+#' Generate a Phase 2 B2/B4 AI candidate-gene HTML report
 #'
 #' Ranks candidates (with required SnpEff + credible-set / finemap channel),
 #' then writes an HTML report: basic info, per-peak credible-set comment,
-#' scrollable score table, and evidence frames. English is canonical;
-#' \code{language = "ja"} localizes chrome via dictionary and translates LLM
-#' prose. Ranking scores appear only in the table. PIP / distance / -log10P /
-#' SnpEff counts are written by code.
+#' scrollable score table, and evidence frames. Report chrome (headings,
+#' tables, CS comments) is always English. \code{language = "ja"} only
+#' translates LLM-generated per-gene prose (keywords / expression / validity)
+#' when \code{use_llm = TRUE}; technical terms and input strings stay unchanged.
+#' Ranking scores appear only in the table. PIP / distance / -log10P /
+#' SnpEff counts are written by code. Evidence verification is not included
+#' yet (Phase 2 B5 deferred).
 #'
 #' @param object A \code{LazyGas} object with candidate genes.
 #' @param pheno Phenotype name or index.
 #' @param query Character phenotype description or [PhenotypeQuery]. If
 #'   \code{NULL}, uses \code{pheno} name as the query text.
-#' @param language \code{"en"} (default) or \code{"ja"}.
-#' @param top_n Number of top genes for the report body and verification
+#' @param language \code{"en"} (default) or \code{"ja"}. \code{"ja"} requests
+#'   translation of LLM evidence prose only; chrome stays English. No
+#'   translation when \code{use_llm = FALSE}.
+#' @param top_n Number of top genes for the report body
 #'   (default 10). Ranking itself keeps every scored gene.
 #' @param sources,weights Ranking channels. \code{finemap} is always added for
 #'   this report (weight default 0.5).
@@ -206,7 +212,8 @@ explainPhenotypeCandidates <- function(rank_result,
 #'
 #' @return A list with \code{html}, \code{markdown} (same HTML string for
 #'   compatibility), \code{path}, \code{meta_path}, \code{rank_csv},
-#'   \code{rank_rds}, \code{verification}, \code{rank_result}, and \code{query}.
+#'   \code{rank_rds}, \code{verification} (always \code{NULL} until B5),
+#'   \code{rank_result}, and \code{query}.
 #' @export
 #'
 #' @seealso [rankPhenotypeCandidates()], [explainPhenotypeCandidates()]
@@ -420,27 +427,7 @@ llm_report <- function(object,
   }
 
   html_body <- paste(c(basic_html, sections), collapse = "\n")
-  verification <- if (!is.null(rank_result) && nrow(rank_result) > 0L) {
-    .verify_report_against_evidence(
-      markdown = gsub("<[^>]+>", " ", html_body),
-      rank_result = rank_result,
-      top_n = top_n,
-      language = language
-    )
-  } else {
-    list(
-      n_claims_checked = 0L,
-      n_supported = 0L,
-      n_unsupported_marked = 0L,
-      congruence_rate = NA_real_,
-      claims = list()
-    )
-  }
-  html_body <- paste0(
-    html_body,
-    "\n",
-    .report_verification_html(verification, language = language)
-  )
+  # Evidence verification omitted for now (Phase 2 B5 deferred).
   html <- .report_html_document(
     body_html = html_body,
     title = paste("lazyGas AI report —", pheno_name)
@@ -491,9 +478,8 @@ llm_report <- function(object,
       report_file = basename(report_path),
       rank_csv = if (is.null(rank_csv_path)) NULL else basename(rank_csv_path),
       rank_rds = if (is.null(rank_rds_path)) NULL else basename(rank_rds_path),
-      verification = verification,
       rank_meta = attr(rank_result, "phenotypeRank"),
-      report_skeleton = "phase2_B2"
+      report_skeleton = "phase2_B4"
     ),
     meta_path,
     auto_unbox = TRUE,
@@ -508,7 +494,7 @@ llm_report <- function(object,
     meta_path = meta_path,
     rank_csv = rank_csv_path,
     rank_rds = rank_rds_path,
-    verification = verification,
+    verification = NULL,
     rank_result = rank_result,
     query = query
   )
@@ -786,6 +772,7 @@ llm_report <- function(object,
                                             rank_result,
                                             top_n = 10L,
                                             language = "ja") {
+  # Deferred: not wired into llm_report() (Phase 2 B5 unresolved).
   top_n <- as.integer(top_n)[1L]
   sub <- rank_result[seq_len(min(top_n, nrow(rank_result))), , drop = FALSE]
   bundle <- .phenotype_evidence_bundle(sub)
