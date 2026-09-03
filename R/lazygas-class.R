@@ -17,7 +17,7 @@
 #' closeGDS(lgas)
 #'
 #' @exportClass LazyGas
-#' @importFrom methods setClass slot
+#' @importFrom methods setClass slot setAs setMethod S3Part
 #' @import GBScleanR
 #'
 setClass(
@@ -26,6 +26,19 @@ setClass(
   slots = c(lazydata = "list", store = "list"),
   prototype = list(lazydata = list(), store = list())
 )
+
+# SeqArray/GBScleanR hybrid: LazyGas extends SeqVarGDSClass + gds.class (oldClass).
+# Under devtools::load_all(), setClass regenerates LazyGas→SeqVarGDSClass coerce as a
+# hollow SeqVarGDSClass (copies only .S3Class). SeqArray validity then calls
+# index.gdsn(object) → object$root and fails with "$ operator not defined for this
+# S4 class". Installed packages get S3Part-based coerce instead. Force S3Part here
+# so load_all matches install behavior for new()/validObject().
+setAs("LazyGas", "SeqVarGDSClass", function(from) {
+  methods::S3Part(from, strictS3 = TRUE)
+})
+setAs("LazyGas", "gds.class", function(from) {
+  methods::S3Part(from, strictS3 = TRUE)
+})
 
 ################################################################################
 # Inherited methods
