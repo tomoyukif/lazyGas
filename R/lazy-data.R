@@ -2,12 +2,14 @@
 #'
 #' @param object A \code{LazyGas} object.
 #' @param dataset The dataset to retrieve. One of `"scan"`, `"peakcall"`,
-#'   `"recalc"`, `"groups"`, `"candidate"`, `"snpeff"`, `"qc"`, `"multitrait"`,
-#'   `"conditional"`, `"credible_set"`, `"fine_mapping"`, `"pipeline"`,
-#'   `"phenotype_rank"`, or `"phenotype_query"`.
+#'   `"recalc"`, `"groups"`, `"candidate"`, `"snpeff"`, `"simple_candidate"`,
+#'   `"gene_protein_map"`, `"qc"`, `"multitrait"`, `"conditional"`,
+#'   `"credible_set"`, `"fine_mapping"`, `"pipeline"`, `"phenotype_rank"`,
+#'   `"phenotype_query"`, or `"phenotype_reinterpret"`.
 #' @param pheno The phenotype to retrieve.
 #' @param kind Table kind for section datasets (e.g. `"summary"`, `"peak_1"`,
-#'   or a phenotype-rank query id such as `"rank_pq_..."`).
+#'   or a phenotype-rank query id such as `"rank_pq_..."`). For
+#'   \code{phenotype_reinterpret}, optional query id (defaults to latest).
 #' @param ... Additional arguments.
 #'
 #' @return The requested data from the LazyGas object.
@@ -15,8 +17,10 @@
 #'
 setGeneric("lazyData", function(object,
                                 dataset = c("scan", "peakcall", "recalc", "groups", "candidate", "snpeff",
+                                            "simple_candidate", "gene_protein_map",
                                             "qc", "multitrait", "conditional", "credible_set", "fine_mapping",
-                                            "pipeline", "phenotype_rank", "phenotype_query"),
+                                            "pipeline", "phenotype_rank", "phenotype_query",
+                                            "phenotype_reinterpret"),
                                 pheno,
                                 kind = NULL,
                                 ...)
@@ -33,15 +37,28 @@ setMethod("lazyData",
             dataset <- match.arg(
               arg = dataset,
               choices = c("scan", "peakcall", "recalc", "groups", "candidate", "snpeff",
+                          "simple_candidate", "gene_protein_map",
                           "qc", "multitrait", "conditional", "credible_set", "fine_mapping",
-                          "pipeline", "phenotype_rank", "phenotype_query")
+                          "pipeline", "phenotype_rank", "phenotype_query",
+                          "phenotype_reinterpret")
             )
+            if (identical(dataset, "gene_protein_map")) {
+              return(.store_read_gene_protein_map(object))
+            }
             if (dataset == "phenotype_query") {
               if (is.null(kind)) {
                 return(.store_list_phenotype_queries(object))
               }
               q <- .store_read_phenotype_query(object, kind)
               return(q)
+            }
+            if (dataset == "phenotype_reinterpret") {
+              pheno_name <- .determine_phenotype_name(object = object, pheno = pheno)
+              return(.store_read_phenotype_reinterpret(
+                object = object,
+                pheno_name = pheno_name,
+                query_id = kind
+              ))
             }
             if (dataset == "phenotype_rank") {
               pheno_name <- .determine_phenotype_name(object = object, pheno = pheno)
@@ -89,6 +106,12 @@ setMethod("lazyData",
                 return(NULL)
               }
               out <- .get_scan(object = object, pheno_name = pheno_name)
+
+            } else if (dataset == "simple_candidate") {
+              out <- .store_read_simple_candidate(object, pheno_name)
+              if (is.null(out) || nrow(out) == 0L) {
+                return(NULL)
+              }
 
             } else if (dataset %in% c("candidate", "snpeff", "groups")) {
               if (!.store_dataset_exists(object, dataset, pheno_name)) {

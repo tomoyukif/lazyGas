@@ -190,6 +190,11 @@ rankPhenotypeCandidates <- function(object,
       score_norm[[src]] <- sc
     }
   }
+  # Floor each channel at 0.1 so "no evidence" is not a hard zero in composite.
+  for (src in names(score_norm)) {
+    score_norm[[src]] <- .floor_score_vec(score_norm[[src]], floor = 0.1)
+  }
+  gwas_norm <- score_norm$gwas
 
   composite <- rep(0, length(gene_ids))
   names(composite) <- gene_ids
@@ -208,7 +213,7 @@ rankPhenotypeCandidates <- function(object,
     score_finemap = if (!is.null(score_norm$finemap)) {
       score_norm$finemap
     } else {
-      rep(0, length(gene_ids))
+      rep(0.1, length(gene_ids))
     },
     composite_score = as.numeric(composite),
     evidence_json = vapply(gene_ids, function(g) .evidence_to_json(evidence[[g]]), character(1L)),

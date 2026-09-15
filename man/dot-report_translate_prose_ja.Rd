@@ -7,7 +7,7 @@
 .report_translate_prose_ja(prose_by_gene, llm)
 }
 \description{
-All-or-nothing: on any failure, return the English input and warn.
-No partial translation and no retries.
+One scrutiny pass if the first translation is incomplete; then all-or-nothing
+fallback to English.
 }
 \keyword{internal}

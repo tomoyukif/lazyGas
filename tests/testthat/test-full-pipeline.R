@@ -189,7 +189,7 @@ test_that("full pipeline: peak calling, recalc, plots, and haploPlot", {
   expect_match(hap_recalc[[1L]]$labels$title, "Coef.add")
 })
 
-test_that("full pipeline: listCandidate and searchCandidateGenes", {
+test_that("full pipeline: listCandidate", {
   skip_if_not_installed("rtracklayer")
 
   ctx <- .run_sample_pipeline(pheno_name = "test_trait")
@@ -207,15 +207,6 @@ test_that("full pipeline: listCandidate and searchCandidateGenes", {
   expect_true(is.data.frame(snpeff_tab))
   expect_gt(nrow(snpeff_tab), 0L)
   expect_true("Gene_ID" %in% names(snpeff_tab))
-
-  ranked <- lazyGas::searchCandidateGenes(
-    candidate = candidate,
-    query = "demo",
-    mode = "keyword",
-    keyword_match = "any"
-  )
-  expect_true(is.data.frame(ranked))
-  expect_gt(nrow(ranked), 0L)
 })
 
 test_that("full pipeline: variant viewer", {

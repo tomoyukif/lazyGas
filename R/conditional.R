@@ -103,14 +103,20 @@ conditionalAssoc <- function(object,
 #' or weak signals) rather than confident causal-variant identification.
 #' See [summarizeFineMapping()] for interpretation-ready summaries.
 #'
+#' When \code{recalc = TRUE}, the locus markers are taken from recalculated peak
+#' blocks. After [recalcAssoc()], those blocks retain **all markers from
+#' correlated peak groups** (not only the representative lead's original block).
+#' Use the credible set—not peak height alone—to narrow markers for analysis
+#' and reporting.
+#'
 #' @param object A \code{LazyGas} object.
 #' @param pheno Phenotype name or index.
-#' @param peak_id Peak block ID.
+#' @param peak_id Peak block ID (representative peak after grouping).
 #' @param coverage Target cumulative PIP for the credible set.
 #' @param prior_W,prior_V Wakefield ABF prior parameters.
 #' @param use_conditional If \code{TRUE}, use step-1 results from
 #'   [conditionalAssoc()] (unconditioned on other leads).
-#' @param recalc Use recalculated peak blocks.
+#' @param recalc Use recalculated peak blocks (group-merged when available).
 #' @param store If \code{TRUE}, write results to the companion store.
 #' @export
 calcCredibleSet <- function(object,
@@ -191,7 +197,14 @@ calcCredibleSet <- function(object,
     cumulative_PIP = cum_pip,
     stringsAsFactors = FALSE
   )
+  # Attach genomic coordinates from the peak block (required by E gene select)
+  pos_cols <- intersect(c("variant_ID", "Chr", "Pos"), names(block))
+  if (all(c("variant_ID", "Chr", "Pos") %in% pos_cols) && nrow(block)) {
+    pos_map <- unique(block[, pos_cols, drop = FALSE])
+    out <- merge(out, pos_map, by = "variant_ID", all.x = TRUE)
+  }
   out <- out[order(out$PIP, decreasing = TRUE), , drop = FALSE]
+  rownames(out) <- NULL
 
   top_pip_variant <- out$variant_ID[which.max(out$PIP)]
   n_in_set <- sum(out$in_credible_set)

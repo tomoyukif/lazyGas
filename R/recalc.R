@@ -1,13 +1,35 @@
-#' @param n_threads description
-#' @param refine_position
+#' Recalculate peak grouping after peak calling
 #'
-#' @return None. The function modifies the LazyGas object in place.
+#' Groups correlated peak leads by conditional association. Member peak-block
+#' markers are retained only when the fold between lead \code{negLog10P} values
+#' is below \code{group_retain_fold} (taller / shorter). **Same-chromosome**
+#' members that pass are merged under the representative peak ID.
+#' **Cross-chromosome** members that pass stay as independent peaks; others are
+#' omitted from blocks. Relationships remain in \code{recalc/groups} regardless
+#' of fold. Narrow markers per locus with [calcCredibleSet()].
+#'
+#' @param object A \code{LazyGas} object with peakcall results.
+#' @param n_threads Number of threads (default: about half of detected cores).
+#' @param refine_position If \code{TRUE}, refine lead positions within each
+#'   same-chromosome retained group; cross-chr members remain independent peaks.
+#' @param grouping_threshold P-value threshold for treating another peak lead as
+#'   redundant with the query lead (default 0.05).
+#' @param group_retain_fold Retain a group member's blocks when
+#'   \code{max(negLog10P) / min(negLog10P)} of the two leads is strictly less
+#'   than this value (default 2). Applies to same-chr merge and cross-chr
+#'   independent peaks. Use \code{Inf} to retain all members (pre-gate behavior).
+#' @param ... Unused; for S4 generic compatibility.
+#'
+#' @return None. The function modifies the LazyGas object in place
+#'   (\code{recalc/peaks}, \code{recalc/blocks}, \code{recalc/groups}).
+#' @seealso [calcCredibleSet()], [callPeakBlock()]
 #' @export
 #'
 setGeneric("recalcAssoc", function(object,
                                    n_threads = NULL,
                                    refine_position = FALSE,
                                    grouping_threshold = 0.05,
+                                   group_retain_fold = 2,
                                    ...)
   standardGeneric("recalcAssoc"))
 
@@ -18,7 +40,8 @@ setGeneric("recalcAssoc", function(object,
 #'
 setMethod("recalcAssoc",
           "LazyGas",
-          function(object, n_threads, refine_position, grouping_threshold){
+          function(object, n_threads, refine_position, grouping_threshold,
+                   group_retain_fold){
             if (!.store_section_exists(object, "peakcall")) {
               stop("No peakcall data in the input LazyGas object.\n",
                    "Run callPeakBlock() to call peaks.")
@@ -56,7 +79,8 @@ setMethod("recalcAssoc",
                                   binary = pheno$pheno_type$binary[i],
                                   n_threads = n_threads,
                                   refine_position = refine_position,
-                                  grouping_threshold = grouping_threshold)
+                                  grouping_threshold = grouping_threshold,
+                                  group_retain_fold = group_retain_fold)
               }
 
               .finalize_gdsn_recalc(object = object, pheno_name = pheno_name)
@@ -113,7 +137,9 @@ setMethod("recalcAssoc",
 
 # Recalculate peaks for a given phenotype.
 #' @importFrom dplyr setequal
-.peakrecalculator <- function(object, pheno, pheno_name, binary, n_threads, refine_position, grouping_threshold){
+.peakrecalculator <- function(object, pheno, pheno_name, binary, n_threads,
+                              refine_position, grouping_threshold,
+                              group_retain_fold = 2){
   message("Processing: ", pheno_name)
 
   peakcall <- .get_peakcall(object = object, pheno_name = pheno_name)
@@ -183,62 +209,563 @@ setMethod("recalcAssoc",
       new_peak_blocks <- .refine_peakpositions(peak_obj = peak_obj)
       out1 <- unique(subset(new_peak_blocks,
                             select = c(peak_ID, peak_variant_ID)))
-      out2 <- unique(subset(new_peak_blocks,
-                            select = c(peak_ID, variant_ID,
-                                       dist2peak, LD2peak, chr_start, chr_end,
-                                       P.model:negLog10P)))
-      out3 <- subset(peak_obj$peakcall,
-                     subset = variant_ID %in% unlist(new_peaks$member),
-                     select = c(peak_ID, variant_ID,
-                                P.model:negLog10P))
-      peak_id_map <- unique(subset(peak_obj$peakcall,
-                                   subset = variant_ID == peak_variant_ID,
-                                   select = c(peak_ID, variant_ID)))
-      grouped_with <- lapply(seq_along(new_peaks$member), function(i){
-        return(data.frame(
-          new_peak = peak_id_map$peak_ID[match(new_peaks$newpeaks[i],
-                                               peak_id_map$variant_ID)],
-          member = new_peaks$member[[i]]
-        ))
-      })
-      grouped_with <- do.call("rbind", grouped_with)
-      hit <- match(out3$variant_ID, grouped_with$member)
-      out3$grouped_with <- grouped_with$new_peak[hit]
-      hit <- match(out3$variant_ID, peak_grp$pvalue$variant_ID)
-      out3$full_vs_reduce_pvalue <- peak_grp$pvalue$p_values[hit]
+      block_stat_cols <- .recalc_stat_col_range(
+        new_peak_blocks,
+        from_candidates = c("P.model", "FDR"),
+        to = "negLog10P"
+      )
+      base_cols <- c(
+        "peak_ID", "variant_ID", "dist2peak", "LD2peak", "chr_start", "chr_end",
+        "source_peak_variant_ID"
+      )
+      out2 <- unique(new_peak_blocks[, intersect(c(base_cols, block_stat_cols),
+                                                 names(new_peak_blocks)),
+                                     drop = FALSE])
+      out2 <- .recalc_union_member_blocks(
+        blocks = out2,
+        peakcall = peak_obj$peakcall,
+        new_peaks = new_peaks,
+        block_stat_cols = block_stat_cols,
+        group_retain_fold = group_retain_fold
+      )
+      if ("source_peak_variant_ID" %in% names(out2)) {
+        out2$source_peak_variant_ID <- NULL
+      }
+      out3 <- .recalc_groups_table(
+        peakcall = peak_obj$peakcall,
+        new_peaks = new_peaks,
+        peak_grp = peak_grp,
+        from_candidates = c("P.model", "FDR")
+      )
+      indep <- .recalc_cross_chr_independent_tables(
+        peakcall = peak_obj$peakcall,
+        new_peaks = new_peaks,
+        block_stat_cols = block_stat_cols,
+        group_retain_fold = group_retain_fold
+      )
+      if (!is.null(indep) && nrow(indep$peaks)) {
+        out1 <- rbind(out1, indep$peaks)
+        out2 <- .recalc_rbind_blocks(out2, indep$blocks)
+      }
 
     } else {
-      out1 <- unique(subset(peak_obj$peakcall,
-                            subset = peak_variant_ID %in% new_peaks$newpeaks,
-                            select = c(peak_ID, peak_variant_ID)))
-      out2 <- unique(subset(peak_obj$peakcall,
-                            subset = peak_variant_ID %in% new_peaks$newpeaks,
-                            select = c(peak_ID, variant_ID,
-                                       dist2peak, LD2peak, chr_start, chr_end,
-                                       FDR:negLog10P)))
-      out3 <- subset(peak_obj$peakcall,
-                     subset = variant_ID %in% unlist(new_peaks$member) & variant_ID == peak_variant_ID,
-                     select = c(peak_ID, variant_ID,
-                                FDR:negLog10P))
-      peak_id_map <- unique(subset(peak_obj$peakcall,
-                                   subset = variant_ID == peak_variant_ID,
-                                   select = c(peak_ID, variant_ID)))
-      grouped_with <- lapply(seq_along(new_peaks$member), function(i){
-        return(data.frame(
-          new_peak = peak_id_map$peak_ID[match(new_peaks$newpeaks[i],
-                                               peak_id_map$variant_ID)],
-          member = new_peaks$member[[i]]
-        ))
-      })
-      grouped_with <- do.call("rbind", grouped_with)
-      hit <- match(out3$variant_ID, grouped_with$member)
-      out3$grouped_with <- grouped_with$new_peak[hit]
-      hit <- match(out3$variant_ID, peak_grp$pvalue$variant_ID)
-      out3$full_vs_reduce_pvalue <- peak_grp$pvalue$p_values[hit]
+      retained <- .recalc_group_retained_tables(
+        peakcall = peak_obj$peakcall,
+        new_peaks = new_peaks,
+        block_stat_cols = .recalc_stat_col_range(
+          peak_obj$peakcall,
+          from_candidates = c("FDR", "P.model"),
+          to = "negLog10P"
+        ),
+        group_retain_fold = group_retain_fold
+      )
+      out1 <- retained$peaks
+      out2 <- retained$blocks
+      out3 <- .recalc_groups_table(
+        peakcall = peak_obj$peakcall,
+        new_peaks = new_peaks,
+        peak_grp = peak_grp,
+        from_candidates = c("FDR", "P.model")
+      )
     }
 
     .store_save_recalc_results(object, pheno_name, out1, out2, out3)
   }
+}
+
+#' Consecutive association-stat columns from FDR/P.model through negLog10P.
+#' @noRd
+.recalc_stat_col_range <- function(df, from_candidates, to = "negLog10P") {
+  nms <- names(df)
+  from <- from_candidates[from_candidates %in% nms]
+  if (length(from) == 0L || !to %in% nms) {
+    return(character())
+  }
+  from <- from[[1L]]
+  nms[seq(match(from, nms), match(to, nms))]
+}
+
+#' Lead-row negLog10P for a peak variant ID.
+#' @noRd
+.recalc_lead_neglog10p <- function(peakcall, variant_id) {
+  if (is.null(peakcall) || !"negLog10P" %in% names(peakcall)) {
+    return(NA_real_)
+  }
+  vid <- as.character(variant_id)[[1L]]
+  hit <- which(
+    as.character(peakcall$variant_ID) == vid &
+      as.character(peakcall$peak_variant_ID) == vid
+  )
+  if (!length(hit)) {
+    hit <- which(as.character(peakcall$variant_ID) == vid)
+  }
+  if (!length(hit)) {
+    return(NA_real_)
+  }
+  suppressWarnings(as.numeric(peakcall$negLog10P[[hit[[1L]]]]))
+}
+
+#' Retain member when taller/shorter lead negLog10P fold is strictly below fold.
+#' @noRd
+.recalc_retain_by_fold <- function(nlp_a, nlp_b, fold = 2) {
+  fold <- suppressWarnings(as.numeric(fold)[[1L]])
+  if (!is.finite(fold)) {
+    return(TRUE)
+  }
+  if (fold <= 0) {
+    return(FALSE)
+  }
+  a <- suppressWarnings(as.numeric(nlp_a)[[1L]])
+  b <- suppressWarnings(as.numeric(nlp_b)[[1L]])
+  if (!is.finite(a) || !is.finite(b) || a <= 0 || b <= 0) {
+    return(FALSE)
+  }
+  max(a, b) / min(a, b) < fold
+}
+
+#' Members whose lead height passes the fold gate vs the representative.
+#' Preserves the storage mode of \code{members} (often integer marker IDs).
+#' @noRd
+.recalc_members_passing_fold <- function(peakcall, rep_vid, members,
+                                         group_retain_fold = 2) {
+  members <- unique(members)
+  if (!length(members)) {
+    return(members[FALSE])
+  }
+  rep_vid <- rep_vid[[1L]]
+  if (!"negLog10P" %in% names(peakcall)) {
+    return(members)
+  }
+  rep_nlp <- .recalc_lead_neglog10p(peakcall, rep_vid)
+  keep <- vapply(seq_along(members), function(i) {
+    m <- members[[i]]
+    if (identical(as.character(m), as.character(rep_vid))) {
+      return(TRUE)
+    }
+    .recalc_retain_by_fold(
+      rep_nlp,
+      .recalc_lead_neglog10p(peakcall, m),
+      fold = group_retain_fold
+    )
+  }, logical(1), USE.NAMES = FALSE)
+  members[keep]
+}
+
+#' Map each group member peak lead to the representative peak_ID / lead.
+#' @noRd
+.recalc_member_to_rep_map <- function(peakcall, new_peaks) {
+  peak_id_map <- unique(peakcall[
+    peakcall$variant_ID == peakcall$peak_variant_ID,
+    c("peak_ID", "variant_ID"),
+    drop = FALSE
+  ])
+  rows <- lapply(seq_along(new_peaks$newpeaks), function(i) {
+    rep_vid <- new_peaks$newpeaks[[i]]
+    members <- unique(new_peaks$member[[i]])
+    # Preserve storage mode of peak leads (often integer marker IDs).
+    if (is.numeric(peak_id_map$variant_ID) && !is.numeric(rep_vid)) {
+      rep_vid <- as(rep_vid, class(peak_id_map$variant_ID)[1L])
+      members <- as(members, class(peak_id_map$variant_ID)[1L])
+    }
+    rep_peak_id <- peak_id_map$peak_ID[match(rep_vid, peak_id_map$variant_ID)]
+    data.frame(
+      member_peak_variant_ID = members,
+      rep_peak_variant_ID = rep(rep_vid, length(members)),
+      rep_peak_ID = rep(rep_peak_id, length(members)),
+      stringsAsFactors = FALSE
+    )
+  })
+  do.call("rbind", rows)
+}
+
+#' Build recalc peaks + blocks keeping same-chr group members under the rep,
+#' and cross-chr members as independent peaks when fold gate passes.
+#' @noRd
+.recalc_group_retained_tables <- function(peakcall, new_peaks, block_stat_cols,
+                                          group_retain_fold = 2) {
+  map_full <- .recalc_member_to_rep_map(peakcall, new_peaks)
+  if (is.null(map_full) || nrow(map_full) == 0L) {
+    return(list(
+      peaks = data.frame(peak_ID = integer(), peak_variant_ID = integer()),
+      blocks = data.frame()
+    ))
+  }
+
+  peaks_rep <- unique(map_full[, c("rep_peak_ID", "rep_peak_variant_ID"), drop = FALSE])
+  names(peaks_rep) <- c("peak_ID", "peak_variant_ID")
+  rownames(peaks_rep) <- NULL
+
+  map <- map_full
+  # Chromosome of each representative lead (for same-chr member retention).
+  # If Chr is unavailable, retain all members (caller/tests without coords).
+  if ("Chr" %in% names(peakcall)) {
+    lead_rows <- peakcall$variant_ID == peakcall$peak_variant_ID
+    lead_chr <- peakcall[lead_rows, c("variant_ID", "Chr"), drop = FALSE]
+    lead_chr <- lead_chr[!duplicated(lead_chr$variant_ID), , drop = FALSE]
+    map$rep_Chr <- lead_chr$Chr[match(map$rep_peak_variant_ID, lead_chr$variant_ID)]
+    member_chr <- lead_chr$Chr[match(map$member_peak_variant_ID, lead_chr$variant_ID)]
+    map <- map[
+      is.na(map$rep_Chr) |
+        is.na(member_chr) |
+        as.character(member_chr) == as.character(map$rep_Chr),
+      ,
+      drop = FALSE
+    ]
+  }
+
+  # Fold gate: keep member leads only when taller/shorter ratio < fold.
+  if (nrow(map) > 0L && "negLog10P" %in% names(peakcall)) {
+    pass <- mapply(
+      function(rep_vid, mem_vid) {
+        if (identical(as.character(rep_vid), as.character(mem_vid))) {
+          return(TRUE)
+        }
+        .recalc_retain_by_fold(
+          .recalc_lead_neglog10p(peakcall, rep_vid),
+          .recalc_lead_neglog10p(peakcall, mem_vid),
+          fold = group_retain_fold
+        )
+      },
+      map$rep_peak_variant_ID,
+      map$member_peak_variant_ID,
+      SIMPLIFY = TRUE,
+      USE.NAMES = FALSE
+    )
+    map <- map[pass, , drop = FALSE]
+  }
+
+  blocks <- data.frame()
+  if (nrow(map) > 0L) {
+    hit <- match(peakcall$peak_variant_ID, map$member_peak_variant_ID)
+    keep <- !is.na(hit)
+    blocks <- peakcall[keep, , drop = FALSE]
+    hit <- hit[keep]
+    blocks$peak_ID <- map$rep_peak_ID[hit]
+    blocks$peak_variant_ID <- map$rep_peak_variant_ID[hit]
+    blocks$._from_rep <- peakcall$peak_variant_ID[keep] == map$rep_peak_variant_ID[hit]
+
+    if ("Chr" %in% names(blocks) && "rep_Chr" %in% names(map)) {
+      rep_chr <- map$rep_Chr[match(blocks$peak_variant_ID, map$rep_peak_variant_ID)]
+      same <- is.na(rep_chr) |
+        is.na(blocks$Chr) |
+        as.character(blocks$Chr) == as.character(rep_chr)
+      blocks <- blocks[same, , drop = FALSE]
+    }
+
+    ld <- as.numeric(blocks$LD2peak)
+    o <- order(
+      blocks$peak_ID,
+      as.character(blocks$variant_ID),
+      !blocks$._from_rep,
+      -ld,
+      na.last = TRUE
+    )
+    blocks <- blocks[o, , drop = FALSE]
+    blocks <- blocks[
+      !duplicated(paste(blocks$peak_ID, blocks$variant_ID, sep = "\r")),
+      ,
+      drop = FALSE
+    ]
+    blocks$._from_rep <- NULL
+
+    if (all(c("Chr", "Pos") %in% names(blocks))) {
+      o2 <- order(
+        blocks$peak_ID,
+        as.character(blocks$Chr),
+        as.numeric(blocks$Pos),
+        na.last = TRUE
+      )
+      blocks <- blocks[o2, , drop = FALSE]
+    } else if ("Pos" %in% names(blocks)) {
+      o2 <- order(blocks$peak_ID, as.numeric(blocks$Pos), na.last = TRUE)
+      blocks <- blocks[o2, , drop = FALSE]
+    }
+
+    keep_cols <- c(
+      "peak_ID", "variant_ID", "dist2peak", "LD2peak", "chr_start", "chr_end",
+      block_stat_cols
+    )
+    keep_cols <- intersect(keep_cols, names(blocks))
+    blocks <- blocks[, keep_cols, drop = FALSE]
+    rownames(blocks) <- NULL
+  }
+
+  indep <- .recalc_cross_chr_independent_tables(
+    peakcall = peakcall,
+    new_peaks = new_peaks,
+    block_stat_cols = block_stat_cols,
+    group_retain_fold = group_retain_fold
+  )
+  peaks <- peaks_rep
+  if (!is.null(indep) && nrow(indep$peaks)) {
+    peaks <- rbind(peaks, indep$peaks)
+    blocks <- .recalc_rbind_blocks(blocks, indep$blocks)
+  }
+  peaks <- peaks[!duplicated(peaks$peak_ID), , drop = FALSE]
+  rownames(peaks) <- NULL
+
+  list(peaks = peaks, blocks = blocks)
+}
+
+#' Cross-chr group members kept as independent peak_ID + original blocks
+#' when fold gate passes.
+#' @noRd
+.recalc_cross_chr_independent_tables <- function(peakcall, new_peaks,
+                                                 block_stat_cols,
+                                                 group_retain_fold = 2) {
+  empty <- list(
+    peaks = data.frame(peak_ID = integer(), peak_variant_ID = integer()),
+    blocks = data.frame()
+  )
+  if (!"Chr" %in% names(peakcall) || is.null(new_peaks) || !length(new_peaks$newpeaks)) {
+    return(empty)
+  }
+  lead_rows <- peakcall$variant_ID == peakcall$peak_variant_ID
+  lead_info <- unique(peakcall[
+    lead_rows,
+    c("peak_ID", "variant_ID", "Chr"),
+    drop = FALSE
+  ])
+  peak_rows <- list()
+  block_rows <- list()
+  for (i in seq_along(new_peaks$newpeaks)) {
+    rep_vid <- new_peaks$newpeaks[[i]]
+    rep_chr <- lead_info$Chr[match(rep_vid, lead_info$variant_ID)]
+    members <- .recalc_members_passing_fold(
+      peakcall = peakcall,
+      rep_vid = rep_vid,
+      members = unique(new_peaks$member[[i]]),
+      group_retain_fold = group_retain_fold
+    )
+    for (m in members) {
+      if (identical(as.character(m), as.character(rep_vid))) {
+        next
+      }
+      m_chr <- lead_info$Chr[match(m, lead_info$variant_ID)]
+      if (is.na(rep_chr) || is.na(m_chr)) {
+        next
+      }
+      if (as.character(m_chr) == as.character(rep_chr)) {
+        next
+      }
+      m_peak_id <- lead_info$peak_ID[match(m, lead_info$variant_ID)]
+      if (is.na(m_peak_id)) {
+        next
+      }
+      peak_rows[[length(peak_rows) + 1L]] <- data.frame(
+        peak_ID = m_peak_id,
+        peak_variant_ID = m,
+        stringsAsFactors = FALSE
+      )
+      sub <- peakcall[
+        as.character(peakcall$peak_variant_ID) == as.character(m),
+        ,
+        drop = FALSE
+      ]
+      if (!nrow(sub)) {
+        next
+      }
+      # Keep original peak_ID / peak_variant_ID (independent locus).
+      keep_cols <- c(
+        "peak_ID", "variant_ID", "dist2peak", "LD2peak", "chr_start", "chr_end",
+        block_stat_cols
+      )
+      keep_cols <- intersect(keep_cols, names(sub))
+      block_rows[[length(block_rows) + 1L]] <- sub[, keep_cols, drop = FALSE]
+    }
+  }
+  if (!length(peak_rows)) {
+    return(empty)
+  }
+  peaks <- do.call("rbind", peak_rows)
+  peaks <- peaks[!duplicated(peaks$peak_ID), , drop = FALSE]
+  blocks <- if (length(block_rows)) {
+    do.call("rbind", block_rows)
+  } else {
+    data.frame()
+  }
+  if (nrow(blocks) && all(c("Chr", "Pos") %in% names(peakcall))) {
+    # Restore Pos order via peakcall join keys already in row order from peakcall
+    # subset; sort by peak_ID then variant order in peakcall Pos when available.
+    pos_map <- unique(peakcall[, c("variant_ID", "Chr", "Pos"), drop = FALSE])
+    blocks$._pos <- pos_map$Pos[match(blocks$variant_ID, pos_map$variant_ID)]
+    blocks$._chr <- pos_map$Chr[match(blocks$variant_ID, pos_map$variant_ID)]
+    o <- order(
+      blocks$peak_ID,
+      as.character(blocks$._chr),
+      as.numeric(blocks$._pos),
+      na.last = TRUE
+    )
+    blocks <- blocks[o, , drop = FALSE]
+    blocks$._pos <- NULL
+    blocks$._chr <- NULL
+  }
+  rownames(peaks) <- NULL
+  rownames(blocks) <- NULL
+  list(peaks = peaks, blocks = blocks)
+}
+
+#' Row-bind block tables aligning columns.
+#' @noRd
+.recalc_rbind_blocks <- function(a, b) {
+  if (is.null(a) || !nrow(a)) {
+    return(b)
+  }
+  if (is.null(b) || !nrow(b)) {
+    return(a)
+  }
+  cols <- union(names(a), names(b))
+  for (nm in setdiff(cols, names(a))) {
+    a[[nm]] <- NA
+  }
+  for (nm in setdiff(cols, names(b))) {
+    b[[nm]] <- NA
+  }
+  out <- rbind(a[, cols, drop = FALSE], b[, cols, drop = FALSE])
+  rownames(out) <- NULL
+  out
+}
+
+#' Union original member peakcall markers into refined group blocks.
+#' @noRd
+.recalc_union_member_blocks <- function(blocks, peakcall, new_peaks,
+                                        block_stat_cols,
+                                        group_retain_fold = 2) {
+  if (is.null(blocks) || nrow(blocks) == 0L) {
+    return(blocks)
+  }
+  if (!"source_peak_variant_ID" %in% names(blocks)) {
+    return(blocks)
+  }
+
+  source_to_peak <- unique(blocks[, c("peak_ID", "source_peak_variant_ID"), drop = FALSE])
+  member_rows <- lapply(seq_along(new_peaks$newpeaks), function(i) {
+    rep_vid <- new_peaks$newpeaks[[i]]
+    members <- .recalc_members_passing_fold(
+      peakcall = peakcall,
+      rep_vid = rep_vid,
+      members = unique(new_peaks$member[[i]]),
+      group_retain_fold = group_retain_fold
+    )
+    refined_peak_id <- source_to_peak$peak_ID[
+      source_to_peak$source_peak_variant_ID == rep_vid
+    ]
+    if (length(refined_peak_id) == 0L) {
+      return(NULL)
+    }
+    refined_peak_id <- refined_peak_id[[1L]]
+    sub <- peakcall[peakcall$peak_variant_ID %in% members, , drop = FALSE]
+    if (nrow(sub) == 0L) {
+      return(NULL)
+    }
+    # Same chromosome as the original representative lead only.
+    rep_chr <- peakcall$Chr[peakcall$variant_ID == rep_vid][1L]
+    if (!is.na(rep_chr) && "Chr" %in% names(sub)) {
+      sub <- sub[
+        is.na(sub$Chr) | as.character(sub$Chr) == as.character(rep_chr),
+        ,
+        drop = FALSE
+      ]
+    }
+    if (nrow(sub) == 0L) {
+      return(NULL)
+    }
+    lead_vid <- blocks$peak_variant_ID[match(refined_peak_id, blocks$peak_ID)]
+    lead_vid <- lead_vid[!is.na(lead_vid)][1L]
+    sub$peak_ID <- refined_peak_id
+    sub$peak_variant_ID <- lead_vid
+    sub$source_peak_variant_ID <- rep_vid
+    sub$._from_rep <- FALSE
+    keep_cols <- c(
+      "peak_ID", "variant_ID", "dist2peak", "LD2peak", "chr_start", "chr_end",
+      "source_peak_variant_ID", block_stat_cols
+    )
+    keep_cols <- intersect(keep_cols, names(sub))
+    sub[, c(keep_cols, "._from_rep"), drop = FALSE]
+  })
+  member_rows <- Filter(Negate(is.null), member_rows)
+  if (length(member_rows) == 0L) {
+    return(blocks)
+  }
+
+  refined <- blocks
+  refined$._from_rep <- TRUE
+  extra <- do.call("rbind", member_rows)
+  all_cols <- union(names(refined), names(extra))
+  for (nm in setdiff(all_cols, names(refined))) {
+    refined[[nm]] <- NA
+  }
+  for (nm in setdiff(all_cols, names(extra))) {
+    extra[[nm]] <- NA
+  }
+  combined <- rbind(refined[, all_cols, drop = FALSE], extra[, all_cols, drop = FALSE])
+  ld <- as.numeric(combined$LD2peak)
+  o <- order(
+    combined$peak_ID,
+    as.character(combined$variant_ID),
+    !combined$._from_rep,
+    -ld,
+    na.last = TRUE
+  )
+  combined <- combined[o, , drop = FALSE]
+  combined <- combined[
+    !duplicated(paste(combined$peak_ID, combined$variant_ID, sep = "\r")),
+    ,
+    drop = FALSE
+  ]
+  combined$._from_rep <- NULL
+  if (all(c("Chr", "Pos") %in% names(combined))) {
+    o2 <- order(
+      combined$peak_ID,
+      as.character(combined$Chr),
+      as.numeric(combined$Pos),
+      na.last = TRUE
+    )
+    combined <- combined[o2, , drop = FALSE]
+  } else if ("Pos" %in% names(combined)) {
+    o2 <- order(combined$peak_ID, as.numeric(combined$Pos), na.last = TRUE)
+    combined <- combined[o2, , drop = FALSE]
+  }
+  rownames(combined) <- NULL
+  combined
+}
+
+#' Groups table: member peak leads with grouped_with + conditional p.
+#' @noRd
+.recalc_groups_table <- function(peakcall, new_peaks, peak_grp, from_candidates) {
+  peak_id_map <- unique(peakcall[
+    peakcall$variant_ID == peakcall$peak_variant_ID,
+    c("peak_ID", "variant_ID"),
+    drop = FALSE
+  ])
+  member_vids <- unique(unlist(new_peaks$member, use.names = FALSE))
+  out3 <- peakcall[
+    peakcall$variant_ID %in% member_vids &
+      peakcall$variant_ID == peakcall$peak_variant_ID,
+    ,
+    drop = FALSE
+  ]
+  stat_cols <- .recalc_stat_col_range(out3, from_candidates = from_candidates, to = "negLog10P")
+  keep <- c("peak_ID", "variant_ID", stat_cols)
+  keep <- intersect(keep, names(out3))
+  out3 <- unique(out3[, keep, drop = FALSE])
+
+  grouped_with <- lapply(seq_along(new_peaks$member), function(i) {
+    data.frame(
+      new_peak = peak_id_map$peak_ID[
+        match(new_peaks$newpeaks[i], peak_id_map$variant_ID)
+      ],
+      member = new_peaks$member[[i]],
+      stringsAsFactors = FALSE
+    )
+  })
+  grouped_with <- do.call("rbind", grouped_with)
+  hit <- match(out3$variant_ID, grouped_with$member)
+  out3$grouped_with <- grouped_with$new_peak[hit]
+  hit <- match(out3$variant_ID, peak_grp$pvalue$variant_ID)
+  out3$full_vs_reduce_pvalue <- peak_grp$pvalue$p_values[hit]
+  rownames(out3) <- NULL
+  out3
 }
 
 # Create a peak object for recalculating associations.
@@ -704,6 +1231,7 @@ setMethod("recalcAssoc",
   peakcall$negLog10P <- -log10(peakcall$P.model)
   out <- data.frame(peak_ID = i,
                     peak_variant_ID = peak_id,
+                    source_peak_variant_ID = peak_obj$peak_variant_id[i],
                     peakNegLog10P = peakcall$negLog10P[peakcall$variant_ID == peak_id],
                     recall_peak, subset(peakcall, select = -variant_ID))
   return(out)

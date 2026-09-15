@@ -1,178 +1,8 @@
 ################################################################################
-#' Search candidate genes by functional annotation
-#'
-#' Filter and rank genes in a candidate list using phrase-aware keyword
-#' matching (stopwords ignored; word-boundary / phrase match).
-#'
-#' @param candidate A data.frame of candidate genes (e.g. from
-#'   [lazyData()] with `dataset = "candidate"`). Used when `object` is
-#'   `NULL`.
-#' @param object A \code{LazyGas} object. When provided, the candidate list is
-#'   read with [lazyData()] (`dataset = "candidate"`). `candidate` is
-#'   ignored in that case.
-#' @param pheno Phenotype name or index passed to [lazyData()] when
-#'   `object` is given. Required if `object` is not `NULL`.
-#' @param query Character string describing the phenotype or biological process
-#'   of interest (space-separated keywords are allowed).
-#' @param ann_cols Character vector of column names in `candidate` that hold
-#'   functional annotation text (e.g. GO terms, gene descriptions). If `NULL`
-#'   (default), all columns except peak/gene coordinates and SnpEff impact
-#'   counts are used (i.e. columns joined from `ann` in [listCandidate()]).
-#' @param mode Search mode. Only \code{"keyword"} is supported (LSA / semantic
-#'   modes were removed).
-#' @param keyword_match For keyword mode, `"all"` requires every content term to
-#'   appear in the annotation text; `"any"` requires at least one term.
-#' @param ignore.case Passed to keyword matching.
-#' @param top_n If not `NULL`, return at most this many rows after ranking by
-#'   `match_score`.
-#' @param dedupe_genes If `TRUE` and `Gene_ID` is present, keep one row per
-#'   gene with the highest `match_score`.
-#' @param min_score,n_topics Ignored; retained for call compatibility with
-#'   older scripts (semantic / LSA search was removed).
-#'
-#' @return A subset of the input candidate `data.frame` with columns
-#'   `keyword_score`, `match_score`, and `match_method` added, sorted by
-#'   decreasing `match_score`.
-#'
-#' @details
-#' Annotation text for each row is the space-separated concatenation of
-#' non-empty values in `ann_cols`. Query terms drop English stopwords
-#' (e.g. \code{in}, \code{of}) and match with word boundaries (phrases use
-#' boundary-aware multi-word patterns).
-#'
-#' @seealso [lazyData()], [listCandidate()]
-#'
-#' @export
-#'
-#' @examples
-#' cand <- data.frame(
-#'   peak_ID = 1L,
-#'   Gene_ID = c("g1", "g2", "g3"),
-#'   Gene_chr = "1",
-#'   Gene_start = 1:3,
-#'   dist2peak = 0,
-#'   negLog10P = 3,
-#'   Description = c(
-#'     "fruit weight development",
-#'     "root hair elongation",
-#'     "cell wall biosynthesis"
-#'   ),
-#'   stringsAsFactors = FALSE
-#' )
-#' searchCandidateGenes(
-#'   candidate = cand,
-#'   query = "fruit weight",
-#'   mode = "keyword",
-#'   keyword_match = "all"
-#' )
-searchCandidateGenes <- function(candidate = NULL,
-                                 object = NULL,
-                                 pheno = NULL,
-                                 query,
-                                 ann_cols = NULL,
-                                 mode = "keyword",
-                                 keyword_match = c("all", "any"),
-                                 ignore.case = TRUE,
-                                 min_score = 0.1,
-                                 top_n = NULL,
-                                 dedupe_genes = TRUE,
-                                 n_topics = NULL) {
-  keyword_match <- match.arg(keyword_match)
-  mode <- as.character(mode)[1L]
-  if (!identical(mode, "keyword")) {
-    stop(
-      "searchCandidateGenes() supports mode = \"keyword\" only. ",
-      "LSA / semantic search (text2vec) was removed.",
-      call. = FALSE
-    )
-  }
-  if (!missing(n_topics) && !is.null(n_topics)) {
-    warning("'n_topics' is ignored; semantic / LSA search was removed.",
-            call. = FALSE)
-  }
-
-  if (!is.null(object)) {
-    if (!inherits(object, "LazyGas")) {
-      stop("'object' must be a LazyGas object.", call. = FALSE)
-    }
-    if (is.null(pheno)) {
-      stop("'pheno' is required when 'object' is provided.", call. = FALSE)
-    }
-    candidate <- lazyData(object = object, dataset = "candidate", pheno = pheno)
-    if (is.null(candidate) || nrow(candidate) == 0L) {
-      stop("No candidate data found for the given phenotype.", call. = FALSE)
-    }
-  } else if (is.null(candidate)) {
-    stop("Provide either 'object' (LazyGas) or 'candidate' (data.frame).",
-         call. = FALSE)
-  }
-
-  if (!is.data.frame(candidate)) {
-    stop("'candidate' must be a data.frame.", call. = FALSE)
-  }
-  if (nrow(candidate) == 0L) {
-    stop("'candidate' has no rows.", call. = FALSE)
-  }
-  if (!is.character(query) || length(query) != 1L || !nzchar(trimws(query))) {
-    stop("'query' must be a non-empty character string.", call. = FALSE)
-  }
-  query <- trimws(query)
-
-  ann_cols <- .resolve_ann_cols(candidate = candidate, ann_cols = ann_cols)
-  ann_text <- .candidate_annotation_text(candidate = candidate, ann_cols = ann_cols)
-
-  keyword_score <- .keyword_match_score(
-    text = ann_text,
-    query = query,
-    match = keyword_match,
-    ignore.case = ignore.case
-  )
-
-  kw_hit <- if (keyword_match == "all") {
-    keyword_score >= 1
-  } else {
-    keyword_score > 0
-  }
-
-  if (!any(kw_hit)) {
-    out <- candidate[0, , drop = FALSE]
-    attr(out, "searchCandidateGenes") <- list(
-      query = query,
-      mode = mode,
-      ann_cols = ann_cols,
-      n_matched = 0L
-    )
-    return(out)
-  }
-
-  out <- candidate[kw_hit, , drop = FALSE]
-  out$keyword_score <- keyword_score[kw_hit]
-  out$match_score <- out$keyword_score
-  out$match_method <- ifelse(out$keyword_score > 0, "keyword", "none")
-
-  if (dedupe_genes && "Gene_ID" %in% names(out)) {
-    out <- .dedupe_candidate_by_gene(out)
-  }
-
-  out <- out[order(-out$match_score, out$Gene_ID), , drop = FALSE]
-  rownames(out) <- NULL
-
-  if (!is.null(top_n)) {
-    top_n <- as.integer(top_n)[1L]
-    if (top_n > 0L && nrow(out) > top_n) {
-      out <- out[seq_len(top_n), , drop = FALSE]
-    }
-  }
-
-  attr(out, "searchCandidateGenes") <- list(
-    query = query,
-    mode = mode,
-    ann_cols = ann_cols,
-    keyword_match = keyword_match,
-    n_matched = nrow(out)
-  )
-  out
-}
+# Annotation keyword matching helpers (internal).
+# Used by collectGeneEvidence() / ranking.
+# The public searchCandidateGenes() API was removed (Phase 2 A3).
+################################################################################
 
 .candidate_non_ann_cols <- function() {
   c(
@@ -279,14 +109,29 @@ searchCandidateGenes <- function(candidate = NULL,
 }
 
 #' Build content keyword / phrase list from a phenotype query
+#'
+#' Includes user trait keywords, tissues/stage/conditions, and (when present)
+#' synonym / related phrases from Phase 2 A2.
 #' @keywords internal
 .keyword_terms_from_query <- function(query) {
   if (inherits(query, "PhenotypeQuery")) {
+    syn <- if (exists(".phenotype_linked_phrase_strings", mode = "function")) {
+      .phenotype_linked_phrase_strings(query$synonym_phrases)
+    } else {
+      character()
+    }
+    rel <- if (exists(".phenotype_linked_phrase_strings", mode = "function")) {
+      .phenotype_linked_phrase_strings(query$related_phrases)
+    } else {
+      character()
+    }
     raw <- c(
       query$trait_keywords,
       query$tissues,
       query$developmental_stage,
-      query$conditions
+      query$conditions,
+      syn,
+      rel
     )
     terms <- .filter_keyword_terms(raw)
     if (!length(terms)) {
@@ -302,6 +147,129 @@ searchCandidateGenes <- function(candidate = NULL,
     return(character())
   }
   .filter_keyword_terms(.annotation_tokenize(q))
+}
+
+#' Family-level annotation keyword details for ranking / A4 reports
+#' @keywords internal
+.annotation_keyword_family_details <- function(text, query, ignore.case = TRUE) {
+  text <- as.character(text)
+  n <- length(text)
+  empty <- list(
+    keyword_score = 0,
+    matched_keywords = character(),
+    matched_synonym = list(),
+    matched_related = list(),
+    unmatched_keywords = character(),
+    matched_context = character()
+  )
+  if (!inherits(query, "PhenotypeQuery")) {
+    terms <- .keyword_terms_from_query(query)
+    dets <- .keyword_match_details(text, terms, ignore.case = ignore.case)
+    return(lapply(dets, function(d) {
+      list(
+        keyword_score = d$keyword_score,
+        matched_keywords = d$matched_keywords,
+        matched_synonym = list(),
+        matched_related = list(),
+        unmatched_keywords = d$unmatched_keywords,
+        matched_context = character()
+      )
+    }))
+  }
+
+  user <- .filter_keyword_terms(query$trait_keywords %||% character())
+  ctx <- .filter_keyword_terms(c(
+    query$tissues %||% character(),
+    query$developmental_stage %||% character(),
+    query$conditions %||% character()
+  ))
+  syn <- query$synonym_phrases %||% list()
+  rel <- query$related_phrases %||% list()
+  if (is.data.frame(syn)) {
+    syn <- lapply(seq_len(nrow(syn)), function(i) as.list(syn[i, , drop = FALSE]))
+  }
+  if (is.data.frame(rel)) {
+    rel <- lapply(seq_len(nrow(rel)), function(i) as.list(rel[i, , drop = FALSE]))
+  }
+
+  search_terms <- .keyword_terms_from_query(query)
+  if (!length(search_terms) && !length(user) && !length(ctx)) {
+    return(lapply(seq_len(n), function(i) empty))
+  }
+
+  lapply(seq_len(n), function(i) {
+    txt <- text[[i]]
+    hit_term <- function(term) {
+      .keyword_term_matches(txt, term, ignore.case = ignore.case)
+    }
+    matched_user <- user[vapply(user, hit_term, logical(1L))]
+    matched_ctx <- ctx[vapply(ctx, hit_term, logical(1L))]
+
+    matched_syn <- list()
+    for (item in syn) {
+      ph <- as.character(item$phrase %||% "")[1L]
+      if (!nzchar(ph) || !hit_term(ph)) {
+        next
+      }
+      matched_syn[[length(matched_syn) + 1L]] <- list(
+        phrase = ph,
+        from_user = as.character(item$from_user %||% NA_character_)[1L]
+      )
+    }
+    matched_rel <- list()
+    for (item in rel) {
+      ph <- as.character(item$phrase %||% "")[1L]
+      if (!nzchar(ph) || !hit_term(ph)) {
+        next
+      }
+      matched_rel[[length(matched_rel) + 1L]] <- list(
+        phrase = ph,
+        from_user = as.character(item$from_user %||% NA_character_)[1L]
+      )
+    }
+
+    # Family-level unmatched: user phrase with no self/syn/rel hit
+    unmatched_user <- character()
+    for (u in user) {
+      syn_for <- vapply(syn, function(item) {
+        identical(
+          tolower(as.character(item$from_user %||% "")[1L]),
+          tolower(u)
+        ) && hit_term(as.character(item$phrase %||% "")[1L])
+      }, logical(1L))
+      rel_for <- vapply(rel, function(item) {
+        identical(
+          tolower(as.character(item$from_user %||% "")[1L]),
+          tolower(u)
+        ) && hit_term(as.character(item$phrase %||% "")[1L])
+      }, logical(1L))
+      if (!hit_term(u) && !any(syn_for) && !any(rel_for)) {
+        unmatched_user <- c(unmatched_user, u)
+      }
+    }
+
+    score_terms <- unique(c(
+      user,
+      vapply(syn, function(z) as.character(z$phrase %||% ""), character(1L)),
+      vapply(rel, function(z) as.character(z$phrase %||% ""), character(1L)),
+      ctx
+    ))
+    score_terms <- .filter_keyword_terms(score_terms)
+    kw_score <- if (!length(score_terms)) {
+      0
+    } else {
+      mean(vapply(score_terms, hit_term, logical(1L)))
+    }
+
+    list(
+      keyword_score = kw_score,
+      matched_keywords = matched_user,
+      matched_synonym = matched_syn,
+      matched_related = matched_rel,
+      unmatched_keywords = unique(unmatched_user),
+      matched_context = matched_ctx
+    )
+  })
 }
 
 .escape_perl_regex <- function(x) {
@@ -397,13 +365,4 @@ searchCandidateGenes <- function(candidate = NULL,
       unmatched_keywords = unmatched
     )
   })
-}
-
-.dedupe_candidate_by_gene <- function(x) {
-  if (!"Gene_ID" %in% names(x)) {
-    return(x)
-  }
-  ord <- order(-x$match_score, x$Gene_ID)
-  x <- x[ord, , drop = FALSE]
-  x[!duplicated(x$Gene_ID), , drop = FALSE]
 }

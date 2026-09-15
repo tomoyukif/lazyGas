@@ -32,6 +32,8 @@ test_that("conditional and credible set run on a peak", {
   )
   expect_true("PIP" %in% names(cred))
   expect_true(any(cred$in_credible_set))
+  expect_true(all(c("Chr", "Pos") %in% names(cred)))
+  expect_true(any(is.finite(as.numeric(cred$Pos)), na.rm = TRUE))
   expect_true(!is.null(attr(cred, "summary")))
 
   p_cs <- lazyGas::plotCredibleSet(cred)

@@ -21,7 +21,7 @@ calcCredibleSet(
 
 \item{pheno}{Phenotype name or index.}
 
-\item{peak_id}{Peak block ID.}
+\item{peak_id}{Peak block ID (representative peak after grouping).}
 
 \item{coverage}{Target cumulative PIP for the credible set.}
 
@@ -30,7 +30,7 @@ calcCredibleSet(
 \item{use_conditional}{If \code{TRUE}, use step-1 results from
 \code{\link[=conditionalAssoc]{conditionalAssoc()}} (unconditioned on other leads).}
 
-\item{recalc}{Use recalculated peak blocks.}
+\item{recalc}{Use recalculated peak blocks (group-merged when available).}
 
 \item{store}{If \code{TRUE}, write results to the companion store.}
 }
@@ -39,4 +39,11 @@ Approximate Bayes factors are used to rank variants and form a credible set.
 Large credible sets indicate limited resolution (often due to LD, sample size,
 or weak signals) rather than confident causal-variant identification.
 See \code{\link[=summarizeFineMapping]{summarizeFineMapping()}} for interpretation-ready summaries.
+}
+\details{
+When \code{recalc = TRUE}, the locus markers are taken from recalculated peak
+blocks. After \code{\link[=recalcAssoc]{recalcAssoc()}}, those blocks retain \strong{all markers from
+correlated peak groups} (not only the representative lead's original block).
+Use the credible set—not peak height alone—to narrow markers for analysis
+and reporting.
 }

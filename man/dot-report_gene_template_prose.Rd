@@ -2,11 +2,11 @@
 % Please edit documentation in R/llm-report-b2.R
 \name{.report_gene_template_prose}
 \alias{.report_gene_template_prose}
-\title{LLM-free English prose for keyword / expression / validity}
+\title{LLM-free English prose for keyword / expression / validity (A4)}
 \usage{
 .report_gene_template_prose(facts)
 }
 \description{
-LLM-free English prose for keyword / expression / validity
+LLM-free English prose for keyword / expression / validity (A4)
 }
 \keyword{internal}

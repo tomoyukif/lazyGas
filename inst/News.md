@@ -5,19 +5,88 @@ the release or documentation update for that version.
 
 ---
 
+## Changes in version 0.9.2 (2026-09-14)
+
+### recalcAssoc: keep correlated peak groups; narrow with CS
++ `recalcAssoc()` groups redundant peak leads but **retains member peak-block
+  markers** only when lead `negLog10P` fold (taller/shorter) is strictly below
+  `group_retain_fold` (default 2). Same-chromosome passers merge under the
+  representative peak ID; cross-chromosome passers stay as **independent peaks**.
+  Relationships remain in `recalc/groups` regardless of fold.
++ With `refine_position = TRUE`, same-chr fold-passing members merge into the
+  refined group block; cross-chr fold-passing members remain independent.
++ [calcCredibleSet()] uses these per-peak (same-chr) recalc blocks when
+  `recalc = TRUE`. Reports list **Related peaks (grouped)** from `groups`.
+
+### Phase 2 F peak reinterpretation (hypothesis cards)
++ Add `reinterpretPeakCandidates()` / `PeakReinterpretation`: per-peak
+  proximity, function (plan-alpha strong/weak gate), impact, expression,
+  and composite champions with side-by-side conflicts (no primary label).
++ Distance gate defaults **off**; function seat uses query trait keywords +
+  synonym phrases only (related phrases are not strong); empty function seat
+  is `NA` ("no function hypothesis").
++ `llm_report()` defaults to `reinterpret = TRUE` and
+  `gene_select = "union_champions"`; HTML gains **Hypothesis cards** before
+  the candidate list; Evidence / E gene sets follow the champion union.
++ Companion store section `phenotype_reinterpret/` and
+  `lazyData(..., "phenotype_reinterpret")`.
+
+### Phase 2 E pipeline (gene × source evidence)
++ Add working-directory config helpers
+  `writeLazyGasExploreConfig()` / `readLazyGasExploreConfig()` and
+  `classifyAnnColumns()` (E0; LLM column-name classify when `use_llm=TRUE`).
++ Add gene×source E loop (`R/llm-report-e0.R`, `R/llm-report-e.R`,
+  `R/llm-report-id-cache.R`): CS+GFF gene selection (GWAS / QTL), E1–E10
+  payloads/templates (E10 = integrated interpretation after Brief summary),
+  GO OBO / KEGG REST / Pfam·InterPro ID→name caches,
+  InterProScan×SnpEff AA overlap (same protein ID; &lt;80% match warning),
+  Yanai τ / relative height, and B5 numeric allowlist grounding.
++ E2 / impact champions count **peak-block-marker-linked** SnpEff only
+  (`negLog10P` finite); `llm_report` loads store snpeff and filters per peak
+  via `.snpeff_for_peak()`.
++ Per gene, multiple ANN at the **same Chr/Pos/Allele** keep only the
+  **worst impact** (HIGH>MODERATE>LOW>MODIFIER) and count as **one** variant;
+  report HIGH effect lines are no longer multi-transcript duplicates.
++ `listCandidate()` also writes **simple candidate** Parquet and
+  **Gene↔transcript/protein** map (`lazyData(..., "simple_candidate"|"gene_protein_map")`).
++ `llm_report(work_dir=...)` switches evidence to the E path; without
+  `work_dir` the legacy peak-batch prose path is unchanged.
++ Ship editable `inst/extdata/expression_coarse_vocab.yaml` for E4 labels.
++ `classifyAnnColumns(use_llm=TRUE)`: normalize common label drift
+  (e.g. `class-kegg`→`kegg`) and, if still invalid, run **one LLM scrutiny
+  pass** that re-checks the prior JSON against the allowed class list.
++ Shared `.llm_scrutiny_pass()`: constrained LLM steps (E source JSON, B5
+  numeric grounding, B2 evidence/JA translation, phenotypeQuery + synonym/
+  related expand, annotation relevance) re-send prior output + rules for
+  one correction pass before falling back.
++ Credible sets now carry `Chr`/`Pos` from the peak block in
+  `calcCredibleSet()`; E path also enriches stored CS via peak-call
+  `variant_ID` map so gene selection no longer returns empty evidence.
++ `phenotypeQuery(..., llm_timeout=)` (default 600s): query parse / synonym /
+  related expand no longer hard-cap at 90s (Gemma 31B tunnel timeouts).
+
+---
+
 ## Changes in version 0.9.2 (2026-07-24)
 
 ### Annotation keyword matching
-+ Remove text2vec LSA / semantic cosine scoring from annotation evidence and
-  from `searchCandidateGenes()` (`mode = "semantic"` / `"both"` no longer
-  supported).
++ Remove **`searchCandidateGenes()`**. Keyword matching helpers remain for
+  ranking / `collectGeneEvidence()`.
++ Remove text2vec LSA / semantic cosine scoring from annotation evidence
+  (`mode = "semantic"` / `"both"` no longer supported).
 + Rebuild keyword matching: phrase-first terms from `PhenotypeQuery`, English
   stopword filtering, word-boundary / phrase patterns, and
   `matched_keywords` / `unmatched_keywords` in evidence details.
-+ Update LLM report prompts so keyword notes are qualitative (high / low /
-  none), list matched vs unmatched terms, never print numeric scores, and do
-  not claim a "semantic match".
-
++ Phase 2 A1/A2/A4: `use_llm = TRUE` phrase split + synonym/related expand
+  (`synonym_phrases` / `related_phrases` with `from_user`); search terms are
+  the union of user / context / synonym / related phrases. Family-level
+  unmatched (user phrase with no self/synonym/related hit) is kept for
+  reports; Keywords vs Validity prompts no longer use high/low/hit-rate
+  language. `use_llm = FALSE` keeps unigram fallback and forces annotation
+  LLM relevance off.
++ Update LLM report prompts for matched synonym/related (`from_user`) and
+  family unmatched; never print numeric ranking scores or claim a "semantic
+  match".
 ### Explorer UI and workflow polish
 + Reorganize **`runLazyGasExplorer()`** sidebar controls by tab so only
   context-relevant inputs are shown:

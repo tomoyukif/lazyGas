@@ -19,6 +19,7 @@
     phenotype = "Phenotype",
     non_missing = "Non-missing phenotype",
     candidate_list = "Candidate list",
+    hypothesis_cards = "Hypothesis cards",
     evidence = "Evidence",
     score_note = paste(
       "Scores are a weighted sum of values normalized to 0–1",
@@ -29,9 +30,15 @@
     snpeff = "Variant effect (SnpEff)",
     keywords = "Keywords / annotation",
     expression = "Expression",
+    go = "GO",
+    kegg = "KEGG",
+    domains = "Domains",
+    summary = "Brief summary",
+    interpretation = "Integrated interpretation",
     validity = "Brief validity / caveats",
     credible_set = "Credible set",
     variants = "variants",
+    related_peaks = "Related peaks (grouped)",
     resolvable = "resolvable",
     partially_resolvable = "partially resolvable",
     not_resolved = "not resolved",
@@ -76,17 +83,15 @@
   trimws(x)
 }
 
-#' Require SnpEff + credible sets for report peaks
+#' Require credible sets + GFF for report peaks (SnpEff optional)
+#' @param gff GRanges gene models (required).
+#' @return Invisible list with \code{has_snpeff} logical.
 #' @keywords internal
-.report_require_snpeff_cs <- function(object, pheno_name, peak_ids) {
-  snpeff <- tryCatch(
-    lazyData(object = object, dataset = "snpeff", pheno = pheno_name),
-    error = function(e) NULL
-  )
-  if (is.null(snpeff) || !nrow(snpeff) || !"Gene_ID" %in% names(snpeff)) {
+.report_require_cs_gff <- function(object, pheno_name, peak_ids, gff) {
+  if (is.null(gff) || !inherits(gff, "GRanges") || !length(gff)) {
     stop(
-      "SnpEff annotations are required for llm_report(). ",
-      "Run listCandidate(..., snpeff = ...) first.",
+      "GFF (GRanges) is required for llm_report(). ",
+      "Pass gff= from rtracklayer::import.gff() / listCandidate().",
       call. = FALSE
     )
   }
@@ -110,7 +115,24 @@
       )
     }
   }
-  invisible(TRUE)
+  snpeff <- tryCatch(
+    lazyData(object = object, dataset = "snpeff", pheno = pheno_name),
+    error = function(e) NULL
+  )
+  has_snpeff <- !(is.null(snpeff) || !nrow(snpeff) || !"Gene_ID" %in% names(snpeff))
+  invisible(list(has_snpeff = has_snpeff))
+}
+
+# Backward-compatible alias
+#' @rdname dot-report_require_cs_gff
+#' @keywords internal
+.report_require_snpeff_cs <- function(object, pheno_name, peak_ids, gff = NULL) {
+  .report_require_cs_gff(
+    object = object,
+    pheno_name = pheno_name,
+    peak_ids = peak_ids,
+    gff = gff
+  )
 }
 
 #' Ensure finemap is among ranking sources/weights for llm_report
@@ -172,13 +194,51 @@
   } else {
     ""
   }
-  sprintf(
+  cs_line <- sprintf(
     "<p><strong>%s:</strong> %s %s — %s%s</p>",
     .report_escape_html(ui$credible_set),
     .report_escape_html(as.character(n_in)),
     .report_escape_html(ui$variants),
     .report_escape_html(label),
     detail
+  )
+  related_line <- .report_related_peaks_html(
+    object = object,
+    pheno_name = pheno_name,
+    peak_id = peak_id,
+    language = language
+  )
+  paste0(cs_line, related_line)
+}
+
+#' Related peaks from recalc/groups (may include other chromosomes).
+#' @keywords internal
+.report_related_peaks_html <- function(object, pheno_name, peak_id, language = "en") {
+  ui <- .report_i18n(language)
+  grp <- tryCatch(
+    lazyData(object = object, dataset = "groups", pheno = pheno_name),
+    error = function(e) NULL
+  )
+  if (is.null(grp) || !nrow(grp) || !"grouped_with" %in% names(grp)) {
+    return("")
+  }
+  pid <- as.character(peak_id)[1L]
+  peak_ids <- as.character(grp$peak_ID)
+  gwith <- as.character(grp$grouped_with)
+  related <- unique(c(
+    peak_ids[!is.na(gwith) & gwith == pid],
+    gwith[!is.na(peak_ids) & peak_ids == pid]
+  ))
+  related <- related[
+    !is.na(related) & nzchar(related) & related != pid
+  ]
+  if (!length(related)) {
+    return("")
+  }
+  sprintf(
+    "<p><strong>%s:</strong> %s</p>\n",
+    .report_escape_html(ui$related_peaks),
+    .report_escape_html(paste(related, collapse = ", "))
   )
 }
 
@@ -315,20 +375,98 @@
       "</ul>\n"
     ),
     has_expression = has_expr,
-    ann_matched = unlist(ev$annotation$details$matched_keywords %||% list()),
+    ann_matched = as.character(unlist(
+      ev$annotation$details$matched_keywords %||% list(),
+      use.names = FALSE
+    )),
+    ann_matched_synonym = ev$annotation$details$matched_synonym %||% list(),
+    ann_matched_related = ev$annotation$details$matched_related %||% list(),
+    ann_unmatched = as.character(unlist(
+      ev$annotation$details$unmatched_keywords %||% list(),
+      use.names = FALSE
+    )),
+    ann_matched_context = as.character(unlist(
+      ev$annotation$details$matched_context %||% list(),
+      use.names = FALSE
+    )),
     expr_snippets = as.character(unlist(ev$expression$snippets %||% list()))
   )
 }
 
-#' LLM-free English prose for keyword / expression / validity
+#' Format linked phrase records as "phrase (from user: X)"
+#' @keywords internal
+.report_format_linked_phrases <- function(items) {
+  if (is.null(items) || !length(items)) {
+    return(character())
+  }
+  if (is.data.frame(items)) {
+    items <- lapply(seq_len(nrow(items)), function(i) as.list(items[i, , drop = FALSE]))
+  }
+  vapply(items, function(it) {
+    if (is.character(it) && length(it) == 1L) {
+      return(as.character(it))
+    }
+    ph <- as.character(it$phrase %||% "")[1L]
+    fu <- as.character(it$from_user %||% "")[1L]
+    if (!nzchar(ph)) {
+      return("")
+    }
+    if (nzchar(fu) && !is.na(fu)) {
+      sprintf("%s (from user: %s)", ph, fu)
+    } else {
+      ph
+    }
+  }, character(1L))
+}
+
+#' LLM-free English prose for keyword / expression / validity (A4)
 #' @keywords internal
 .report_gene_template_prose <- function(facts) {
-  matched <- facts$ann_matched
-  matched <- matched[!is.na(matched) & nzchar(as.character(matched))]
-  kw <- if (!length(matched)) {
+  matched <- as.character(facts$ann_matched %||% character())
+  matched <- matched[!is.na(matched) & nzchar(matched)]
+  syn <- .report_format_linked_phrases(facts$ann_matched_synonym %||% list())
+  syn <- syn[nzchar(syn)]
+  rel <- .report_format_linked_phrases(facts$ann_matched_related %||% list())
+  rel <- rel[nzchar(rel)]
+  unmatched <- as.character(facts$ann_unmatched %||% character())
+  unmatched <- unmatched[!is.na(unmatched) & nzchar(unmatched)]
+  ctx <- as.character(facts$ann_matched_context %||% character())
+  ctx <- ctx[!is.na(ctx) & nzchar(ctx)]
+
+  parts <- character()
+  if (length(matched)) {
+    parts <- c(parts, paste0("Matched keywords: ", paste(matched, collapse = ", "), "."))
+  }
+  if (length(syn)) {
+    parts <- c(parts, paste0("Matched synonyms: ", paste(syn, collapse = "; "), "."))
+  }
+  if (length(rel)) {
+    parts <- c(
+      parts,
+      paste0(
+        "Matched related (indirect lexical links): ",
+        paste(rel, collapse = "; "),
+        "."
+      )
+    )
+  }
+  if (length(ctx)) {
+    parts <- c(parts, paste0("Matched context: ", paste(ctx, collapse = ", "), "."))
+  }
+  if (length(unmatched)) {
+    parts <- c(
+      parts,
+      paste0(
+        "Unmatched user keywords (no self/synonym/related hit): ",
+        paste(unmatched, collapse = ", "),
+        "."
+      )
+    )
+  }
+  kw <- if (!length(parts)) {
     "No matched phenotype keywords."
   } else {
-    paste0("Matched keywords: ", paste(matched, collapse = ", "), ".")
+    paste(parts, collapse = " ")
   }
   expr <- if (isTRUE(facts$has_expression)) {
     if (length(facts$expr_snippets)) {
@@ -346,14 +484,19 @@
   )
 }
 
-#' Strip ranking scores and unmatched keywords from evidence for LLM
+#' Build LLM evidence payload (keep family-level unmatched; drop scores)
 #' @keywords internal
 .report_llm_evidence_payload <- function(rank_sub) {
   lapply(seq_len(nrow(rank_sub)), function(i) {
     row <- rank_sub[i, , drop = FALSE]
     ev <- .report_row_evidence(row)
-    if (!is.null(ev$annotation$details$unmatched_keywords)) {
-      ev$annotation$details$unmatched_keywords <- NULL
+    # Drop ranking scores from annotation details; keep A4 keyword fields
+    if (!is.null(ev$annotation$details)) {
+      ev$annotation$details$keyword_score <- NULL
+      ev$annotation$details$llm_relevance_score <- NULL
+    }
+    if (!is.null(ev$annotation$score)) {
+      ev$annotation$score <- NULL
     }
     list(
       Gene_ID = as.character(row$Gene_ID[1L]),
@@ -374,14 +517,21 @@
     "Return ONLY a JSON object keyed by Gene_ID.",
     "Each value must be an object with keys: keywords, expression, validity.",
     "Write all text in English.",
-    "Do not invent genes. Do not print composite_score or score_* values.",
+    "Do not invent genes. Do not print composite_score, score_*, keyword_score,",
+    "or llm_relevance_score values. Do not mention hit rates or high/low match.",
     "Do not claim a 'semantic match' or embedding similarity.",
-    "For keywords: list only matched phenotype keywords from",
-    "annotation.details.matched_keywords when present.",
-    "Do not mention unmatched or missing keywords.",
-    "If none matched, say that briefly.",
+    "For keywords: use annotation.details.matched_keywords,",
+    "matched_synonym, matched_related, unmatched_keywords, and matched_context.",
+    "When citing synonyms or related phrases, include their from_user link.",
+    "Describe related hits as indirect lexical links, not direct phenotype proof.",
+    "Treat unmatched_keywords (user phrases with no self/synonym/related hit)",
+    "as material that may argue against phenotype relevance.",
+    "Do not list missed synonym/related strings themselves.",
+    "Do not mention tissues/stage/conditions unless they appear in matched_context.",
+    "If nothing matched, say briefly that keywords did not match.",
     "For expression: summarize expression snippets if present, else use empty string.",
-    "For validity: note contradictions or missing information briefly.",
+    "For validity: discuss only SnpEff / GWAS contradictions or missing coded",
+    "metrics (distance, PIP, impact). Do not repeat keyword match/unmatch here.",
     "Preserve gene IDs and numeric facts exactly when you mention them."
   )
   user_msg <- jsonlite::toJSON(
@@ -404,6 +554,22 @@
     jsonlite::fromJSON(raw, simplifyVector = FALSE),
     error = function(e) NULL
   )
+  if (is.null(parsed) || !is.list(parsed)) {
+    raw2 <- .llm_scrutiny_pass(
+      llm = llm,
+      rules = system_msg,
+      prior_output = raw,
+      problems = "JSON parse failed or not an object keyed by Gene_ID",
+      extra_user = user_msg,
+      timeout = llm$timeout
+    )
+    if (!inherits(raw2, "error")) {
+      parsed <- tryCatch(
+        jsonlite::fromJSON(raw2, simplifyVector = FALSE),
+        error = function(e) NULL
+      )
+    }
+  }
   if (is.null(parsed) || !is.list(parsed)) {
     warning("LLM evidence JSON parse failed; using templates.", call. = FALSE)
     return(NULL)
@@ -430,20 +596,18 @@
 
 #' Translate English prose blocks to Japanese without changing IDs/numbers
 #'
-#' All-or-nothing: on any failure, return the English input and warn.
-#' No partial translation and no retries.
+#' One scrutiny pass if the first translation is incomplete; then all-or-nothing
+#' fallback to English.
 #'
 #' @keywords internal
 .report_translate_prose_ja <- function(prose_by_gene, llm) {
   system_msg <- .report_translate_prose_ja_system()
+  user_payload <- jsonlite::toJSON(prose_by_gene, auto_unbox = TRUE, pretty = TRUE)
   raw <- tryCatch(
     llmChat(
       messages = list(
         list(role = "system", content = system_msg),
-        list(
-          role = "user",
-          content = jsonlite::toJSON(prose_by_gene, auto_unbox = TRUE, pretty = TRUE)
-        )
+        list(role = "user", content = user_payload)
       ),
       model = llm$model,
       base_url = llm$base_url,
@@ -466,49 +630,63 @@
     }
     return(prose_by_gene)
   }
+  check_ja <- function(parsed) {
+    if (is.null(parsed) || !is.list(parsed)) {
+      return(list(ok = FALSE, problems = "JSON parse failed"))
+    }
+    problems <- character()
+    for (gid in names(prose_by_gene)) {
+      if (is.null(parsed[[gid]]) || !is.list(parsed[[gid]])) {
+        problems <- c(problems, paste0("missing gene object for ", gid))
+        next
+      }
+      src <- prose_by_gene[[gid]]
+      for (key in c("keywords", "validity")) {
+        if (!is.null(src[[key]]) && nzchar(as.character(src[[key]])[1L]) &&
+            (is.null(parsed[[gid]][[key]]) ||
+             !nzchar(as.character(parsed[[gid]][[key]])[1L]))) {
+          problems <- c(problems, paste0("missing '", key, "' for ", gid))
+        }
+      }
+      if (!is.null(src$expression) && nzchar(as.character(src$expression)[1L]) &&
+          (is.null(parsed[[gid]]$expression) ||
+           !nzchar(as.character(parsed[[gid]]$expression)[1L]))) {
+        problems <- c(problems, paste0("missing 'expression' for ", gid))
+      }
+    }
+    list(ok = !length(problems), problems = problems, parsed = parsed)
+  }
   parsed <- tryCatch(
     jsonlite::fromJSON(raw, simplifyVector = FALSE),
     error = function(e) NULL
   )
-  if (is.null(parsed) || !is.list(parsed)) {
-    warning("Japanese translation JSON parse failed; keeping English.", call. = FALSE)
+  chk <- check_ja(parsed)
+  if (!isTRUE(chk$ok)) {
+    raw2 <- .llm_scrutiny_pass(
+      llm = llm,
+      rules = system_msg,
+      prior_output = raw,
+      problems = chk$problems,
+      extra_user = user_payload,
+      timeout = llm$timeout
+    )
+    if (!inherits(raw2, "error")) {
+      parsed2 <- tryCatch(
+        jsonlite::fromJSON(raw2, simplifyVector = FALSE),
+        error = function(e) NULL
+      )
+      chk <- check_ja(parsed2)
+    }
+  }
+  if (!isTRUE(chk$ok)) {
+    warning(
+      "Japanese translation incomplete; keeping English prose. ",
+      paste(chk$problems, collapse = "; "),
+      call. = FALSE
+    )
     return(prose_by_gene)
   }
-  # Reject partial translations (missing genes or required keys)
-  for (gid in names(prose_by_gene)) {
-    if (is.null(parsed[[gid]]) || !is.list(parsed[[gid]])) {
-      warning(
-        "Japanese translation incomplete for gene ", gid,
-        "; keeping English prose.",
-        call. = FALSE
-      )
-      return(prose_by_gene)
-    }
-    src <- prose_by_gene[[gid]]
-    for (key in c("keywords", "validity")) {
-      if (!is.null(src[[key]]) && nzchar(as.character(src[[key]])[1L]) &&
-          (is.null(parsed[[gid]][[key]]) ||
-           !nzchar(as.character(parsed[[gid]][[key]])[1L]))) {
-        warning(
-          "Japanese translation missing '", key, "' for gene ", gid,
-          "; keeping English prose.",
-          call. = FALSE
-        )
-        return(prose_by_gene)
-      }
-    }
-    if (!is.null(src$expression) && nzchar(as.character(src$expression)[1L]) &&
-        (is.null(parsed[[gid]]$expression) ||
-         !nzchar(as.character(parsed[[gid]]$expression)[1L]))) {
-      warning(
-        "Japanese translation missing 'expression' for gene ", gid,
-        "; keeping English prose.",
-        call. = FALSE
-      )
-      return(prose_by_gene)
-    }
-  }
-  parsed
+  chk$parsed
 }
 
 #' Evidence HTML for genes in one peak
@@ -662,7 +840,10 @@
                                       top_n,
                                       language = "en",
                                       use_llm = FALSE,
-                                      llm = NULL) {
+                                      llm = NULL,
+                                      e_run = NULL,
+                                      reinterpret_peak = NULL,
+                                      evidence_rank = NULL) {
   ui <- .report_i18n(language)
   header <- sprintf(
     "Peak %s — %s:%s (%s-%s)",
@@ -687,9 +868,37 @@
   } else {
     sub <- data.frame()
   }
+  evidence_src <- if (!is.null(evidence_rank) && nrow(evidence_rank)) {
+    evidence_rank
+  } else {
+    sub
+  }
+  evidence_html <- if (!is.null(e_run)) {
+    .report_evidence_html_e(e_run, language = language)
+  } else {
+    .report_evidence_html(
+      rank_sub = evidence_src,
+      query = query,
+      language = language,
+      use_llm = use_llm,
+      llm = llm
+    )
+  }
+  hyp_html <- ""
+  if (!is.null(reinterpret_peak)) {
+    hyp_html <- paste0(
+      "<h3>", .report_escape_html(ui$hypothesis_cards), "</h3>\n",
+      formatPeakReinterpretation(
+        reinterpret_peak,
+        language = language,
+        format = "html"
+      )
+    )
+  }
   paste0(
     "<h2>", .report_escape_html(header), "</h2>\n",
     cs_html,
+    hyp_html,
     "<h3>", .report_escape_html(ui$candidate_list), "</h3>\n",
     if (nrow(sub)) {
       .report_candidate_table_html(sub, sources = sources, language = language)
@@ -697,13 +906,7 @@
       "<p>(no candidates)</p>\n"
     },
     "<h3>", .report_escape_html(ui$evidence), "</h3>\n",
-    .report_evidence_html(
-      rank_sub = sub,
-      query = query,
-      language = language,
-      use_llm = use_llm,
-      llm = llm
-    )
+    evidence_html
   )
 }
 

@@ -826,6 +826,144 @@ NULL
   invisible(NULL)
 }
 
+#' Write E0 simple candidate Parquet (Gene_ID + position)
+#' @keywords internal
+.store_write_simple_candidate <- function(object, pheno_name, simple) {
+  if (.store_is_gds(object)) {
+    if (is.null(simple) || !nrow(simple)) {
+      .create_gdsn(
+        root_node = object$root,
+        target_node = "lazygas/simple_candidate",
+        new_node = pheno_name,
+        storage = "string",
+        replace = TRUE
+      )
+    } else {
+      .create_gdsn(
+        root_node = object$root,
+        target_node = "lazygas/simple_candidate",
+        new_node = pheno_name,
+        val = as.matrix(simple),
+        storage = "string",
+        replace = TRUE
+      )
+      gdsfmt::put.attr.gdsn(
+        node = gdsfmt::index.gdsn(node = object$root, path = "lazygas/simple_candidate"),
+        name = "col_names",
+        val = colnames(simple)
+      )
+    }
+    return(invisible(NULL))
+  }
+  path <- .store_table_path(object, "candidate", "simple", pheno_name)
+  if (is.null(simple)) {
+    .store_write_table(object, data.frame(), path)
+  } else {
+    .store_write_table(object, as.data.frame(simple), path)
+  }
+  invisible(NULL)
+}
+
+#' Write GFF Gene↔transcript/protein map
+#' @keywords internal
+.store_write_gene_protein_map <- function(object, protein_map) {
+  if (.store_is_gds(object)) {
+    if (is.null(protein_map) || !nrow(protein_map)) {
+      .create_gdsn(
+        root_node = object$root,
+        target_node = "lazygas",
+        new_node = "gene_protein_map",
+        storage = "string",
+        replace = TRUE
+      )
+    } else {
+      .create_gdsn(
+        root_node = object$root,
+        target_node = "lazygas",
+        new_node = "gene_protein_map",
+        val = as.matrix(protein_map),
+        storage = "string",
+        replace = TRUE
+      )
+      gdsfmt::put.attr.gdsn(
+        node = gdsfmt::index.gdsn(node = object$root, path = "lazygas/gene_protein_map"),
+        name = "col_names",
+        val = colnames(protein_map)
+      )
+    }
+    return(invisible(NULL))
+  }
+  root <- .store_path(object)
+  path <- if (.store_mode(object) == "sqlite") {
+    "gene_protein_map"
+  } else {
+    file.path(root, "candidate", "gene_protein_map.parquet")
+  }
+  if (is.null(protein_map)) {
+    .store_write_table(object, data.frame(), path)
+  } else {
+    .store_write_table(object, as.data.frame(protein_map), path)
+  }
+  invisible(NULL)
+}
+
+#' Read E0 simple candidate table
+#' @keywords internal
+.store_read_simple_candidate <- function(object, pheno_name) {
+  if (.store_is_gds(object)) {
+    path <- paste0("lazygas/simple_candidate/", pheno_name)
+    if (!exist.gdsn(node = object$root, path = path)) {
+      return(NULL)
+    }
+    mat <- .get_data_gds_only(object, path)
+    if (is.null(mat)) return(NULL)
+    df <- as.data.frame(mat, stringsAsFactors = FALSE)
+    att <- tryCatch(
+      gdsfmt::get.attr.gdsn(
+        gdsfmt::index.gdsn(object$root, "lazygas/simple_candidate")
+      )$col_names,
+      error = function(e) NULL
+    )
+    if (!is.null(att) && length(att) == ncol(df)) {
+      colnames(df) <- att
+    }
+    return(df)
+  }
+  path <- .store_table_path(object, "candidate", "simple", pheno_name)
+  .store_read_table(object, path)
+}
+
+#' Read Gene↔protein map
+#' @keywords internal
+.store_read_gene_protein_map <- function(object) {
+  if (.store_is_gds(object)) {
+    path <- "lazygas/gene_protein_map"
+    if (!exist.gdsn(node = object$root, path = path)) {
+      return(NULL)
+    }
+    mat <- .get_data_gds_only(object, path)
+    if (is.null(mat)) return(NULL)
+    df <- as.data.frame(mat, stringsAsFactors = FALSE)
+    att <- tryCatch(
+      gdsfmt::get.attr.gdsn(
+        gdsfmt::index.gdsn(object$root, path)
+      )$col_names,
+      error = function(e) NULL
+    )
+    if (!is.null(att) && length(att) == ncol(df)) {
+      colnames(df) <- att
+    }
+    return(df)
+  }
+  root <- .store_path(object)
+  path <- if (.store_mode(object) == "sqlite") {
+    "gene_protein_map"
+  } else {
+    file.path(root, "candidate", "gene_protein_map.parquet")
+  }
+  .store_read_table(object, path)
+}
+
 .store_read_matrix_dataset <- function(object, dataset, pheno_name) {
   if (.store_is_gds(object)) {
     return(NULL)

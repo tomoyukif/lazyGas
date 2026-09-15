@@ -7,9 +7,10 @@
 \usage{
 lazyData(
   object,
-  dataset = c("scan", "peakcall", "recalc", "groups", "candidate", "snpeff", "qc",
-    "multitrait", "conditional", "credible_set", "fine_mapping", "pipeline",
-    "phenotype_rank", "phenotype_query"),
+  dataset = c("scan", "peakcall", "recalc", "groups", "candidate", "snpeff",
+    "simple_candidate", "gene_protein_map", "qc", "multitrait", "conditional",
+    "credible_set", "fine_mapping", "pipeline", "phenotype_rank", "phenotype_query",
+    "phenotype_reinterpret"),
   pheno,
   kind = NULL,
   ...
@@ -21,14 +22,16 @@ lazyData(
 \item{object}{A \code{LazyGas} object.}
 
 \item{dataset}{The dataset to retrieve. One of \code{"scan"}, \code{"peakcall"},
-\code{"recalc"}, \code{"groups"}, \code{"candidate"}, \code{"snpeff"}, \code{"qc"}, \code{"multitrait"},
-\code{"conditional"}, \code{"credible_set"}, \code{"fine_mapping"}, \code{"pipeline"},
-\code{"phenotype_rank"}, or \code{"phenotype_query"}.}
+\code{"recalc"}, \code{"groups"}, \code{"candidate"}, \code{"snpeff"}, \code{"simple_candidate"},
+\code{"gene_protein_map"}, \code{"qc"}, \code{"multitrait"}, \code{"conditional"},
+\code{"credible_set"}, \code{"fine_mapping"}, \code{"pipeline"}, \code{"phenotype_rank"},
+\code{"phenotype_query"}, or \code{"phenotype_reinterpret"}.}
 
 \item{pheno}{The phenotype to retrieve.}
 
 \item{kind}{Table kind for section datasets (e.g. \code{"summary"}, \code{"peak_1"},
-or a phenotype-rank query id such as \code{"rank_pq_..."}).}
+or a phenotype-rank query id such as \code{"rank_pq_..."}). For
+\code{phenotype_reinterpret}, optional query id (defaults to latest).}
 
 \item{...}{Additional arguments.}
 }

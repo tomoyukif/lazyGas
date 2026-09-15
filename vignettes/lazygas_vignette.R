@@ -269,35 +269,6 @@ if (have_demo_ann) {
 
 
 ## -----------------------------------------------------------------------------
-cand_demo <- data.frame(
-  peak_ID = 1L,
-  Gene_ID = c("g1", "g2", "g3"),
-  Gene_chr = "1",
-  Gene_start = 1:3,
-  dist2peak = 0,
-  negLog10P = 3,
-  Description = c(
-    "fruit weight development",
-    "root hair elongation",
-    "cell wall biosynthesis"
-  ),
-  stringsAsFactors = FALSE
-)
-searchCandidateGenes(
-  candidate = cand_demo,
-  query = "fruit weight",
-  mode = "keyword",
-  keyword_match = "all"
-)
-
-
-## ----eval=FALSE---------------------------------------------------------------
-# searchCandidateGenes(object = lg, pheno = "Fruit weight",
-#                        query = "fruit ripening carbohydrate",
-#                        mode = "both", min_score = 0.15, top_n = 50)
-
-
-## -----------------------------------------------------------------------------
 pheno <- getPheno(object = lg)
 sapply(pheno, head)
 

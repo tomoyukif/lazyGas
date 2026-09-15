@@ -14,10 +14,19 @@
 #'   conditions (optional).
 #' @param species Target species name (optional).
 #' @param use_llm If \code{TRUE}, attempt LLM-based structuring via
-#'   [llmChat()].
+#'   [llmChat()] (phrase split, then synonym and related expand).
+#'   If \code{FALSE}, use the unigram fallback and leave synonym/related
+#'   empty. Annotation LLM relevance is also off on that path.
+#' @param synonym_phrases,related_phrases Optional lists of
+#'   \code{list(phrase, from_user, source)} used when \code{use_llm = TRUE}
+#'   instead of calling the expander LLMs (\code{NULL} = call LLM;
+#'   \code{list()} = skip that expand). Ignored when \code{use_llm = FALSE}.
 #' @param llm_model Model name passed to Ollama (default from
 #'   \code{LAZYGAS_LLM_MODEL} or \code{"gemma4-31b-64k:latest"}).
 #' @param llm_base_url Ollama base URL (default from \code{LAZYGAS_LLM_URL}).
+#' @param llm_timeout Per-call timeout in seconds for query parse / synonym /
+#'   related LLM requests (default 600). Gemma 31B over a tunnel often needs
+#'   more than 90s; short timeouts fall back to \code{parsed_by = "fallback"}.
 #' @param object Optional \code{LazyGas} object; when \code{save = TRUE} the
 #'   query is written to the companion store.
 #' @param save Save the query JSON to the companion store when \code{object} is
@@ -42,18 +51,26 @@ phenotypeQuery <- function(text,
                            conditions = NULL,
                            species = NULL,
                            use_llm = FALSE,
+                           synonym_phrases = NULL,
+                           related_phrases = NULL,
                            llm_model = NULL,
                            llm_base_url = NULL,
+                           llm_timeout = 600,
                            object = NULL,
                            save = !is.null(object)) {
   if (!is.character(text) || length(text) != 1L || !nzchar(trimws(text))) {
     stop("'text' must be a non-empty character string.", call. = FALSE)
   }
   text <- trimws(text)
+  llm_timeout <- as.numeric(llm_timeout)[1L]
+  if (!is.finite(llm_timeout) || llm_timeout <= 0) {
+    llm_timeout <- 600
+  }
 
   query_id <- .phenotype_query_new_id()
 
   parsed <- if (isTRUE(use_llm)) {
+    message("phenotypeQuery: LLM parse trait keywords...")
     .phenotype_query_via_llm(
       text = text,
       tissues = tissues,
@@ -61,13 +78,17 @@ phenotypeQuery <- function(text,
       conditions = conditions,
       species = species,
       llm_model = llm_model,
-      llm_base_url = llm_base_url
+      llm_base_url = llm_base_url,
+      llm_timeout = llm_timeout
     )
   } else {
     NULL
   }
 
   if (is.null(parsed)) {
+    if (isTRUE(use_llm)) {
+      message("phenotypeQuery: LLM parse unavailable — fallback")
+    }
     parsed <- .phenotype_query_fallback(
       text = text,
       tissues = tissues,
@@ -75,6 +96,57 @@ phenotypeQuery <- function(text,
       conditions = conditions,
       species = species
     )
+  } else if (identical(parsed$parsed_by, "llm")) {
+    message("phenotypeQuery: LLM parse done")
+  }
+
+  syn <- list()
+  rel <- list()
+  if (identical(parsed$parsed_by, "llm")) {
+    parsed <- .phenotype_query_normalize_true(
+      parsed = parsed,
+      trait_text = text,
+      tissues = tissues,
+      stage = stage,
+      conditions = conditions,
+      species = species
+    )
+    if (is.null(synonym_phrases)) {
+      message("phenotypeQuery: LLM expand synonyms...")
+      syn <- .phenotype_query_expand_synonyms(
+        trait_text = text,
+        trait_keywords = parsed$trait_keywords,
+        llm_model = llm_model,
+        llm_base_url = llm_base_url,
+        llm_timeout = llm_timeout
+      )
+      message("phenotypeQuery: synonyms done (", length(syn), ")")
+    } else {
+      syn <- .phenotype_normalize_linked_phrases(
+        synonym_phrases,
+        trait_text = text,
+        user_phrases = parsed$trait_keywords,
+        source_default = "llm"
+      )
+    }
+    if (is.null(related_phrases)) {
+      message("phenotypeQuery: LLM expand related...")
+      rel <- .phenotype_query_expand_related(
+        trait_text = text,
+        trait_keywords = parsed$trait_keywords,
+        llm_model = llm_model,
+        llm_base_url = llm_base_url,
+        llm_timeout = llm_timeout
+      )
+      message("phenotypeQuery: related done (", length(rel), ")")
+    } else {
+      rel <- .phenotype_normalize_linked_phrases(
+        related_phrases,
+        trait_text = text,
+        user_phrases = parsed$trait_keywords,
+        source_default = "llm"
+      )
+    }
   }
 
   out <- structure(
@@ -85,6 +157,8 @@ phenotypeQuery <- function(text,
       developmental_stage = parsed$developmental_stage,
       conditions = parsed$conditions,
       species = .phenotype_query_normalize_scalar(parsed$species),
+      synonym_phrases = syn,
+      related_phrases = rel,
       query_id = query_id,
       parsed_by = parsed$parsed_by
     ),
@@ -135,6 +209,11 @@ print.PhenotypeQuery <- function(x, ...) {
   }
   if (.phenotype_query_has_value(x$species)) {
     cat("  species:", as.character(unlist(x$species))[1L], "\n")
+  }
+  n_syn <- length(x$synonym_phrases %||% list())
+  n_rel <- length(x$related_phrases %||% list())
+  if (n_syn || n_rel) {
+    cat("  synonym_phrases:", n_syn, " related_phrases:", n_rel, "\n")
   }
   cat("  parsed_by:", x$parsed_by, "\n")
   invisible(x)
@@ -229,9 +308,14 @@ print.PhenotypeQuery <- function(x, ...) {
                                      conditions = NULL,
                                      species = NULL,
                                      llm_model = NULL,
-                                     llm_base_url = NULL) {
+                                     llm_base_url = NULL,
+                                     llm_timeout = 600) {
   if (!requireNamespace("jsonlite", quietly = TRUE)) {
     return(NULL)
+  }
+  llm_timeout <- as.numeric(llm_timeout)[1L]
+  if (!is.finite(llm_timeout) || llm_timeout <= 0) {
+    llm_timeout <- 600
   }
   llm_ok <- tryCatch(
     llmHealthCheck(base_url = llm_base_url, timeout = 5),
@@ -258,7 +342,15 @@ print.PhenotypeQuery <- function(x, ...) {
     "Reply with JSON only, no markdown.",
     "Schema: {\"trait_keywords\": [strings], \"tissues\": [strings],",
     "\"developmental_stage\": [strings], \"conditions\": [strings],",
-    "\"species\": string or null}."
+    "\"species\": string or null}.",
+    "trait_keywords must be phenotype phrases that appear in the text.",
+    "Prefer multi-word phrases. Split slash- or and-separated traits.",
+    "Do not add synonyms or related biology that is not in the text.",
+    "Put species names only in species, never in trait_keywords.",
+    "Do not put gene symbols or gene IDs (HESO1, NAL1, Os12g3456789, Waxy)",
+    "in any array unless the entire text is only that gene name.",
+    "tissues / developmental_stage / conditions only when the text or hints",
+    "mention them; do not copy those values into trait_keywords."
   )
   user_msg <- jsonlite::toJSON(
     list(text = text, hints = user_hints),
@@ -274,7 +366,7 @@ print.PhenotypeQuery <- function(x, ...) {
       model = llm_model,
       base_url = llm_base_url,
       json_mode = TRUE,
-      timeout = 90
+      timeout = llm_timeout
     ),
     error = function(e) {
       warning("LLM query parsing failed: ", conditionMessage(e), call. = FALSE)
@@ -285,22 +377,46 @@ print.PhenotypeQuery <- function(x, ...) {
     return(NULL)
   }
 
-  parsed <- tryCatch(
-    jsonlite::fromJSON(resp, simplifyVector = TRUE),
-    error = function(e) NULL
-  )
-  if (is.null(parsed) || !is.list(parsed)) {
+  parse_q <- function(raw) {
+    parsed <- tryCatch(
+      jsonlite::fromJSON(raw, simplifyVector = TRUE),
+      error = function(e) NULL
+    )
+    if (is.null(parsed) || !is.list(parsed)) {
+      return(NULL)
+    }
+    list(
+      trait_keywords = unique(as.character(unlist(parsed$trait_keywords))),
+      tissues = unique(as.character(unlist(parsed$tissues))),
+      developmental_stage = unique(as.character(unlist(parsed$developmental_stage))),
+      conditions = unique(as.character(unlist(parsed$conditions))),
+      species = .phenotype_query_normalize_scalar(parsed$species),
+      parsed_by = "llm"
+    )
+  }
+  out <- parse_q(resp)
+  if (is.null(out) || !length(out$trait_keywords)) {
+    llm <- list(model = llm_model, base_url = llm_base_url, timeout = llm_timeout)
+    raw2 <- .llm_scrutiny_pass(
+      llm = llm,
+      rules = system_msg,
+      prior_output = resp,
+      problems = if (is.null(out)) {
+        "JSON parse failed or not an object"
+      } else {
+        "trait_keywords missing or empty"
+      },
+      extra_user = user_msg,
+      timeout = llm_timeout
+    )
+    if (!inherits(raw2, "error")) {
+      out <- parse_q(raw2)
+    }
+  }
+  if (is.null(out) || !length(out$trait_keywords)) {
     return(NULL)
   }
-
-  list(
-    trait_keywords = unique(as.character(unlist(parsed$trait_keywords))),
-    tissues = unique(as.character(unlist(parsed$tissues))),
-    developmental_stage = unique(as.character(unlist(parsed$developmental_stage))),
-    conditions = unique(as.character(unlist(parsed$conditions))),
-    species = .phenotype_query_normalize_scalar(parsed$species),
-    parsed_by = "llm"
-  )
+  out
 }
 
 .phenotype_query_normalize_scalar <- function(x) {
@@ -331,6 +447,18 @@ print.PhenotypeQuery <- function(x, ...) {
   )
   out$conditions <- .phenotype_query_normalize_vec(out$conditions)
   out$species <- .phenotype_query_normalize_scalar(out$species)
+  out$synonym_phrases <- .phenotype_normalize_linked_phrases(
+    out$synonym_phrases %||% list(),
+    trait_text = out$trait_text %||% "",
+    user_phrases = out$trait_keywords,
+    source_default = "llm"
+  )
+  out$related_phrases <- .phenotype_normalize_linked_phrases(
+    out$related_phrases %||% list(),
+    trait_text = out$trait_text %||% "",
+    user_phrases = out$trait_keywords,
+    source_default = "llm"
+  )
   out$query_id <- if (is.null(out$query_id)) {
     NA_character_
   } else {

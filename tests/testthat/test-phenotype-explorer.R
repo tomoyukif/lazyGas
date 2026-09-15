@@ -35,6 +35,8 @@ test_that("phenotypeQuery builds structured query without LLM", {
   expect_true("fruit" %in% q$tissues)
   expect_equal(q$parsed_by, "fallback")
   expect_null(q$species)
+  expect_equal(q$synonym_phrases, list())
+  expect_equal(q$related_phrases, list())
   expect_output(print(q), "PhenotypeQuery:")
   expect_output(print(q), "parsed_by: fallback")
 })

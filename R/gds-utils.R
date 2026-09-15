@@ -116,6 +116,25 @@
 
 .join_peakcall_tables <- function(peaks, blocks, pvalues, recalc = FALSE) {
   peaks$variant_ID <- peaks$peak_variant_ID
+  # Align ID storage modes (recalc may write character; scan IDs are often integer).
+  .align_id <- function(x, ref) {
+    if (is.null(x) || is.null(ref)) {
+      return(x)
+    }
+    if (is.numeric(ref) && !is.numeric(x)) {
+      return(suppressWarnings(as.numeric(as.character(x))))
+    }
+    if (is.character(ref) && !is.character(x)) {
+      return(as.character(x))
+    }
+    x
+  }
+  ref_id <- pvalues$variant_ID
+  peaks$variant_ID <- .align_id(peaks$variant_ID, ref_id)
+  peaks$peak_variant_ID <- .align_id(peaks$peak_variant_ID, ref_id)
+  if (!is.null(blocks) && "variant_ID" %in% names(blocks)) {
+    blocks$variant_ID <- .align_id(blocks$variant_ID, ref_id)
+  }
   if (recalc) {
     pvalues <- subset(pvalues, select = variant_ID:Pos)
     peaks_join <- dplyr::left_join(x = peaks, y = pvalues, by = "variant_ID")

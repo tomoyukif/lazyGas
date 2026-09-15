@@ -19,7 +19,7 @@ vignette: >
 ## Introduction
 This vignette demonstrates the process of conducting a genetic association study using the `lazyGas` package. We will go through the steps of loading input files, preprocessing data, performing association analysis, and visualizing results.
 
-Companion storage for scan, peak, recalc, and candidate outputs is written by default to a Parquet-backed directory next to the GDS file (or optionally SQLite or the legacy GDS `lazygas/` subtree); see the [Where association results are stored](#where-association-results-are-stored) section. Optional refinement of candidate genes with `searchCandidateGenes()` uses phrase-aware keyword matching (stopwords ignored; word-boundary / phrase patterns).
+Companion storage for scan, peak, recalc, and candidate outputs is written by default to a Parquet-backed directory next to the GDS file (or optionally SQLite or the legacy GDS `lazygas/` subtree); see the [Where association results are stored](#where-association-results-are-stored) section.
 
 Since v0.5.0, lazyGas also provides a **variant viewer** (`getVariantViewerData()`, `plotVariantViewer()`) and an **interactive dashboard** (`makeInteractiveDashboard()`) that links candidate genes to per-gene variant plots in a single HTML file. Runnable demos are available via `runDashboardDemo()` and, for v0.6+ features, `runMvpDemo()` using bundled files in `inst/extdata/`. Since v0.7.0, the **phenotype explorer** (`runLazyGasExplorer()`, `runExplorerDemo()`) ranks candidates by multi-source evidence with optional local LLM support. Since v0.8.0, GWAS **`Coef.*` columns are stored in original phenotype units** for continuous traits (see [Interpreting scan coefficients](#interpreting-scan-coefficients-coef)). Since v0.9.0, the Shiny explorer also embeds **GWAS overview** and **Locus / variants** plots (same helpers as the HTML dashboard). Since v0.9.1, a separate **pipeline runner** (`runLazyGasRunner()`) runs `buildLazyGas()` → `assignPheno()` → `runLazyGas()` from filesystem paths before handing off to the explorer. Since v0.9.2, explorer sidebar controls are tab-scoped with a dedicated Local LLM diagnostics tab and busy-state progress/locking for rank/chat actions.
 
@@ -601,44 +601,6 @@ if (have_demo_ann) {
 ```
 
 <br>
-
-## Refining candidate genes (`searchCandidateGenes`)
-After `listCandidate()`, the candidate table may still be large. The function `searchCandidateGenes()` filters and ranks rows using free-text annotation columns (for example descriptions or GO terms merged via the `ann` argument in `listCandidate()`).
-
-- **`mode = "keyword"`** (only supported mode) — phrase-aware matching with English stopwords ignored and word-boundary / multi-word phrase patterns; with `keyword_match = "all"`, every content term must appear (default is `"all"`; use `"any"` for OR-style matching).
-
-By default, all columns except peak/SnpEff coordinate columns are concatenated as annotation text; override with `ann_cols`. Use `object` and `pheno` to read candidates from the companion store, or pass a `data.frame` as `candidate`.
-
-```{r}
-cand_demo <- data.frame(
-  peak_ID = 1L,
-  Gene_ID = c("g1", "g2", "g3"),
-  Gene_chr = "1",
-  Gene_start = 1:3,
-  dist2peak = 0,
-  negLog10P = 3,
-  Description = c(
-    "fruit weight development",
-    "root hair elongation",
-    "cell wall biosynthesis"
-  ),
-  stringsAsFactors = FALSE
-)
-searchCandidateGenes(
-  candidate = cand_demo,
-  query = "fruit weight",
-  mode = "keyword",
-  keyword_match = "all"
-)
-```
-
-```{r eval=FALSE}
-searchCandidateGenes(object = lg, pheno = "Fruit weight",
-                       query = "fruit ripening carbohydrate",
-                       mode = "keyword", keyword_match = "any", top_n = 50)
-```
-
-<br><br>
 
 ## Extracting Data
 The phenotype data assigned to a `LazyGas` class object, along with the output

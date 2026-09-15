@@ -7,6 +7,7 @@
 .keyword_terms_from_query(query)
 }
 \description{
-Build content keyword / phrase list from a phenotype query
+Includes user trait keywords, tissues/stage/conditions, and (when present)
+synonym / related phrases from Phase 2 A2.
 }
 \keyword{internal}

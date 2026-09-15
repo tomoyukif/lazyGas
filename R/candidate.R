@@ -122,6 +122,10 @@ setMethod("listCandidate",
                  target_node = "lazygas",
                  new_node = "snpeff",
                  is_folder = TRUE)
+    .create_gdsn(root_node = object$root,
+                 target_node = "lazygas",
+                 new_node = "simple_candidate",
+                 is_folder = TRUE)
   } else {
     dir.create(file.path(.store_path(object), "candidate"),
                recursive = TRUE, showWarnings = FALSE)
@@ -175,12 +179,12 @@ setMethod("listCandidate",
       }
     }
     candidate_list <- if (length(candidate_list) > 0L) {
-      do.call(rbind, candidate_list)
+      dplyr::bind_rows(candidate_list)
     } else {
       NULL
     }
     snpeff_list <- if (length(snpeff_list) > 0L) {
-      do.call(rbind, snpeff_list)
+      dplyr::bind_rows(snpeff_list)
     } else {
       NULL
     }
@@ -199,7 +203,57 @@ setMethod("listCandidate",
       snpeff_out <- snpeff_list
     }
     .store_write_candidate(object, pheno_name, candidate_list, snpeff_out)
+
+    # E0: simple candidate list + Gene↔transcript/protein map (Parquet sidecar)
+    simple <- .simple_candidate_from_wide(candidate_list, gff = gff)
+    protein_map <- .gff_gene_protein_map(gff)
+    .store_write_simple_candidate(object, pheno_name, simple)
+    .store_write_gene_protein_map(object, protein_map)
   }
+}
+
+#' Minimal Gene_ID + position table for E (E0 §2.1)
+#' @keywords internal
+.simple_candidate_from_wide <- function(candidate_list, gff = NULL) {
+  empty <- data.frame(
+    peak_ID = character(),
+    Gene_ID = character(),
+    Gene_chr = character(),
+    Gene_start = integer(),
+    Gene_end = integer(),
+    dist2peak = numeric(),
+    negLog10P = numeric(),
+    stringsAsFactors = FALSE
+  )
+  if (is.null(candidate_list) || !nrow(candidate_list)) {
+    return(empty)
+  }
+  need <- c("peak_ID", "Gene_ID", "Gene_chr", "Gene_start", "dist2peak", "negLog10P")
+  for (cn in need) {
+    if (!cn %in% names(candidate_list)) {
+      candidate_list[[cn]] <- NA
+    }
+  }
+  out <- candidate_list[, need, drop = FALSE]
+  out$Gene_ID <- as.character(out$Gene_ID)
+  out$Gene_chr <- as.character(out$Gene_chr)
+  out$Gene_start <- as.integer(out$Gene_start)
+  out$Gene_end <- as.integer(NA)
+  if (!is.null(gff) && inherits(gff, "GRanges") && length(gff)) {
+    md <- S4Vectors::mcols(gff)
+    typ <- as.character(md$type %||% "")
+    gene_i <- grepl("^gene$", typ, ignore.case = TRUE)
+    if (any(gene_i)) {
+      gg <- gff[gene_i]
+      gid <- as.character(S4Vectors::mcols(gg)$ID %||% S4Vectors::mcols(gg)$gene_id)
+      gend <- as.integer(BiocGenerics::end(gg))
+      out$Gene_end <- gend[match(out$Gene_ID, gid)]
+    }
+  }
+  # drop empty Gene_ID rows
+  out <- out[!is.na(out$Gene_ID) & nzchar(out$Gene_ID), , drop = FALSE]
+  rownames(out) <- NULL
+  out
 }
 
 #' @importFrom GenomicRanges GRanges findOverlaps
@@ -210,29 +264,57 @@ setMethod("listCandidate",
 .getCandidate <- function(peakblock, gff, snpeff, snpeff_index = NULL){
   peak_variant_id <- peakblock$peak_variant_ID[1]
   is_peak <- peakblock$variant_ID == peak_variant_id
-  if(peakblock$chr_start[1] == 1){
-    peak_start <- 1
-
-  } else {
-    peak_start <- peakblock$Pos[1]
+  # One genomic window per chromosome present in the (possibly merged) block.
+  chr_levels <- unique(as.character(peakblock$Chr))
+  chr_levels <- chr_levels[!is.na(chr_levels) & nzchar(chr_levels)]
+  if (length(chr_levels) == 0L) {
+    chr_levels <- as.character(peakblock$Chr[is_peak][1])
   }
-  if(peakblock$chr_end[1] == 1){
-    peak_end <- 2^30
-
-  } else {
-    peak_end <- tail(peakblock$Pos, 1)
+  ir_list <- vector("list", length(chr_levels))
+  for (i in seq_along(chr_levels)) {
+    ch <- chr_levels[[i]]
+    sub <- peakblock[as.character(peakblock$Chr) == ch, , drop = FALSE]
+    pos_num <- as.numeric(sub$Pos)
+    if (nrow(sub) && !is.na(sub$chr_start[1]) && sub$chr_start[1] == 1) {
+      peak_start <- 1
+    } else {
+      peak_start <- suppressWarnings(min(pos_num, na.rm = TRUE))
+    }
+    if (nrow(sub) && !is.na(sub$chr_end[1]) && sub$chr_end[1] == 1) {
+      peak_end <- 2^30
+    } else {
+      peak_end <- suppressWarnings(max(pos_num, na.rm = TRUE))
+    }
+    if (!is.finite(peak_start) || !is.finite(peak_end) || peak_end < peak_start) {
+      lead_pos <- as.numeric(peakblock$Pos[is_peak][1])
+      peak_start <- if (is.finite(lead_pos)) lead_pos else 1
+      peak_end <- peak_start
+    }
+    ir_list[[i]] <- IRanges::IRanges(
+      start = as.integer(peak_start),
+      end = as.integer(peak_end)
+    )
   }
-  peak_gff <- GRanges(seqnames = peakblock$Chr[is_peak],
-                      ranges = IRanges(start = peak_start,
-                                       end = peak_end))
+  peak_gff <- GenomicRanges::GRanges(
+    seqnames = chr_levels,
+    ranges = do.call(c, ir_list)
+  )
   type_hit <- gff$type %in% "gene"
   type_hit[is.na(type_hit)] <- FALSE
   gene_gff <- gff[type_hit]
   hit <- gene_gff[queryHits(findOverlaps(gene_gff, peak_gff))]
   hit <- hit[order(start(hit))]
-  hit$dist2peak <- start(hit) - peakblock$Pos[is_peak]
-  nearest_p <- vapply(start(hit), function(x) {
-    peakblock$negLog10P[which.min(abs(peakblock$Pos - x))]
+  hit$dist2peak <- start(hit) - as.numeric(peakblock$Pos[is_peak][1])
+  nearest_p <- vapply(seq_along(hit), function(i) {
+    x <- BiocGenerics::start(hit)[i]
+    ch <- as.character(GenomeInfoDb::seqnames(hit)[i])
+    same <- as.character(peakblock$Chr) == ch
+    if (!any(same)) {
+      return(NA_real_)
+    }
+    vals <- as.numeric(peakblock$negLog10P[same])
+    pos_s <- as.numeric(peakblock$Pos[same])
+    vals[which.min(abs(pos_s - x))]
   }, numeric(1))
   if(length(hit) == 0){
     out <- data.frame(peak_ID = peakblock$peak_ID[1],
@@ -276,94 +358,341 @@ setMethod("listCandidate",
 }
 
 .addSnpEff <- function(snpeff, peakblock, snpeff_index = NULL){
+  empty <- data.frame(
+    Allele = NA_character_,
+    Annotation = NA_character_,
+    Annotation_Impact = NA_character_,
+    Gene_Name = NA_character_,
+    Gene_ID = NA_character_,
+    Feature_Type = NA_character_,
+    Feature_ID = NA_character_,
+    Transcript_BioType = NA_character_,
+    Rank = NA_character_,
+    `HGVS.c` = NA_character_,
+    `HGVS.p` = NA_character_,
+    Pos.in.tx = NA_character_,
+    Pos.in.CDS = NA_character_,
+    Pos.in.AA = NA_character_,
+    Distance = NA_character_,
+    INFO = NA_character_,
+    Chr = NA_character_,
+    Pos = NA_real_,
+    negLog10P = NA_real_,
+    check.names = FALSE,
+    stringsAsFactors = FALSE
+  )
   if (is.null(snpeff_index)) {
     snpeff_index <- .snpeff_index(snpeff)
   }
   snpeff_chr <- snpeff_index$chr
   snpeff_pos <- snpeff_index$pos
   at_ann <- snpeff_index$at_ann
-  target_chr <- snpeff_chr %in% peakblock$Chr
-  target_pos <-  snpeff_pos >= min(peakblock$Pos) & snpeff_pos <= max(peakblock$Pos)
-  peak_ann <- target_chr & target_pos
-
-  if(length(peak_ann) == 0){
-    out <- data.frame(t(rep(NA, 19)))
-    names(out) <- c("Allele", "Annotation", "Annotation_Impact", "Gene_Name",
-                    "Gene_ID", "Feature_Type", "Feature_ID", "Transcript_BioType",
-                    "Rank", "HGVS.c", "HGVS.p", "Pos.in.tx", "Pos.in.CDS",
-                    "Pos.in.AA", "Distance", "INFO", "Chr", "Pos", "negLog10P")
-
-  } else {
-    cum_at_ann <- cumsum(at_ann)
-    peak_ann_cum_at_ann <- cum_at_ann[peak_ann]
-    peak_ann_cum_at_ann_start <- peak_ann_cum_at_ann - at_ann[peak_ann] + 1
-    target_index <- unlist(
-      mapply(
-        function(start_i, end_i) seq.int(start_i, end_i),
-        peak_ann_cum_at_ann_start,
-        peak_ann_cum_at_ann,
-        SIMPLIFY = FALSE,
-        USE.NAMES = FALSE
-      ),
-      use.names = FALSE
-    )
-    target_ann <- rep(FALSE, max(cum_at_ann))
-    target_ann[target_index] <- TRUE
-    out <- readex.gdsn(node = snpeff_index$ann_node, sel = list(target_ann))
-    out[grepl("\\|$", out)] <- paste(out[grepl("\\|$", out)], "")
-    out <- strsplit(out, "\\|")
-    len <- sapply(out, length)
-    out <- do.call("rbind", out)
-    out <- as.data.frame(out)
-    colnames(out) <- c("Allele", "Annotation", "Annotation_Impact", "Gene_Name",
-                       "Gene_ID", "Feature_Type", "Feature_ID", "Transcript_BioType",
-                       "Rank", "HGVS.c", "HGVS.p", "Pos.in.tx", "Pos.in.CDS",
-                       "Pos.in.AA", "Distance", "INFO")
-    idx <- which(peak_ann)
-    out$Chr <- rep(snpeff_chr[idx], at_ann[idx])
-    out$Pos <- rep(snpeff_pos[idx], at_ann[idx])
-    hit <- match(out$Pos, peakblock$Pos)
-    out$negLog10P <- peakblock$negLog10P[hit]
-    out <- out[!out[, 2] %in% c("custom", "intergenic_region"), ]
-    if(nrow(out) == 0){
-      out <- NULL
-    }
-
-    intergenic <- grep("&", out$Gene_ID)
-    if(length(intergenic) > 0){
-      intergenic_split <- lapply(intergenic, function(i){
-        x <- unlist(strsplit(out$Gene_ID[i], "&"))
-        i_out <- data.frame(split_id = x, out[i, ], row.names = NULL)
-        return(i_out)
-      })
-      intergenic_split <- do.call("rbind", intergenic_split)
-      intergenic_split$Gene_ID <- intergenic_split$split_id
-      intergenic_split$split_id <- NULL
-      out <- rbind(out[-intergenic, ], intergenic_split)
-    }
+  target_chr <- snpeff_chr %in% unique(as.character(peakblock$Chr))
+  if (!any(target_chr)) {
+    return(empty)
   }
-  return(out)
+  pos_lo <- suppressWarnings(min(as.numeric(peakblock$Pos), na.rm = TRUE))
+  pos_hi <- suppressWarnings(max(as.numeric(peakblock$Pos), na.rm = TRUE))
+  if (!is.finite(pos_lo) || !is.finite(pos_hi)) {
+    return(empty)
+  }
+  target_pos <- snpeff_pos >= pos_lo & snpeff_pos <= pos_hi
+  peak_ann <- target_chr & target_pos
+  if (!any(peak_ann)) {
+    return(empty)
+  }
+
+  cum_at_ann <- cumsum(at_ann)
+  peak_ann_cum_at_ann <- cum_at_ann[peak_ann]
+  peak_ann_cum_at_ann_start <- peak_ann_cum_at_ann - at_ann[peak_ann] + 1
+  target_index <- unlist(
+    mapply(
+      function(start_i, end_i) seq.int(start_i, end_i),
+      peak_ann_cum_at_ann_start,
+      peak_ann_cum_at_ann,
+      SIMPLIFY = FALSE,
+      USE.NAMES = FALSE
+    ),
+    use.names = FALSE
+  )
+  if (!length(target_index)) {
+    return(empty)
+  }
+  target_ann <- rep(FALSE, max(cum_at_ann))
+  target_ann[target_index] <- TRUE
+  out <- readex.gdsn(node = snpeff_index$ann_node, sel = list(target_ann))
+  if (!length(out)) {
+    return(empty)
+  }
+  out[grepl("\\|$", out)] <- paste(out[grepl("\\|$", out)], "")
+  out <- strsplit(out, "\\|")
+  # Pad ANN fields to a common width before binding rows.
+  n_fields <- 16L
+  out <- lapply(out, function(x) {
+    if (length(x) < n_fields) {
+      c(x, rep("", n_fields - length(x)))
+    } else if (length(x) > n_fields) {
+      x[seq_len(n_fields)]
+    } else {
+      x
+    }
+  })
+  out <- do.call("rbind", out)
+  out <- as.data.frame(out, stringsAsFactors = FALSE)
+  colnames(out) <- c("Allele", "Annotation", "Annotation_Impact", "Gene_Name",
+                     "Gene_ID", "Feature_Type", "Feature_ID", "Transcript_BioType",
+                     "Rank", "HGVS.c", "HGVS.p", "Pos.in.tx", "Pos.in.CDS",
+                     "Pos.in.AA", "Distance", "INFO")
+  idx <- which(peak_ann)
+  out$Chr <- rep(snpeff_chr[idx], at_ann[idx])
+  out$Pos <- rep(snpeff_pos[idx], at_ann[idx])
+  hit <- match(out$Pos, peakblock$Pos)
+  out$negLog10P <- peakblock$negLog10P[hit]
+  out <- out[!out[, 2] %in% c("custom", "intergenic_region"), ]
+  if (nrow(out) == 0L) {
+    return(empty)
+  }
+
+  intergenic <- grep("&", out$Gene_ID)
+  if (length(intergenic) > 0L) {
+    intergenic_split <- lapply(intergenic, function(i) {
+      x <- unlist(strsplit(out$Gene_ID[i], "&"))
+      base <- out[i, , drop = FALSE]
+      base$Gene_ID <- NULL
+      data.frame(Gene_ID = x, base, row.names = NULL, stringsAsFactors = FALSE)
+    })
+    out <- dplyr::bind_rows(out[-intergenic, , drop = FALSE], dplyr::bind_rows(intergenic_split))
+  }
+  out
+}
+
+#' Keep worst SnpEff ANN per gene × variant site
+#'
+#' Site key is Gene_ID + Chr + Pos + Allele (Allele omitted when absent).
+#' Rows without a usable Pos are not merged across rows. Impact order:
+#' HIGH > MODERATE > LOW > MODIFIER; ties prefer a non-empty HGVS.p.
+#'
+#' @keywords internal
+.snpeff_worst_ann_per_site <- function(snpeff) {
+  if (is.null(snpeff) || !is.data.frame(snpeff) || !nrow(snpeff)) {
+    return(snpeff)
+  }
+  n <- nrow(snpeff)
+  gene <- if ("Gene_ID" %in% names(snpeff)) {
+    as.character(snpeff$Gene_ID)
+  } else {
+    rep("", n)
+  }
+  gene[is.na(gene)] <- ""
+
+  impact_col <- if ("Annotation_Impact" %in% names(snpeff)) {
+    "Annotation_Impact"
+  } else if ("Impact" %in% names(snpeff)) {
+    "Impact"
+  } else {
+    NULL
+  }
+  rank <- rep(0L, n)
+  if (!is.null(impact_col)) {
+    lab <- toupper(as.character(snpeff[[impact_col]]))
+    rank <- match(lab, c("MODIFIER", "LOW", "MODERATE", "HIGH"), nomatch = 0L)
+  }
+
+  if (!("Pos" %in% names(snpeff))) {
+    site <- paste0("row", seq_len(n))
+  } else {
+    pos <- suppressWarnings(as.numeric(snpeff$Pos))
+    chr <- if ("Chr" %in% names(snpeff)) as.character(snpeff$Chr) else rep("", n)
+    chr[is.na(chr)] <- ""
+    allele <- if ("Allele" %in% names(snpeff)) {
+      as.character(snpeff$Allele)
+    } else {
+      rep("", n)
+    }
+    allele[is.na(allele)] <- ""
+    ok <- is.finite(pos)
+    site <- ifelse(
+      ok,
+      paste(chr, pos, allele, sep = "\t"),
+      paste0("row", seq_len(n))
+    )
+  }
+  key <- paste(gene, site, sep = "\t")
+
+  hgvs <- rep("", n)
+  if ("HGVS.p" %in% names(snpeff)) {
+    hgvs <- as.character(snpeff[["HGVS.p"]])
+  } else if ("HGVS_P" %in% names(snpeff)) {
+    hgvs <- as.character(snpeff$HGVS_P)
+  }
+  hgvs[is.na(hgvs)] <- ""
+  hgvs_score <- as.integer(nzchar(trimws(hgvs)))
+
+  ord <- order(key, -rank, -hgvs_score, seq_len(n))
+  keep_idx <- sort(ord[!duplicated(key[ord])])
+  snpeff[keep_idx, , drop = FALSE]
 }
 
 .collapseSnpEff <- function(snpeff_out){
-  if(all(is.na(snpeff_out[1, ]))){
-    out <- data.frame(t(rep(NA, 9)))
-    names(out) <- c("Gene_ID", "HIGH", "MODERATE", "LOW", "MODIFIER",
-                    "HIGH_at_var", "MODERATE_at_var", "LOW_at_var", "MODIFIER_at_var")
-
-  } else {
-    impacts <- c("HIGH", "MODERATE", "LOW", "MODIFIER")
-    out <- tapply(seq_along(snpeff_out$Annotation_Impact), snpeff_out$Gene_ID, function(i){
-      data.frame(t(as.vector(table(factor(snpeff_out$Annotation_Impact[i], impacts)))),
-                 t(as.vector(table(factor(snpeff_out$Annotation_Impact[i][!is.na(snpeff_out$negLog10P[i])], impacts)))))
-    })
-    Gene_ID = names(out)
-    names(out) <- NULL
-    out <- data.frame(Gene_ID, do.call("rbind", out))
-    colnames(out) <- c("Gene_ID", "HIGH", "MODERATE", "LOW", "MODIFIER",
-                       "HIGH_at_var", "MODERATE_at_var", "LOW_at_var", "MODIFIER_at_var")
+  empty_collapse <- data.frame(
+    Gene_ID = NA_character_,
+    HIGH = NA_real_,
+    MODERATE = NA_real_,
+    LOW = NA_real_,
+    MODIFIER = NA_real_,
+    HIGH_at_var = NA_real_,
+    MODERATE_at_var = NA_real_,
+    LOW_at_var = NA_real_,
+    MODIFIER_at_var = NA_real_,
+    stringsAsFactors = FALSE
+  )
+  if (is.null(snpeff_out) || !is.data.frame(snpeff_out) || !nrow(snpeff_out)) {
+    return(empty_collapse)
   }
-  return(out)
+  if (all(is.na(snpeff_out[1, ]))) {
+    return(empty_collapse)
+  }
+  impacts <- c("HIGH", "MODERATE", "LOW", "MODIFIER")
+  gene_ids <- unique(as.character(snpeff_out$Gene_ID))
+  gene_ids <- gene_ids[!is.na(gene_ids) & nzchar(gene_ids)]
+  if (!length(gene_ids)) {
+    return(empty_collapse)
+  }
+  rows <- lapply(gene_ids, function(gid) {
+    i <- which(as.character(snpeff_out$Gene_ID) == gid)
+    np <- suppressWarnings(as.numeric(as.character(snpeff_out$negLog10P[i])))
+    linked <- is.finite(np)
+    sub <- snpeff_out[i[linked], , drop = FALSE]
+    sub <- .snpeff_worst_ann_per_site(sub)
+    if (!nrow(sub)) {
+      counts <- rep(0L, 4L)
+    } else {
+      imp <- factor(sub$Annotation_Impact, levels = impacts)
+      counts <- as.integer(table(imp))
+    }
+    data.frame(
+      Gene_ID = gid,
+      HIGH = counts[[1L]],
+      MODERATE = counts[[2L]],
+      LOW = counts[[3L]],
+      MODIFIER = counts[[4L]],
+      HIGH_at_var = counts[[1L]],
+      MODERATE_at_var = counts[[2L]],
+      LOW_at_var = counts[[3L]],
+      MODIFIER_at_var = counts[[4L]],
+      stringsAsFactors = FALSE
+    )
+  })
+  dplyr::bind_rows(rows)
+}
+
+#' Peak-block markers for one peak (recalc, else peakcall)
+#' @keywords internal
+.peak_block_markers <- function(object, pheno_name, peak_id) {
+  empty <- data.frame(
+    Chr = character(),
+    Pos = numeric(),
+    stringsAsFactors = FALSE
+  )
+  if (is.null(object) || is.null(pheno_name) || is.null(peak_id)) {
+    return(empty)
+  }
+  pk <- tryCatch(
+    lazyData(object = object, dataset = "recalc", pheno = pheno_name),
+    error = function(e) NULL
+  )
+  if (is.null(pk) || !nrow(pk)) {
+    pk <- tryCatch(
+      lazyData(object = object, dataset = "peakcall", pheno = pheno_name),
+      error = function(e) NULL
+    )
+  }
+  if (is.null(pk) || !nrow(pk) || !"peak_ID" %in% names(pk)) {
+    return(empty)
+  }
+  b <- pk[as.character(pk$peak_ID) == as.character(peak_id)[1L], , drop = FALSE]
+  if (!nrow(b) || !"Pos" %in% names(b)) {
+    return(empty)
+  }
+  chr <- if ("Chr" %in% names(b)) as.character(b$Chr) else NA_character_
+  data.frame(
+    Chr = chr,
+    Pos = as.numeric(b$Pos),
+    stringsAsFactors = FALSE
+  )
+}
+
+#' SnpEff rows for one peak: store load + peak-block-marker link only
+#'
+#' Keeps annotations whose Chr/Pos match peak-block markers and that carry a
+#' finite \code{negLog10P} (the listCandidate link to GWAS peak markers).
+#' Falls back to unique Chr/Pos matches if all \code{negLog10P} are blank
+#' (legacy store rows from other peaks).
+#'
+#' @keywords internal
+.snpeff_for_peak <- function(snpeff = NULL,
+                             object = NULL,
+                             pheno_name = NULL,
+                             peak_id = NULL,
+                             peak_markers = NULL) {
+  empty <- if (!is.null(snpeff) && is.data.frame(snpeff)) {
+    snpeff[0, , drop = FALSE]
+  } else {
+    data.frame()
+  }
+  if (is.null(snpeff) || !is.data.frame(snpeff) || !nrow(snpeff)) {
+    if (!is.null(object) && !is.null(pheno_name)) {
+      snpeff <- tryCatch(
+        lazyData(object = object, dataset = "snpeff", pheno = pheno_name),
+        error = function(e) NULL
+      )
+    }
+  }
+  if (is.null(snpeff) || !is.data.frame(snpeff) || !nrow(snpeff)) {
+    return(empty)
+  }
+  if (is.null(peak_markers)) {
+    peak_markers <- .peak_block_markers(object, pheno_name, peak_id)
+  }
+  if (is.null(peak_markers) || !nrow(peak_markers) || !"Pos" %in% names(peak_markers)) {
+    return(snpeff[0, , drop = FALSE])
+  }
+  pos <- unique(as.numeric(peak_markers$Pos))
+  pos <- pos[is.finite(pos)]
+  if (!length(pos) || !"Pos" %in% names(snpeff)) {
+    return(snpeff[0, , drop = FALSE])
+  }
+  sp <- as.numeric(snpeff$Pos)
+  keep <- is.finite(sp) & sp %in% pos
+  if ("Chr" %in% names(snpeff) && "Chr" %in% names(peak_markers)) {
+    chrs <- unique(as.character(peak_markers$Chr))
+    chrs <- chrs[!is.na(chrs) & nzchar(chrs)]
+    if (length(chrs)) {
+      keep <- keep & as.character(snpeff$Chr) %in% chrs
+    }
+  }
+  out <- snpeff[keep, , drop = FALSE]
+  if (!nrow(out)) {
+    return(out)
+  }
+  if ("negLog10P" %in% names(out)) {
+    np <- suppressWarnings(as.numeric(as.character(out$negLog10P)))
+    linked <- is.finite(np)
+    if (any(linked)) {
+      out <- out[linked, , drop = FALSE]
+    } else {
+      # Drop blank-negLog10P duplicates from other peaks' rbind
+      key_cols <- intersect(
+        c("Gene_ID", "Chr", "Pos", "Allele", "Annotation", "Feature_ID", "HGVS.p", "HGVS_P"),
+        names(out)
+      )
+      if (length(key_cols)) {
+        out <- out[!duplicated(out[, key_cols, drop = FALSE]), , drop = FALSE]
+      }
+    }
+  }
+  rownames(out) <- NULL
+  out
 }
 
 ################################################################################

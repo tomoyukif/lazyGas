@@ -11,8 +11,11 @@ phenotypeQuery(
   conditions = NULL,
   species = NULL,
   use_llm = FALSE,
+  synonym_phrases = NULL,
+  related_phrases = NULL,
   llm_model = NULL,
   llm_base_url = NULL,
+  llm_timeout = 600,
   object = NULL,
   save = !is.null(object)
 )
@@ -30,12 +33,23 @@ conditions (optional).}
 \item{species}{Target species name (optional).}
 
 \item{use_llm}{If \code{TRUE}, attempt LLM-based structuring via
-\code{\link[=llmChat]{llmChat()}}.}
+\code{\link[=llmChat]{llmChat()}} (phrase split, then synonym and related expand).
+If \code{FALSE}, use the unigram fallback and leave synonym/related
+empty. Annotation LLM relevance is also off on that path.}
+
+\item{synonym_phrases, related_phrases}{Optional lists of
+\code{list(phrase, from_user, source)} used when \code{use_llm = TRUE}
+instead of calling the expander LLMs (\code{NULL} = call LLM;
+\code{list()} = skip that expand). Ignored when \code{use_llm = FALSE}.}
 
 \item{llm_model}{Model name passed to Ollama (default from
 \code{LAZYGAS_LLM_MODEL} or \code{"gemma4-31b-64k:latest"}).}
 
 \item{llm_base_url}{Ollama base URL (default from \code{LAZYGAS_LLM_URL}).}
+
+\item{llm_timeout}{Per-call timeout in seconds for query parse / synonym /
+related LLM requests (default 600). Gemma 31B over a tunnel often needs
+more than 90s; short timeouts fall back to \code{parsed_by = "fallback"}.}
 
 \item{object}{Optional \code{LazyGas} object; when \code{save = TRUE} the
 query is written to the companion store.}

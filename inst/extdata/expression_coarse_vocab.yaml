@@ -1,0 +1,40 @@
+# Plant RNA-seq coarse vocabulary for E4 column-label mapping (user-editable)
+tissue:
+  - leaf
+  - root
+  - shoot
+  - stem
+  - seed
+  - grain
+  - flower
+  - panicle
+  - inflorescence
+  - endosperm
+  - embryo
+  - anther
+  - pistil
+  - meristem
+  - callus
+stage:
+  - seedling
+  - vegetative
+  - reproductive
+  - flowering
+  - ripening
+  - germination
+condition:
+  - control
+  - drought
+  - heat
+  - cold
+  - salt
+  - flooding
+  - pathogen
+  - hormone
+other:
+  - other
+not_available:
+  - not_available
+  - NA
+  - na
+  - ""

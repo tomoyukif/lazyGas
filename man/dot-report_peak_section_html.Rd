@@ -18,7 +18,10 @@
   top_n,
   language = "en",
   use_llm = FALSE,
-  llm = NULL
+  llm = NULL,
+  e_run = NULL,
+  reinterpret_peak = NULL,
+  evidence_rank = NULL
 )
 }
 \description{

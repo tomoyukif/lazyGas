@@ -16,6 +16,7 @@ test_that("report i18n is English-only (B4)", {
   ja <- lazyGas:::.report_i18n("ja")
   expect_equal(en$candidate_list, "Candidate list")
   expect_equal(ja$candidate_list, "Candidate list")
+  expect_equal(en$hypothesis_cards, "Hypothesis cards")
   expect_equal(ja$basic_info, "Basic information")
   expect_equal(ja$resolvable, "resolvable")
   expect_equal(ja$score_note, en$score_note)
@@ -190,14 +191,19 @@ test_that("finemap evidence uses max PIP and sources always include finemap", {
   expect_equal(unname(sw$weights[["finemap"]]), 0.5)
 })
 
-test_that("evidence HTML writes coded metrics and omits empty expression", {
+test_that("evidence HTML writes coded metrics and A4 keyword prose", {
   ev <- list(
     gwas = list(details = list(dist2peak = 1200, negLog10P = 8.5)),
     snpeff = list(details = list(worst_impact = "HIGH", HIGH = 1, MODERATE = 0)),
     finemap = list(details = list(max_PIP = 0.77)),
     annotation = list(details = list(
       matched_keywords = list("fruit"),
-      unmatched_keywords = list("weight")
+      matched_synonym = list(),
+      matched_related = list(
+        list(phrase = "starch synthase", from_user = "amylose content")
+      ),
+      unmatched_keywords = list("leaf width"),
+      matched_context = list()
     ))
   )
   ranked <- data.frame(
@@ -222,17 +228,22 @@ test_that("evidence HTML writes coded metrics and omits empty expression", {
   expect_match(html, "dist2peak = 1,200 bp", fixed = TRUE)
   expect_match(html, "HIGH = 1", fixed = TRUE)
   expect_match(html, "Matched keywords: fruit", fixed = TRUE)
-  expect_false(grepl("Unmatched", html, fixed = TRUE))
-  expect_false(grepl("\\bweight\\b", html))
+  expect_match(html, "Matched related (indirect lexical links): starch synthase (from user: amylose content)", fixed = TRUE)
+  expect_match(html, "Unmatched user keywords", fixed = TRUE)
+  expect_match(html, "leaf width", fixed = TRUE)
   expect_false(grepl("Expression", html, fixed = TRUE))
   expect_false(grepl("composite_score", html, fixed = TRUE))
   expect_false(grepl("score_annotation", html, fixed = TRUE))
 })
 
-test_that("report template prose lists matched keywords only", {
+test_that("report template prose and payload keep family unmatched", {
   expect_equal(
     lazyGas:::.report_gene_template_prose(list(
       ann_matched = c("fruit", "starch"),
+      ann_matched_synonym = list(),
+      ann_matched_related = list(),
+      ann_unmatched = character(),
+      ann_matched_context = character(),
       has_expression = FALSE,
       expr_snippets = character()
     ))$keywords,
@@ -241,6 +252,10 @@ test_that("report template prose lists matched keywords only", {
   expect_equal(
     lazyGas:::.report_gene_template_prose(list(
       ann_matched = character(),
+      ann_matched_synonym = list(),
+      ann_matched_related = list(),
+      ann_unmatched = character(),
+      ann_matched_context = character(),
       has_expression = FALSE,
       expr_snippets = character()
     ))$keywords,
@@ -253,18 +268,25 @@ test_that("report template prose lists matched keywords only", {
       evidence_json = jsonlite::toJSON(
         list(annotation = list(details = list(
           matched_keywords = list("fruit"),
-          unmatched_keywords = list("weight")
+          unmatched_keywords = list("weight"),
+          keyword_score = 0.5,
+          llm_relevance_score = 0.2
         ))),
         auto_unbox = TRUE
       ),
       stringsAsFactors = FALSE
     )
   )
-  expect_null(payload[[1]]$evidence$annotation$details$unmatched_keywords)
+  expect_equal(
+    unlist(payload[[1]]$evidence$annotation$details$unmatched_keywords),
+    "weight"
+  )
   expect_equal(
     unlist(payload[[1]]$evidence$annotation$details$matched_keywords),
     "fruit"
   )
+  expect_null(payload[[1]]$evidence$annotation$details$keyword_score)
+  expect_null(payload[[1]]$evidence$annotation$details$llm_relevance_score)
 })
 
 test_that("llm_report writes HTML with table and reuses rank rds", {
@@ -328,7 +350,8 @@ test_that("llm_report writes HTML with table and reuses rank rds", {
     out_dir = out_dir,
     rank_result = ranked,
     peak_id = peak_ids[has_cs][1],
-    download_tenor = FALSE
+    download_tenor = FALSE,
+    gff = res$gff
   )
   expect_true(grepl("\\.html$", rep1$path))
   expect_true(file.exists(rep1$path))
@@ -352,7 +375,8 @@ test_that("llm_report writes HTML with table and reuses rank rds", {
     out_dir = out_dir,
     rank_result = rep1$rank_rds,
     peak_id = peak_ids[has_cs][1],
-    download_tenor = FALSE
+    download_tenor = FALSE,
+    gff = res$gff
   )
   expect_equal(nrow(rep2$rank_result), nrow(ranked))
   expect_equal(attr(rep2$rank_result, "phenotypeRank")$query_id, "reuse_q")

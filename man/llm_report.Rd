@@ -23,6 +23,16 @@ llm_report(
   use_llm_relevance = NULL,
   download_tenor = TRUE,
   candidate = NULL,
+  gff = NULL,
+  work_dir = NULL,
+  ann = NULL,
+  snpeff = NULL,
+  expr_mat = NULL,
+  interpro = NULL,
+  reinterpret = TRUE,
+  reinterpret_rules = reinterpretDefaultRules(),
+  reinterpret_views = reinterpretDefaultViews(),
+  gene_select = c("union_champions", "composite_top_n", "union_all"),
   ...
 )
 }
@@ -55,7 +65,8 @@ this report (weight default 0.5).}
 
 \item{rank_result}{Optional precomputed \code{\link[=rankPhenotypeCandidates]{rankPhenotypeCandidates()}} output,
 or a path to a saved \code{.rds}/\code{.csv} rank table. Skips re-ranking
-when provided (still requires SnpEff + credible sets for reported peaks).}
+when provided (still requires GFF + credible sets for reported peaks;
+SnpEff is optional).}
 
 \item{peak_id}{Optional peak ID(s) to report. When \code{rank_result} is
 \code{NULL}, candidates are ranked within each peak; default \code{NULL}
@@ -69,6 +80,33 @@ uses the top five peaks by lead \code{negLog10P}.}
 \code{Gene_ID} / peak columns as produced by \code{listCandidate}). When
 \code{NULL}, candidates are loaded from the companion store.}
 
+\item{gff}{Required \code{GRanges} gene models (same object as
+\code{listCandidate(..., gff = ...)}). Credible sets are also required;
+SnpEff is optional.}
+
+\item{work_dir}{Optional Phase 2 E working directory. When set, evidence uses
+the gene×source E pipeline and reads \code{config.yaml}
+(\code{mapping_mode}, \code{top_n}). When \code{NULL}, legacy peak-batch
+evidence prose is used.}
+
+\item{ann}{Optional functional annotation table for E0/E1/E5–E7.}
+
+\item{snpeff}{Optional SnpEff table for E2 / GWAS gene assignment.}
+
+\item{expr_mat}{Optional expression matrix (genes × samples) for E4.}
+
+\item{interpro}{Optional InterProScan interval table for E2 domain overlap.}
+
+\item{reinterpret}{If \code{TRUE} (default), build Phase-2 F hypothesis
+cards and select evidence genes via \code{gene_select}.}
+
+\item{reinterpret_rules, reinterpret_views}{Passed to
+\code{\link[=reinterpretPeakCandidates]{reinterpretPeakCandidates()}}.}
+
+\item{gene_select}{Evidence gene set when \code{reinterpret = TRUE}:
+\code{"union_champions"} (default), \code{"composite_top_n"}, or
+\code{"union_all"}.}
+
 \item{...}{Passed to \code{\link[=rankPhenotypeCandidates]{rankPhenotypeCandidates()}} when ranking.
 \code{top_n} and \code{save} in \code{...} are ignored.}
 }
@@ -76,7 +114,7 @@ uses the top five peaks by lead \code{negLog10P}.}
 A list with \code{html}, \code{markdown} (same HTML string for
 compatibility), \code{path}, \code{meta_path}, \code{rank_csv},
 \code{rank_rds}, \code{verification} (always \code{NULL} until B5),
-\code{rank_result}, and \code{query}.
+\code{rank_result}, \code{reinterpret}, and \code{query}.
 }
 \description{
 Ranks candidates (with required SnpEff + credible-set / finemap channel),
@@ -90,5 +128,6 @@ SnpEff counts are written by code. Evidence verification is not included
 yet (Phase 2 B5 deferred).
 }
 \seealso{
-\code{\link[=rankPhenotypeCandidates]{rankPhenotypeCandidates()}}, \code{\link[=explainPhenotypeCandidates]{explainPhenotypeCandidates()}}
+\code{\link[=rankPhenotypeCandidates]{rankPhenotypeCandidates()}}, \code{\link[=reinterpretPeakCandidates]{reinterpretPeakCandidates()}},
+\code{\link[=explainPhenotypeCandidates]{explainPhenotypeCandidates()}}
 }

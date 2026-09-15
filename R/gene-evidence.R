@@ -80,6 +80,11 @@ collectGeneEvidence <- function(gene_ids,
   flags <- .ai_config_ranking_flags()
   if (is.null(use_keyword)) use_keyword <- flags$use_keyword
   if (is.null(use_llm_relevance)) use_llm_relevance <- flags$use_llm_relevance
+  # FALSE / fallback path: never run annotation LLM relevance (A1/A2)
+  if (inherits(query, "PhenotypeQuery") &&
+      identical(as.character(query$parsed_by %||% "")[1L], "fallback")) {
+    use_llm_relevance <- FALSE
+  }
   if (isTRUE(use_semantic)) {
     warning(
       "'use_semantic' is ignored; LSA / text2vec annotation scoring was removed.",
@@ -273,6 +278,17 @@ collectGeneEvidence <- function(gene_ids,
   (x - rng[1]) / (rng[2] - rng[1])
 }
 
+#' Floor normalized evidence scores (default minimum 0.1)
+#' @keywords internal
+.floor_score_vec <- function(x, floor = 0.1) {
+  x <- as.numeric(x)
+  floor <- as.numeric(floor)[1L]
+  if (!is.finite(floor) || floor < 0) {
+    floor <- 0
+  }
+  ifelse(is.finite(x), pmax(x, floor), floor)
+}
+
 .evidence_annotation_batch <- function(gene_ids,
                                        candidate,
                                        search_text,
@@ -290,7 +306,10 @@ collectGeneEvidence <- function(gene_ids,
       details = list(
         keyword_score = 0,
         matched_keywords = character(),
+        matched_synonym = list(),
+        matched_related = list(),
         unmatched_keywords = character(),
+        matched_context = character(),
         llm_relevance_score = 0,
         match_method = "none"
       )
@@ -329,17 +348,18 @@ collectGeneEvidence <- function(gene_ids,
     snippets[[i]] <- ann_text[keep]
   }
 
-  kw_terms <- .keyword_terms_from_query(query)
-  if (!length(kw_terms) && nzchar(search_text %||% "")) {
-    kw_terms <- .keyword_terms_from_query(search_text)
+  # FALSE / fallback path: never run annotation LLM relevance
+  if (inherits(query, "PhenotypeQuery") &&
+      identical(as.character(query$parsed_by %||% "")[1L], "fallback")) {
+    use_llm_relevance <- FALSE
   }
 
   kw_details <- vector("list", length(gene_ids))
   names(kw_details) <- gene_ids
   if (isTRUE(use_keyword)) {
-    details_list <- .keyword_match_details(
+    details_list <- .annotation_keyword_family_details(
       text = unname(texts),
-      terms = kw_terms,
+      query = query,
       ignore.case = TRUE
     )
     kw_details <- setNames(details_list, gene_ids)
@@ -349,7 +369,10 @@ collectGeneEvidence <- function(gene_ids,
         list(
           keyword_score = 0,
           matched_keywords = character(),
-          unmatched_keywords = kw_terms
+          matched_synonym = list(),
+          matched_related = list(),
+          unmatched_keywords = character(),
+          matched_context = character()
         )
       }),
       gene_ids
@@ -358,28 +381,56 @@ collectGeneEvidence <- function(gene_ids,
 
   llm_score <- rep(0, length(gene_ids))
   names(llm_score) <- gene_ids
-  if (isTRUE(use_llm_relevance) && any(nzchar(texts))) {
-    llm_score <- .llm_annotation_relevance_scores(
-      gene_ids = gene_ids,
-      texts = texts,
+  # TRUE path: relevance only for genes with any keyword/related hit (A2 §3.4)
+  hit_genes <- gene_ids[
+    vapply(gene_ids, function(gid) {
+      det <- kw_details[[gid]]
+      as.numeric(det$keyword_score %||% 0) > 0 ||
+        length(det$matched_keywords %||% character()) > 0L ||
+        length(det$matched_synonym %||% list()) > 0L ||
+        length(det$matched_related %||% list()) > 0L ||
+        length(det$matched_context %||% character()) > 0L
+    }, logical(1L))
+  ]
+  if (isTRUE(use_llm_relevance) && length(hit_genes) && any(nzchar(texts[hit_genes]))) {
+    message(
+      "ranking: LLM annotation relevance for ",
+      length(hit_genes), " gene(s)..."
+    )
+    llm_hit <- .llm_annotation_relevance_scores(
+      gene_ids = hit_genes,
+      texts = texts[hit_genes],
       query = query,
       search_text = search_text,
       model = llm_model,
       base_url = llm_base_url,
       timeout = llm_timeout
     )
+    llm_score[names(llm_hit)] <- llm_hit
+    message("ranking: LLM annotation relevance done")
   }
 
   for (gid in gene_ids) {
     det <- kw_details[[gid]] %||% list(
       keyword_score = 0,
       matched_keywords = character(),
-      unmatched_keywords = character()
+      matched_synonym = list(),
+      matched_related = list(),
+      unmatched_keywords = character(),
+      matched_context = character()
     )
     kw <- as.numeric(det$keyword_score %||% 0)
     llm <- as.numeric(llm_score[[gid]] %||% 0)
     if (!is.finite(kw)) kw <- 0
     if (!is.finite(llm)) llm <- 0
+    # No keyword hit => do not use LLM score alone (A2 §3.4)
+    if (kw <= 0 &&
+        !length(det$matched_keywords %||% character()) &&
+        !length(det$matched_synonym %||% list()) &&
+        !length(det$matched_related %||% list()) &&
+        !length(det$matched_context %||% character())) {
+      llm <- 0
+    }
     score <- max(kw, llm)
     methods <- c(
       if (kw > 0) "keyword",
@@ -392,7 +443,10 @@ collectGeneEvidence <- function(gene_ids,
       details = list(
         keyword_score = kw,
         matched_keywords = as.character(det$matched_keywords %||% character()),
+        matched_synonym = det$matched_synonym %||% list(),
+        matched_related = det$matched_related %||% list(),
         unmatched_keywords = as.character(det$unmatched_keywords %||% character()),
+        matched_context = as.character(det$matched_context %||% character()),
         llm_relevance_score = llm,
         match_method = if (length(methods)) paste(methods, collapse = "+") else "none"
       )
@@ -469,15 +523,35 @@ collectGeneEvidence <- function(gene_ids,
     return(scores)
   }
 
-  parsed <- tryCatch(
-    jsonlite::fromJSON(raw, simplifyVector = FALSE),
-    error = function(e) NULL
-  )
-  if (is.null(parsed)) {
-    return(scores)
+  parse_scores <- function(raw_s) {
+    parsed <- tryCatch(
+      jsonlite::fromJSON(raw_s, simplifyVector = FALSE),
+      error = function(e) NULL
+    )
+    if (is.null(parsed)) {
+      return(NULL)
+    }
+    items <- parsed$scores %||% parsed
+    if (!is.list(items)) {
+      return(NULL)
+    }
+    items
   }
-  items <- parsed$scores %||% parsed
-  if (!is.list(items)) {
+  items <- parse_scores(raw)
+  if (is.null(items)) {
+    raw2 <- .llm_scrutiny_pass(
+      llm = list(model = model, base_url = base_url, timeout = timeout),
+      rules = system_msg,
+      prior_output = raw,
+      problems = "JSON parse failed or missing scores array",
+      extra_user = user_msg,
+      timeout = timeout
+    )
+    if (!inherits(raw2, "error")) {
+      items <- parse_scores(raw2)
+    }
+  }
+  if (is.null(items)) {
     return(scores)
   }
   for (item in items) {
@@ -504,7 +578,10 @@ collectGeneEvidence <- function(gene_ids,
   impact_cols <- c("HIGH", "MODERATE", "LOW", "MODIFIER")
   counts <- setNames(rep(0, length(impact_cols)), impact_cols)
   for (col in impact_cols) {
-    if (col %in% names(gene_rows)) {
+    at <- paste0(col, "_at_var")
+    if (at %in% names(gene_rows)) {
+      counts[[col]] <- sum(as.numeric(gene_rows[[at]]), na.rm = TRUE)
+    } else if (col %in% names(gene_rows)) {
       counts[[col]] <- sum(as.numeric(gene_rows[[col]]), na.rm = TRUE)
     }
   }
@@ -593,14 +670,18 @@ collectGeneEvidence <- function(gene_ids,
       call. = FALSE
     )
   }
-  snpeff <- lazyData(object = object, dataset = "snpeff", pheno = pheno_name)
+  snpeff <- tryCatch(
+    lazyData(object = object, dataset = "snpeff", pheno = pheno_name),
+    error = function(e) NULL
+  )
   if (is.null(snpeff) || !nrow(snpeff) || !"Gene_ID" %in% names(snpeff) ||
       !"Pos" %in% names(snpeff)) {
-    stop(
-      "SnpEff annotations are required for finemap scoring. ",
-      "Run listCandidate(..., snpeff = ...) first.",
-      call. = FALSE
-    )
+    # SnpEff optional (Phase 2): finemap channel scores stay 0
+    return(data.frame(
+      Gene_ID = character(),
+      max_PIP = numeric(),
+      stringsAsFactors = FALSE
+    ))
   }
   snpeff$Gene_ID <- as.character(snpeff$Gene_ID)
   snpeff$Chr <- as.character(snpeff$Chr)
@@ -635,22 +716,24 @@ collectGeneEvidence <- function(gene_ids,
     if (!nrow(cred)) {
       next
     }
-    block <- .get_peakcall(object = object, pheno_name = pheno_name, recalc = TRUE)
-    if (is.null(block) || !nrow(block)) {
-      block <- .get_peakcall(object = object, pheno_name = pheno_name, recalc = FALSE)
-    }
-    block <- block[as.character(block$peak_ID) == pid, , drop = FALSE]
-    if (!nrow(block) || !"variant_ID" %in% names(block)) {
-      stop("Peak block missing for peak ", pid, ".", call. = FALSE)
-    }
-    pos_map <- block[, intersect(c("variant_ID", "Chr", "Pos"), names(block)),
-                     drop = FALSE]
-    cred2 <- merge(cred, pos_map, by = "variant_ID", all.x = TRUE)
-    if (!"Pos" %in% names(cred2) || all(is.na(cred2$Pos))) {
+    # Newer calcCredibleSet() stores Chr/Pos on the CS table. Merging those
+    # rows again with the peak block yields Pos.x/Pos.y and a false "no Pos"
+    # failure — enrich only when coordinates are missing (same as E path).
+    cred2 <- .e_enrich_cs_coords(
+      cred,
+      object = object,
+      pheno_name = pheno_name,
+      peak_id = pid
+    )
+    if (!"Pos" %in% names(cred2) ||
+        !any(is.finite(as.numeric(cred2$Pos)), na.rm = TRUE)) {
       stop(
         "Could not map credible-set variants to positions for peak ", pid, ".",
         call. = FALSE
       )
+    }
+    if (!"Chr" %in% names(cred2) && "chr" %in% names(cred2)) {
+      cred2$Chr <- cred2$chr
     }
     cred2$Chr <- as.character(cred2$Chr)
     cred2$Pos <- as.numeric(cred2$Pos)

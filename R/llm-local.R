@@ -57,6 +57,66 @@ llmChat <- function(messages,
   as.character(resp$message$content)
 }
 
+#' One constrained-output scrutiny pass: prior answer + rules → LLM
+#'
+#' Used when a restricted generation step produced invalid output. Sends the
+#' original constraint rules, the previous model output, and problem notes so
+#' the LLM can correct once. Does not loop.
+#'
+#' @param llm List with \code{model}, \code{base_url}, optional \code{timeout}.
+#' @param rules Constraint / schema text (system-level rules to obey).
+#' @param prior_output Previous model output (JSON or prose).
+#' @param problems Character vector of validation failures.
+#' @param extra_user Optional extra user context (e.g. allowed numbers).
+#' @return Corrected content string, or an \code{error} condition on failure.
+#' @keywords internal
+.llm_scrutiny_pass <- function(llm,
+                               rules,
+                               prior_output,
+                               problems = character(),
+                               extra_user = NULL,
+                               timeout = NULL) {
+  if (is.null(llm) || is.null(llm$model)) {
+    return(simpleError("llm_scrutiny: missing llm settings"))
+  }
+  sys <- paste(
+    "You audit and correct a previous model answer that violated constraints.",
+    "Obey the constraint rules exactly. Fix every listed problem.",
+    "Keep anything that already complies. Return only the corrected answer",
+    "(same format as required by the rules; JSON when rules require JSON).",
+    "Do not add commentary outside that format."
+  )
+  user <- paste0(
+    "Constraint rules:\n",
+    as.character(rules)[1L],
+    "\n\nProblems found:\n",
+    if (length(problems)) {
+      paste(paste0("- ", problems), collapse = "\n")
+    } else {
+      "- (unspecified validation failure)"
+    },
+    "\n\nPrevious model output to correct:\n",
+    as.character(prior_output)[1L]
+  )
+  if (!is.null(extra_user) && nzchar(as.character(extra_user)[1L])) {
+    user <- paste0(user, "\n\nAdditional context:\n", as.character(extra_user)[1L])
+  }
+  to <- timeout %||% llm$timeout %||% 120
+  tryCatch(
+    llmChat(
+      messages = list(
+        list(role = "system", content = sys),
+        list(role = "user", content = user)
+      ),
+      model = llm$model,
+      base_url = llm$base_url,
+      json_mode = TRUE,
+      timeout = to
+    ),
+    error = function(e) e
+  )
+}
+
 #' Explain ranked phenotype candidates using a local LLM
 #'
 #' Generates a Markdown summary of the top-ranked genes using only evidence
@@ -140,11 +200,16 @@ explainPhenotypeCandidates <- function(rank_result,
     "(2) SnpEff impact notes when present,",
     "(3) a short validity comment for each gene.",
     "For keyword/annotation notes:",
-    "- List only matched phenotype keywords from annotation.details.matched_keywords when present.",
-    "- Do not mention unmatched or missing keywords.",
-    "- Never print numeric scores.",
+    "- Use matched_keywords, matched_synonym, matched_related, unmatched_keywords,",
+    "  and matched_context from annotation.details when present.",
+    "- Link synonym/related hits to from_user. Treat related hits as indirect",
+    "  lexical links (not direct phenotype proof). Treat unmatched_keywords as possible",
+    "  counter-evidence (user phrases whose whole family missed).",
+    "- Do not list missed synonym/related strings. Do not mention hit rates or high/low.",
+    "- Never print numeric scores (composite_score, score_*, keyword_score).",
     "- Do NOT say that a 'semantic match' was confirmed or cite LSA/embedding similarity.",
     "- Ignore matches of prepositions, conjunctions, and other non-biological function words (e.g. in, of, to, and); do not treat them as evidence.",
+    "For validity comments: SnpEff/GWAS contradictions only; do not restate keywords.",
     lang_note
   )
 
@@ -198,7 +263,8 @@ explainPhenotypeCandidates <- function(rank_result,
 #' @param out_dir Optional report directory override (default [aiReportDir()]).
 #' @param rank_result Optional precomputed [rankPhenotypeCandidates()] output,
 #'   or a path to a saved \code{.rds}/\code{.csv} rank table. Skips re-ranking
-#'   when provided (still requires SnpEff + credible sets for reported peaks).
+#'   when provided (still requires GFF + credible sets for reported peaks;
+#'   SnpEff is optional).
 #' @param peak_id Optional peak ID(s) to report. When \code{rank_result} is
 #'   \code{NULL}, candidates are ranked within each peak; default \code{NULL}
 #'   uses the top five peaks by lead \code{negLog10P}.
@@ -207,16 +273,35 @@ explainPhenotypeCandidates <- function(rank_result,
 #' @param candidate Optional candidate \code{data.frame} override (must include
 #'   \code{Gene_ID} / peak columns as produced by \code{listCandidate}). When
 #'   \code{NULL}, candidates are loaded from the companion store.
+#' @param gff Required \code{GRanges} gene models (same object as
+#'   \code{listCandidate(..., gff = ...)}). Credible sets are also required;
+#'   SnpEff is optional.
+#' @param work_dir Optional Phase 2 E working directory. When set, evidence uses
+#'   the gene×source E pipeline and reads \code{config.yaml}
+#'   (\code{mapping_mode}, \code{top_n}). When \code{NULL}, legacy peak-batch
+#'   evidence prose is used.
+#' @param ann Optional functional annotation table for E0/E1/E5–E7.
+#' @param snpeff Optional SnpEff table for E2 / GWAS gene assignment.
+#' @param expr_mat Optional expression matrix (genes × samples) for E4.
+#' @param interpro Optional InterProScan interval table for E2 domain overlap.
+#' @param reinterpret If \code{TRUE} (default), build Phase-2 F hypothesis
+#'   cards and select evidence genes via \code{gene_select}.
+#' @param reinterpret_rules,reinterpret_views Passed to
+#'   [reinterpretPeakCandidates()].
+#' @param gene_select Evidence gene set when \code{reinterpret = TRUE}:
+#'   \code{"union_champions"} (default), \code{"composite_top_n"}, or
+#'   \code{"union_all"}.
 #' @param ... Passed to [rankPhenotypeCandidates()] when ranking.
 #'   \code{top_n} and \code{save} in \code{...} are ignored.
 #'
 #' @return A list with \code{html}, \code{markdown} (same HTML string for
 #'   compatibility), \code{path}, \code{meta_path}, \code{rank_csv},
 #'   \code{rank_rds}, \code{verification} (always \code{NULL} until B5),
-#'   \code{rank_result}, and \code{query}.
+#'   \code{rank_result}, \code{reinterpret}, and \code{query}.
 #' @export
 #'
-#' @seealso [rankPhenotypeCandidates()], [explainPhenotypeCandidates()]
+#' @seealso [rankPhenotypeCandidates()], [reinterpretPeakCandidates()],
+#'   [explainPhenotypeCandidates()]
 llm_report <- function(object,
                        pheno,
                        query = NULL,
@@ -235,10 +320,39 @@ llm_report <- function(object,
                        use_llm_relevance = NULL,
                        download_tenor = TRUE,
                        candidate = NULL,
+                       gff = NULL,
+                       work_dir = NULL,
+                       ann = NULL,
+                       snpeff = NULL,
+                       expr_mat = NULL,
+                       interpro = NULL,
+                       reinterpret = TRUE,
+                       reinterpret_rules = reinterpretDefaultRules(),
+                       reinterpret_views = reinterpretDefaultViews(),
+                       gene_select = c("union_champions", "composite_top_n", "union_all"),
                        ...) {
   language <- match.arg(language)
+  gene_select <- match.arg(gene_select)
+  reinterpret <- isTRUE(reinterpret)
   if (!inherits(object, "LazyGas")) {
     stop("'object' must be a LazyGas object.", call. = FALSE)
+  }
+  use_e_path <- !is.null(work_dir) && nzchar(as.character(work_dir)[1L])
+  e_cfg <- NULL
+  if (use_e_path) {
+    work_dir <- path.expand(as.character(work_dir)[1L])
+    if (!dir.exists(work_dir)) {
+      dir.create(work_dir, recursive = TRUE, showWarnings = FALSE)
+    }
+    cfg_path <- file.path(work_dir, "config.yaml")
+    if (!file.exists(cfg_path)) {
+      stop(
+        "work_dir is set but config.yaml is missing. ",
+        "Call writeLazyGasExploreConfig(work_dir, mapping_mode=...) first.",
+        call. = FALSE
+      )
+    }
+    e_cfg <- readLazyGasExploreConfig(work_dir)
   }
   if (is.character(rank_result) && length(rank_result) == 1L &&
       nzchar(rank_result)) {
@@ -265,6 +379,7 @@ llm_report <- function(object,
       use_llm = isTRUE(query_use_llm) && isTRUE(use_llm),
       llm_model = llm$model,
       llm_base_url = llm$base_url,
+      llm_timeout = llm$timeout,
       object = object,
       save = TRUE
     )
@@ -279,10 +394,15 @@ llm_report <- function(object,
       pheno_name = pheno_name,
       peak_id = peak_id
     )
-    .report_require_snpeff_cs(
+    message(
+      "llm_report: ranking ", nrow(peaks_plan), " peak(s): ",
+      paste(peaks_plan$peak_ID, collapse = ", ")
+    )
+    .report_require_cs_gff(
       object = object,
       pheno_name = pheno_name,
-      peak_ids = peaks_plan$peak_ID
+      peak_ids = peaks_plan$peak_ID,
+      gff = gff
     )
     candidate_all <- if (!is.null(candidate)) {
       candidate
@@ -297,7 +417,7 @@ llm_report <- function(object,
       stop("No candidate data found for phenotype '", pheno_name, "'.",
            call. = FALSE)
     }
-    if (!any(c("HIGH", "MODERATE") %in% names(candidate_all))) {
+    if (!use_e_path && !any(c("HIGH", "MODERATE") %in% names(candidate_all))) {
       stop(
         "Candidate table lacks SnpEff impact columns. ",
         "Run listCandidate(..., snpeff = ...) first.",
@@ -325,17 +445,23 @@ llm_report <- function(object,
     rank_parts <- list()
     for (i in seq_len(nrow(peaks_plan))) {
       pid <- peaks_plan$peak_ID[i]
+      message(
+        "llm_report: rankPhenotypeCandidates peak ", pid,
+        " (", i, "/", nrow(peaks_plan), ")..."
+      )
       cand_peak <- candidate_all[
         candidate_all$peak_ID == pid,
         ,
         drop = FALSE
       ]
       if (nrow(cand_peak) == 0L) {
+        message("llm_report: peak ", pid, " has no candidates; skip")
         next
       }
       if ("Gene_ID" %in% names(cand_peak)) {
         gid_ok <- !is.na(cand_peak$Gene_ID) & nzchar(as.character(cand_peak$Gene_ID))
         if (!any(gid_ok)) {
+          message("llm_report: peak ", pid, " has no Gene_ID rows; skip")
           next
         }
         cand_peak <- cand_peak[gid_ok, , drop = FALSE]
@@ -352,20 +478,31 @@ llm_report <- function(object,
           )
         ),
         error = function(e) {
-          stop(
+          warning(
             "Ranking failed for peak ", pid, ": ", conditionMessage(e),
+            " — skipping this peak.",
             call. = FALSE
           )
+          NULL
         }
       )
-      rank_parts[[length(rank_parts) + 1L]] <- rank_peak
+      if (!is.null(rank_peak)) {
+        message(
+          "llm_report: ranked peak ", pid, " — ",
+          nrow(rank_peak), " gene(s)"
+        )
+        rank_parts[[length(rank_parts) + 1L]] <- rank_peak
+      }
     }
-    rank_result <- if (length(rank_parts)) {
-      .bind_rank_results(rank_parts)
-    } else {
-      NULL
+    if (!length(rank_parts)) {
+      stop(
+        "Ranking failed for all requested peaks; no report written.",
+        call. = FALSE
+      )
     }
+    rank_result <- .bind_rank_results(rank_parts)
     ranked_in_this_call <- TRUE
+    message("llm_report: ranking done")
   } else {
     peaks_plan <- .resolve_report_peaks(
       object = object,
@@ -378,10 +515,11 @@ llm_report <- function(object,
         NULL
       }
     )
-    .report_require_snpeff_cs(
+    .report_require_cs_gff(
       object = object,
       pheno_name = pheno_name,
-      peak_ids = peaks_plan$peak_ID
+      peak_ids = peaks_plan$peak_ID,
+      gff = gff
     )
   }
 
@@ -390,9 +528,48 @@ llm_report <- function(object,
     pheno_name = pheno_name,
     language = language
   )
+  reinterpret_obj <- NULL
+  if (reinterpret && !is.null(rank_result) && nrow(rank_result) > 0L) {
+    message("llm_report: reinterpretPeakCandidates...")
+    reinterpret_obj <- tryCatch(
+      reinterpretPeakCandidates(
+        ranked = rank_result,
+        query = query,
+        peak_id = peaks_plan$peak_ID,
+        views = reinterpret_views,
+        rules = reinterpret_rules,
+        save = TRUE,
+        object = object,
+        pheno = pheno_name
+      ),
+      error = function(e) {
+        warning(
+          "reinterpretPeakCandidates failed: ", conditionMessage(e),
+          call. = FALSE
+        )
+        NULL
+      }
+    )
+    if (!is.null(reinterpret_obj)) {
+      message("llm_report: reinterpret done")
+    }
+  }
+  e_b5_all <- list()
   sections <- character()
+  e_gff_tables <- NULL
+  if (use_e_path) {
+    protein_map_store_once <- tryCatch(
+      lazyData(object = object, dataset = "gene_protein_map"),
+      error = function(e) NULL
+    )
+    e_gff_tables <- .gff_e_tables(gff, protein_map = protein_map_store_once)
+  }
   for (i in seq_len(nrow(peaks_plan))) {
     pid <- peaks_plan$peak_ID[i]
+    message(
+      "llm_report: peak section ", pid,
+      " (", i, "/", nrow(peaks_plan), ")..."
+    )
     rank_peak <- if (!is.null(rank_result) && "peak_ID" %in% names(rank_result)) {
       rank_result[as.character(rank_result$peak_ID) == as.character(pid), , drop = FALSE]
     } else if (!is.null(rank_result) && nrow(peaks_plan) == 1L) {
@@ -404,6 +581,123 @@ llm_report <- function(object,
         "composite_score" %in% names(rank_peak)) {
       rank_peak <- rank_peak[order(-rank_peak$composite_score, rank_peak$Gene_ID), ,
                              drop = FALSE]
+    }
+    reinterpret_peak <- NULL
+    evidence_rank <- NULL
+    gene_set <- character()
+    if (!is.null(reinterpret_obj)) {
+      reinterpret_peak <- reinterpret_obj$peaks[[as.character(pid)]]
+      top_ids <- if (nrow(rank_peak)) {
+        utils::head(as.character(rank_peak$Gene_ID), as.integer(top_n)[1L])
+      } else {
+        character()
+      }
+      gene_set <- geneSetForReport(
+        reinterpret_obj,
+        peak_id = pid,
+        mode = gene_select,
+        composite_ids = top_ids
+      )
+      if (length(gene_set) && nrow(rank_peak)) {
+        evidence_rank <- rank_peak[
+          as.character(rank_peak$Gene_ID) %in% gene_set,
+          ,
+          drop = FALSE
+        ]
+      }
+    }
+    e_run <- NULL
+    if (use_e_path) {
+      message("llm_report: E evidence path for peak ", pid, "...")
+      cred <- tryCatch(
+        lazyData(
+          object = object,
+          dataset = "credible_set",
+          pheno = pheno_name,
+          kind = paste0("peak_", pid)
+        ),
+        error = function(e) NULL
+      )
+      summ <- attr(cred, "summary")
+      resolution <- if (!is.null(summ$resolution)) {
+        as.character(summ$resolution)[1L]
+      } else {
+        "low"
+      }
+      simple <- tryCatch(
+        lazyData(object = object, dataset = "simple_candidate", pheno = pheno_name),
+        error = function(e) NULL
+      )
+      if (!is.null(simple) && nrow(simple) && "peak_ID" %in% names(simple)) {
+        simple <- simple[as.character(simple$peak_ID) == as.character(pid), , drop = FALSE]
+      }
+      if (is.null(simple) || !nrow(simple)) {
+        simple <- if (!is.null(rank_peak) && nrow(rank_peak)) {
+          rank_peak
+        } else if (!is.null(candidate)) {
+          candidate[as.character(candidate$peak_ID) == as.character(pid), , drop = FALSE]
+        } else {
+          data.frame()
+        }
+      }
+      if (length(gene_set) && nrow(simple) && "Gene_ID" %in% names(simple)) {
+        # Prefer union_champions / gene_select set; fall back if empty intersection
+        simple_f <- simple[as.character(simple$Gene_ID) %in% gene_set, , drop = FALSE]
+        if (nrow(simple_f)) {
+          simple <- simple_f
+        }
+      }
+      if (nrow(simple) && !"Chr" %in% names(simple) && "Gene_chr" %in% names(simple)) {
+        simple$Chr <- simple$Gene_chr
+      }
+      # E top_n from config; legacy report top_n only for candidate table display
+      e_top <- e_cfg$top_n %||% Inf
+      kw_hits <- .keyword_hits_from_rank_result(
+        if (!is.null(evidence_rank) && nrow(evidence_rank)) {
+          evidence_rank
+        } else {
+          rank_peak
+        }
+      )
+      snpeff_peak <- .snpeff_for_peak(
+        snpeff = snpeff,
+        object = object,
+        pheno_name = pheno_name,
+        peak_id = pid
+      )
+      message(
+        "llm_report: SnpEff peak-block markers for peak ", pid, ": ",
+        nrow(snpeff_peak), " annotation row(s)"
+      )
+      e_run <- .report_e_run_peak(
+        work_dir = work_dir,
+        mapping_mode = e_cfg$mapping_mode,
+        simple_candidates = simple,
+        credible_set = .e_enrich_cs_coords(
+          cred,
+          object = object,
+          pheno_name = pheno_name,
+          peak_id = pid
+        ),
+        gff = gff,
+        ann = ann,
+        snpeff = snpeff_peak,
+        interpro = interpro,
+        expr_mat = expr_mat,
+        trait_text = query$trait_text %||% query$text %||% pheno_name,
+        keyword_hits_by_gene = kw_hits,
+        peak_id = pid,
+        use_llm = use_llm,
+        llm = llm,
+        resolution = resolution,
+        top_n = e_top,
+        cfg = e_cfg,
+        gff_windows = e_gff_tables$windows,
+        protein_map = e_gff_tables$protein_map
+      )
+      if (length(e_run$b5_failures)) {
+        e_b5_all <- c(e_b5_all, e_run$b5_failures)
+      }
     }
     sections <- c(
       sections,
@@ -421,13 +715,17 @@ llm_report <- function(object,
         top_n = top_n,
         language = language,
         use_llm = use_llm,
-        llm = llm
+        llm = llm,
+        e_run = e_run,
+        reinterpret_peak = reinterpret_peak,
+        evidence_rank = evidence_rank
       )
     )
   }
 
   html_body <- paste(c(basic_html, sections), collapse = "\n")
-  # Evidence verification omitted for now (Phase 2 B5 deferred).
+  # Evidence verification omitted for now (Phase 2 B5 deferred as section;
+  # per-source B5 grounding runs inside E when work_dir is set).
   html <- .report_html_document(
     body_html = html_body,
     title = paste("lazyGas AI report —", pheno_name)
@@ -444,6 +742,7 @@ llm_report <- function(object,
   base <- paste0(safe_pheno, "_", stamp)
   report_path <- file.path(report_dir, paste0(base, ".html"))
   meta_path <- file.path(report_dir, paste0(base, ".meta.json"))
+  message("llm_report: writing HTML ", report_path)
   writeLines(html, report_path, useBytes = TRUE)
   if (!is.null(rank_result) && nrow(rank_result) > 0L) {
     rank_csv_path <- file.path(report_dir, paste0(base, "_rank.csv"))
@@ -479,13 +778,32 @@ llm_report <- function(object,
       rank_csv = if (is.null(rank_csv_path)) NULL else basename(rank_csv_path),
       rank_rds = if (is.null(rank_rds_path)) NULL else basename(rank_rds_path),
       rank_meta = attr(rank_result, "phenotypeRank"),
-      report_skeleton = "phase2_B4"
+      report_skeleton = if (use_e_path) "phase2_E" else "phase2_B4",
+      reinterpret = reinterpret,
+      gene_select = gene_select,
+      work_dir = if (use_e_path) work_dir else NULL,
+      mapping_mode = if (use_e_path) e_cfg$mapping_mode else NULL,
+      b5_failures = if (length(e_b5_all)) names(e_b5_all) else list()
     ),
     meta_path,
     auto_unbox = TRUE,
     pretty = TRUE,
     null = "null"
   )
+  if (use_e_path) {
+    .write_run_metadata(
+      work_dir,
+      list(
+        pheno = pheno_name,
+        mapping_mode = e_cfg$mapping_mode,
+        top_n = e_cfg$top_n,
+        use_llm = isTRUE(use_llm),
+        report_file = basename(report_path),
+        b5_failures = names(e_b5_all),
+        created_at = stamp
+      )
+    )
+  }
 
   list(
     html = html,
@@ -496,6 +814,7 @@ llm_report <- function(object,
     rank_rds = rank_rds_path,
     verification = NULL,
     rank_result = rank_result,
+    reinterpret = reinterpret_obj,
     query = query
   )
 }
