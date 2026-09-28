@@ -1,11 +1,29 @@
 ################################################################################
 
+#' List candidate genes for peak blocks
+#'
+#' Always writes the thin **simple candidate** table (Gene_ID + position) and
+#' the Gene↔transcript/protein map. When \code{output_list = TRUE} (default),
+#' also stores the legacy wide joined candidate / SnpEff tables used by
+#' interactive HTML reports.
+#'
+#' @param object A \code{LazyGas} object.
+#' @param gff Gene annotation \code{GRanges}.
+#' @param snpeff Optional \code{snpeff_gds} from \code{open_snpeff()}.
+#' @param ann Optional annotation \code{data.frame} with \code{Gene_ID}.
+#' @param recalc If \code{TRUE}, use recalculated peaks.
+#' @param output_list If \code{TRUE}, also write the legacy wide candidate and
+#'   SnpEff tables. If \code{FALSE}, only simple candidate + ID map are stored.
+#' @param ... Unused; for S4 compatibility.
+#'
+#' @return The \code{LazyGas} object (invisibly), updated in its store.
 #' @export
 setGeneric("listCandidate", function(object,
                                      gff,
                                      snpeff = NULL,
                                      ann = NULL,
                                      recalc = FALSE,
+                                     output_list = TRUE,
                                      ...)
   standardGeneric("listCandidate"))
 
@@ -15,7 +33,10 @@ setMethod("listCandidate",
                    gff,
                    snpeff = NULL,
                    ann = NULL,
-                   recalc = FALSE){
+                   recalc = FALSE,
+                   output_list = TRUE,
+                   ...){
+            output_list <- isTRUE(output_list)
             if (recalc) {
               if (!.store_section_exists(object, "recalc")) {
                 stop("No recalc data in the input LazyGas object.\n",
@@ -33,7 +54,9 @@ setMethod("listCandidate",
             if(!is.null(snpeff)){
               .validateSnpEff(chr = chr, snpeff = snpeff)
             }
-            .validateANN(gff = gff, ann = ann)
+            if (!is.null(ann)) {
+              .validateANN(gff = gff, ann = ann)
+            }
 
             ## Function to create the necessary folders in the GDS object
             .create_candidate_folders(object = object)
@@ -48,12 +71,15 @@ setMethod("listCandidate",
                                gff = gff,
                                snpeff = snpeff,
                                pheno_name = pheno_name,
-                               recalc = recalc)
+                               recalc = recalc,
+                               output_list = output_list)
 
-              .finalize_gdsn_candidate(object = object, pheno_name = pheno_name)
+              if (output_list) {
+                .finalize_gdsn_candidate(object = object, pheno_name = pheno_name)
+              }
             }
+            invisible(object)
           })
-
 #' @importFrom GenomeInfoDb seqlevels
 .validateGFF <- function(chr, gff){
   if(!inherits(gff, "GRanges")){
@@ -154,64 +180,74 @@ setMethod("listCandidate",
                              gff,
                              snpeff,
                              pheno_name,
-                             recalc){
+                             recalc,
+                             output_list = TRUE){
   message("Processing: ", pheno_name)
+  output_list <- isTRUE(output_list)
   peakcall <- .get_peakcall(object = object,
                             pheno_name = pheno_name,
                             recalc = recalc)
 
   if (is.null(peakcall)) {
-    .store_write_candidate(object, pheno_name, candidate = NULL, snpeff = NULL)
-
-  } else {
-    candidate_list <- list()
-    snpeff_list <- list()
-    snpeff_index <- if (!is.null(snpeff)) .snpeff_index(snpeff) else NULL
-    for(i_peak in unique(peakcall$peak_ID)){
-      peakblock <- peakcall[peakcall$peak_ID == i_peak, ]
-      tmp <- .getCandidate(peakblock = peakblock,
-                           gff = gff,
-                           snpeff = snpeff,
-                           snpeff_index = snpeff_index)
-      candidate_list[[length(candidate_list) + 1L]] <- tmp$candidate_list
-      if (!is.null(tmp$snpeff_out)) {
-        snpeff_list[[length(snpeff_list) + 1L]] <- tmp$snpeff_out
-      }
+    if (output_list) {
+      .store_write_candidate(object, pheno_name, candidate = NULL, snpeff = NULL)
     }
-    candidate_list <- if (length(candidate_list) > 0L) {
-      dplyr::bind_rows(candidate_list)
-    } else {
-      NULL
-    }
-    snpeff_list <- if (length(snpeff_list) > 0L) {
-      dplyr::bind_rows(snpeff_list)
-    } else {
-      NULL
-    }
-
-    if(!is.null(candidate_list)){
-      if(!is.null(ann)){
-        candidate_list <- left_join(candidate_list, ann, by = "Gene_ID")
-
-      }
-      candidate_list[is.na(candidate_list)] <- ""
-    }
-
-    snpeff_out <- NULL
-    if (!is.null(snpeff_list)) {
-      snpeff_list[is.na(snpeff_list)] <- ""
-      snpeff_out <- snpeff_list
-    }
-    .store_write_candidate(object, pheno_name, candidate_list, snpeff_out)
-
-    # E0: simple candidate list + Gene↔transcript/protein map (Parquet sidecar)
-    simple <- .simple_candidate_from_wide(candidate_list, gff = gff)
+    empty_simple <- .simple_candidate_from_wide(NULL, gff = gff)
     protein_map <- .gff_gene_protein_map(gff)
-    .store_write_simple_candidate(object, pheno_name, simple)
+    .store_write_simple_candidate(object, pheno_name, empty_simple)
     .store_write_gene_protein_map(object, protein_map)
+    return(invisible(NULL))
   }
-}
 
+  candidate_list <- list()
+  snpeff_list <- list()
+  snpeff_index <- if (!is.null(snpeff)) .snpeff_index(snpeff) else NULL
+  for(i_peak in unique(peakcall$peak_ID)){
+    peakblock <- peakcall[peakcall$peak_ID == i_peak, ]
+    tmp <- .getCandidate(peakblock = peakblock,
+                         gff = gff,
+                         snpeff = snpeff,
+                         snpeff_index = snpeff_index)
+    candidate_list[[length(candidate_list) + 1L]] <- tmp$candidate_list
+    if (!is.null(tmp$snpeff_out)) {
+      snpeff_list[[length(snpeff_list) + 1L]] <- tmp$snpeff_out
+    }
+  }
+  candidate_list <- if (length(candidate_list) > 0L) {
+    dplyr::bind_rows(candidate_list)
+  } else {
+    NULL
+  }
+  snpeff_list <- if (length(snpeff_list) > 0L) {
+    dplyr::bind_rows(snpeff_list)
+  } else {
+    NULL
+  }
+
+  # Thin list always (before ann join so Gene_* columns stay clean)
+  simple <- .simple_candidate_from_wide(candidate_list, gff = gff)
+  protein_map <- .gff_gene_protein_map(gff)
+  .store_write_simple_candidate(object, pheno_name, simple)
+  .store_write_gene_protein_map(object, protein_map)
+
+  if (!output_list) {
+    return(invisible(NULL))
+  }
+
+  if(!is.null(candidate_list)){
+    if(!is.null(ann)){
+      candidate_list <- left_join(candidate_list, ann, by = "Gene_ID")
+    }
+    candidate_list[is.na(candidate_list)] <- ""
+  }
+
+  snpeff_out <- NULL
+  if (!is.null(snpeff_list)) {
+    snpeff_list[is.na(snpeff_list)] <- ""
+    snpeff_out <- snpeff_list
+  }
+  .store_write_candidate(object, pheno_name, candidate_list, snpeff_out)
+}
 #' Minimal Gene_ID + position table for E (E0 §2.1)
 #' @keywords internal
 .simple_candidate_from_wide <- function(candidate_list, gff = NULL) {

@@ -528,6 +528,14 @@ llm_report <- function(object,
     pheno_name = pheno_name,
     language = language
   )
+  if (use_e_path) {
+    basic_html <- paste0(
+      basic_html,
+      "<p><em>B5 numeric grounding checks digits against each frame payload only; ",
+      "non-numeric overclaims are not verified. ",
+      "Rewrite failures are listed under each peak section.</em></p>\n"
+    )
+  }
   reinterpret_obj <- NULL
   if (reinterpret && !is.null(rank_result) && nrow(rank_result) > 0L) {
     message("llm_report: reinterpretPeakCandidates...")
@@ -791,16 +799,46 @@ llm_report <- function(object,
     null = "null"
   )
   if (use_e_path) {
+    row_sd_med <- if (!is.null(expr_mat)) {
+      .e4_row_sd_median(expr_mat)
+    } else {
+      NA_real_
+    }
+    z_warn <- if (!is.null(expr_mat)) {
+      .e4_warn_row_z(
+        expr_mat,
+        e_cfg$row_sd_z_warn_lo %||% 0.8,
+        e_cfg$row_sd_z_warn_hi %||% 1.2
+      )
+    } else {
+      NULL
+    }
     .write_run_metadata(
       work_dir,
       list(
         pheno = pheno_name,
         mapping_mode = e_cfg$mapping_mode,
         top_n = e_cfg$top_n,
+        tau_high = e_cfg$tau_high %||% 0.8,
+        tau_moderate = e_cfg$tau_moderate %||% 0.4,
+        relative_high = e_cfg$relative_high %||% 0.8,
+        relative_moderate = e_cfg$relative_moderate %||% 0.4,
+        matrix_scale = e_cfg$matrix_scale %||% "abundance",
+        row_sd_median = row_sd_med,
+        row_z_warning = z_warn,
+        row_sd_z_warn_lo = e_cfg$row_sd_z_warn_lo %||% 0.8,
+        row_sd_z_warn_hi = e_cfg$row_sd_z_warn_hi %||% 1.2,
         use_llm = isTRUE(use_llm),
+        model = llm$model,
         report_file = basename(report_path),
-        b5_failures = names(e_b5_all),
-        created_at = stamp
+        b5_failures = as.list(names(e_b5_all)),
+        b5_numeric_only = TRUE,
+        b5_note = paste(
+          "B5 verifies numeric tokens against payloads only;",
+          "non-numeric overclaims are not checked."
+        ),
+        created_at = stamp,
+        config = e_cfg
       )
     )
   }

@@ -26,7 +26,11 @@ writeLazyGasExploreConfig <- function(work_dir,
       relative_high = 0.8,
       relative_moderate = 0.4,
       row_sd_z_warn_lo = 0.8,
-      row_sd_z_warn_hi = 1.2
+      row_sd_z_warn_hi = 1.2,
+      # abundance (default) | row_zscore — Z forbids Yanai tau / relative height
+      matrix_scale = "abundance",
+      # NULL = auto (axes with any non-NA coarse label in sample_map)
+      query_axes = NULL
     ),
     list(...)
   )
@@ -192,10 +196,16 @@ classifyAnnColumns <- function(ann,
   cols <- as.character(cols)
   out <- character(length(cols))
   problems <- character()
+  nms <- names(class_by)
   for (i in seq_along(cols)) {
     cn <- cols[i]
-    cl <- class_by[[cn]]
-    if (is.null(cl) || !nzchar(cl)) {
+    # Character [[ lookup errors on missing names; use %in% + [ ].
+    cl <- if (!is.null(nms) && cn %in% nms) {
+      as.character(class_by[[cn]])[1L]
+    } else {
+      NA_character_
+    }
+    if (is.na(cl) || !nzchar(cl)) {
       problems <- c(problems, paste0("missing class for '", cn, "'"))
       out[i] <- NA_character_
       next
@@ -327,14 +337,18 @@ classifyAnnColumns <- function(ann,
     stop("Ann column classify scrutiny returned invalid JSON.", call. = FALSE)
   }
   checked2 <- .e0_validate_classify_map(cols, class_by2, allowed, normalize = TRUE)
-  if (!isTRUE(checked2$ok)) {
-    stop(
-      "Ann column classify scrutiny still invalid: ",
-      paste(checked2$problems, collapse = "; "),
-      call. = FALSE
-    )
+  if (isTRUE(checked2$ok)) {
+    return(checked2$out)
   }
-  checked2$out
+  # Soft fill: keep valid labels; missing/invalid → free_description.
+  message(
+    "Ann column classify scrutiny incomplete; filling gaps with free_description: ",
+    paste(checked2$problems, collapse = "; ")
+  )
+  out <- checked2$out
+  bad <- is.na(out) | !nzchar(out) | !out %in% allowed
+  out[bad] <- "free_description"
+  out
 }
 
 #' @keywords internal

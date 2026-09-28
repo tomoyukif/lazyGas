@@ -14,6 +14,7 @@ runLazyGas(
   ann = NULL,
   out_fn = NULL,
   recalc = TRUE,
+  output_list = TRUE,
   seed = NULL,
   ...
 )
@@ -38,6 +39,11 @@ dashboard steps.}
 \item{out_fn}{Output HTML path for dashboard/summary steps.}
 
 \item{recalc}{Use recalculated peaks for candidate listing and reports.}
+
+\item{output_list}{If \code{TRUE} (default), \code{listCandidate()} also
+stores the legacy wide candidate table, and \code{summary}/\code{dashboard}
+steps may run. If \code{FALSE}, only the thin simple-candidate list is
+written and interactive HTML steps are skipped.}
 
 \item{seed}{Optional random seed recorded in pipeline metadata.}
 

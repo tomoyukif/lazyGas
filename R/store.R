@@ -742,6 +742,12 @@ NULL
       return(exist.gdsn(node = object$root,
                         path = paste0("lazygas/", dataset, "/", pheno_name)))
     }
+    if (dataset == "simple_candidate") {
+      return(exist.gdsn(
+        node = object$root,
+        path = paste0("lazygas/simple_candidate/", pheno_name)
+      ))
+    }
     return(exist.gdsn(
       node = object$root,
       path = paste0("lazygas/", dataset, "/peaks/", pheno_name)
@@ -762,9 +768,11 @@ NULL
   if (dataset == "snpeff") {
     return(.store_pheno_table_exists(object, "snpeff", "snpeff", pheno_name))
   }
+  if (dataset == "simple_candidate") {
+    return(.store_pheno_table_exists(object, "candidate", "simple", pheno_name))
+  }
   .store_pheno_table_exists(object, dataset, "peaks", pheno_name)
 }
-
 .store_write_candidate <- function(object, pheno_name, candidate, snpeff) {
   if (.store_is_gds(object)) {
     if (is.null(candidate)) {

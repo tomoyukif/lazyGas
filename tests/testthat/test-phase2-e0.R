@@ -83,6 +83,26 @@ test_that("E0 normalize/validate maps class-kegg → kegg", {
   expect_identical(checked$out, c("kegg", "go"))
 })
 
+test_that("E0 validate map reports missing names without subscript error", {
+  allowed <- c(
+    "free_description", "go", "kegg", "pfam_interpro", "numeric", "other"
+  )
+  checked <- lazyGas:::.e0_validate_classify_map(
+    cols = c("Description", "GO"),
+    class_by = character(),
+    allowed = allowed
+  )
+  expect_false(checked$ok)
+  expect_true(any(grepl("missing class for 'Description'", checked$problems)))
+  checked2 <- lazyGas:::.e0_validate_classify_map(
+    cols = c("Description", "GO"),
+    class_by = c(Description = "free_description"),
+    allowed = allowed
+  )
+  expect_false(checked2$ok)
+  expect_true(any(grepl("missing class for 'GO'", checked2$problems)))
+})
+
 test_that("E0 LLM classify parser rejects bad JSON via stop", {
   skip_if_not(exists("llmChat", mode = "function"))
   # Force failure by pointing at unreachable URL with tiny timeout

@@ -40,8 +40,11 @@
       "Mapping-context narrative unavailable for ", gid, " (template)."
     ),
     expression = {
-      sp <- payload$specificity$tissue_summary %||% "NA"
-      rel <- payload$relative_level$band %||% "NA"
+      sp <- payload$specificity$summary %||%
+        payload$specificity$combination_summary %||%
+        payload$specificity$tissue_summary %||% "NA"
+      rel <- payload$relative_level$band %||%
+        payload$relative_level$summary %||% "NA"
       ht <- as.character(payload$high_tissues %||% character())
       ht <- ht[nzchar(ht)]
       base <- paste0(
@@ -83,7 +86,7 @@
       if (is.null(coded)) {
         paste0(
           "Brief summary unavailable for ", gid,
-          " (template). Review coded metrics."
+          " (template). Review coded metrics. Scores are peak-relative."
         )
       } else {
         cq <- .e_coded_qualitative(coded)
@@ -102,7 +105,7 @@
               ""
             }
           },
-          "."
+          ". Composite cues are peak-relative, not absolute across peaks."
         )
       }
     },
@@ -858,7 +861,11 @@
   qual <- .e3_qualitative_payload(payload)
   mode <- qual$mode %||% "gwas"
   pip_note <- if (identical(mode, "qtl")) {
-    "Use nearest_cs_PIP band for QTL."
+    paste(
+      "Use nearest_cs_PIP band for QTL.",
+      "PIP/CS here are Wakefield ABF approximations, not true causal",
+      "probabilities (QTL-specific caveat)."
+    )
   } else {
     "Use max_PIP band for GWAS when present."
   }
@@ -1117,6 +1124,63 @@
 }
 
 #' @keywords internal
+.e4_is_unavailable <- function(x) {
+  x <- tolower(trimws(as.character(x)))
+  is.na(x) | !nzchar(x) | x %in% c("not_available", "na", "null", "nan")
+}
+
+#' @keywords internal
+.e4_agg_means <- function(vals, labels) {
+  vals <- as.numeric(vals)
+  labels <- as.character(labels)
+  ok <- is.finite(vals) & !is.na(labels) & nzchar(labels)
+  if (!any(ok)) {
+    return(numeric())
+  }
+  tapply(vals[ok], labels[ok], mean, na.rm = TRUE)
+}
+
+#' Median row SD (finite rows with >= 3 non-NA values and SD > 0)
+#' @keywords internal
+.e4_row_sd_median <- function(mat) {
+  if (is.null(mat)) {
+    return(NA_real_)
+  }
+  m <- as.matrix(mat)
+  storage.mode(m) <- "numeric"
+  rsd <- apply(m, 1L, function(r) {
+    r <- r[is.finite(r)]
+    if (length(r) < 3L) {
+      return(NA_real_)
+    }
+    s <- stats::sd(r)
+    if (!is.finite(s) || s <= 0) NA_real_ else s
+  })
+  stats::median(rsd[is.finite(rsd)], na.rm = TRUE)
+}
+
+#' Resolve gene biotype from cfg$gene_biotype
+#' @keywords internal
+.e4_gene_biotype <- function(gene_id, gene_biotype) {
+  if (is.null(gene_biotype)) {
+    return(NA_character_)
+  }
+  gid <- as.character(gene_id)[1L]
+  if (is.data.frame(gene_biotype) &&
+      all(c("Gene_ID", "biotype") %in% names(gene_biotype))) {
+    hit <- as.character(
+      gene_biotype$biotype[as.character(gene_biotype$Gene_ID) == gid]
+    )
+    return(if (length(hit)) hit[1L] else NA_character_)
+  }
+  if (!is.null(names(gene_biotype))) {
+    v <- unname(as.character(gene_biotype[gid]))
+    return(if (length(v) && nzchar(v[1L])) v[1L] else NA_character_)
+  }
+  NA_character_
+}
+
+#' @keywords internal
 .e4_build_payload <- function(gene_id,
                               expr_mat = NULL,
                               sample_map = NULL,
@@ -1128,64 +1192,203 @@
   tau_mid <- cfg$tau_moderate %||% 0.4
   rel_hi <- cfg$relative_high %||% 0.8
   rel_mid <- cfg$relative_moderate %||% 0.4
+  matrix_scale <- as.character(cfg$matrix_scale %||% "abundance")[1L]
   warn <- .e4_warn_row_z(
     expr_mat,
     cfg$row_sd_z_warn_lo %||% 0.8,
     cfg$row_sd_z_warn_hi %||% 1.2
   )
+  row_sd_med <- .e4_row_sd_median(expr_mat)
+
+  null_spec <- list(
+    combination_tau = NULL,
+    combination_summary = NULL,
+    tissue_tau = NULL,
+    tissue_summary = NULL,
+    stage_tau = NULL,
+    stage_summary = NULL,
+    condition_tau = NULL,
+    condition_summary = NULL,
+    summary = NULL,
+    metric = "yanai_tau_combination"
+  )
+  null_rel <- list(
+    percentile = NULL,
+    value = NULL,
+    band = NULL,
+    summary = NULL,
+    cohort_n = NULL,
+    cohort_size = NULL,
+    basis = NULL,
+    metric = NULL,
+    reason = "row_zscore_height_not_applicable"
+  )
+
+  if (identical(matrix_scale, "row_zscore") || identical(matrix_scale, "z")) {
+    return(list(
+      Gene_ID = gene_id,
+      warning = warn %||%
+        "matrix_scale=row_zscore; tau and relative height suppressed",
+      matrix_scale = "row_zscore",
+      row_sd_median = row_sd_med,
+      specificity = null_spec,
+      relative_level = null_rel,
+      high_tissues = character(),
+      tissues_by_level = character(),
+      n_states_combination = 0L
+    ))
+  }
+
   row <- as.numeric(expr_mat[gene_id, , drop = TRUE])
   names(row) <- colnames(expr_mat)
-  tissue_means <- numeric()
-  if (!is.null(sample_map) && nrow(sample_map)) {
-    tissues <- sample_map$tissue[match(names(row), sample_map$sample)]
-    tissues[is.na(tissues) | !nzchar(tissues)] <- "not_available"
-    keep <- tissues != "not_available"
-    tissue_means <- if (any(keep)) {
-      tapply(row[keep], tissues[keep], mean, na.rm = TRUE)
-    } else {
-      numeric()
+
+  sm <- sample_map
+  if (!is.null(sm) && nrow(sm)) {
+    for (ax in c("tissue", "stage", "condition")) {
+      if (!ax %in% names(sm)) {
+        sm[[ax]] <- "not_available"
+      }
     }
+    idx <- match(names(row), sm$sample)
+    tissue <- as.character(sm$tissue[idx])
+    stage <- as.character(sm$stage[idx])
+    condition <- as.character(sm$condition[idx])
+    tissue[is.na(tissue) | !nzchar(tissue)] <- "not_available"
+    stage[is.na(stage) | !nzchar(stage)] <- "not_available"
+    condition[is.na(condition) | !nzchar(condition)] <- "not_available"
+
+    query_axes <- cfg$query_axes
+    if (is.null(query_axes) || !length(query_axes)) {
+      query_axes <- "tissue"
+      if (any(!.e4_is_unavailable(stage))) {
+        query_axes <- c(query_axes, "stage")
+      }
+      if (any(!.e4_is_unavailable(condition))) {
+        query_axes <- c(query_axes, "condition")
+      }
+    } else {
+      query_axes <- as.character(query_axes)
+    }
+    keep_combo <- rep(TRUE, length(row))
+    if ("tissue" %in% query_axes) {
+      keep_combo <- keep_combo & !.e4_is_unavailable(tissue)
+    }
+    if ("stage" %in% query_axes) {
+      keep_combo <- keep_combo & !.e4_is_unavailable(stage)
+    }
+    if ("condition" %in% query_axes) {
+      keep_combo <- keep_combo & !.e4_is_unavailable(condition)
+    }
+    combo_lab <- paste(tissue, stage, condition, sep = "|")
+    combo_means <- .e4_agg_means(row[keep_combo], combo_lab[keep_combo])
+    tau_combo <- .yanai_tau(as.numeric(combo_means))
+
+    # tissue single-axis: keep not_available as a level if present
+    tissue_means <- .e4_agg_means(row, tissue)
     tau_tissue <- .yanai_tau(as.numeric(tissue_means))
+
+    stage_lab <- ifelse(.e4_is_unavailable(stage), NA_character_, stage)
+    stage_means <- .e4_agg_means(row, stage_lab)
+    tau_stage <- .yanai_tau(as.numeric(stage_means))
+
+    cond_lab <- ifelse(.e4_is_unavailable(condition), NA_character_, condition)
+    cond_means <- .e4_agg_means(row, cond_lab)
+    tau_condition <- .yanai_tau(as.numeric(cond_means))
   } else {
-    tau_tissue <- .yanai_tau(row)
+    combo_means <- numeric()
+    tissue_means <- setNames(row, names(row))
+    tau_combo <- .yanai_tau(row)
+    tau_tissue <- tau_combo
+    tau_stage <- NA_real_
+    tau_condition <- NA_real_
   }
+
+  combo_summary <- .e4_band(tau_combo, tau_hi, tau_mid)
+  tissue_summary <- .e4_band(tau_tissue, tau_hi, tau_mid)
+  stage_summary <- .e4_band(tau_stage, tau_hi, tau_mid)
+  condition_summary <- .e4_band(tau_condition, tau_hi, tau_mid)
+  # Primary specificity cue: combination tau when states exist, else tissue
+  primary_summary <- if (length(combo_means) >= 2L) {
+    combo_summary
+  } else {
+    tissue_summary
+  }
+
   gene_mean <- mean(row, na.rm = TRUE)
   cohort <- rowMeans(expr_mat, na.rm = TRUE)
-  cohort <- cohort[is.finite(cohort) & cohort > 0]
-  pct <- if (length(cohort) && is.finite(gene_mean)) {
-    mean(cohort <= gene_mean, na.rm = TRUE)
+  names(cohort) <- rownames(expr_mat)
+  expressed <- is.finite(cohort) & cohort > 0
+  gene_bt <- .e4_gene_biotype(gene_id, cfg$gene_biotype)
+  basis <- "expressed_genes"
+  if (!is.na(gene_bt) && nzchar(gene_bt)) {
+    all_bt <- vapply(names(cohort), function(g) {
+      .e4_gene_biotype(g, cfg$gene_biotype)
+    }, character(1L))
+    same_bt <- !is.na(all_bt) & all_bt == gene_bt
+    if (any(expressed & same_bt)) {
+      expressed <- expressed & same_bt
+      basis <- paste0("expressed_same_biotype:", gene_bt)
+    }
+  }
+  cohort_vals <- cohort[expressed]
+  pct <- if (length(cohort_vals) && is.finite(gene_mean)) {
+    mean(cohort_vals <= gene_mean, na.rm = TRUE)
   } else {
     NA_real_
   }
-  tissue_summary <- .e4_band(tau_tissue, tau_hi, tau_mid)
+  rel_band <- .e4_band(pct, rel_hi, rel_mid)
+
   high_tissues <- character()
   tissues_by_level <- character()
   if (length(tissue_means)) {
-    ord <- order(as.numeric(tissue_means), decreasing = TRUE, na.last = TRUE)
-    tissues_by_level <- as.character(names(tissue_means)[ord])
-    # Name dominant tissues when specificity is not low (or always list top).
-    if (!identical(tissue_summary, "low")) {
+    # Prefer excluding not_available for display names
+    disp <- tissue_means
+    disp <- disp[!.e4_is_unavailable(names(disp))]
+    if (!length(disp)) {
+      disp <- tissue_means
+    }
+    ord <- order(as.numeric(disp), decreasing = TRUE, na.last = TRUE)
+    tissues_by_level <- as.character(names(disp)[ord])
+    if (!identical(primary_summary, "low") && !is.null(primary_summary)) {
       high_tissues <- .e4_high_tissues(
-        tissue_means,
+        disp,
         frac = cfg$high_tissue_frac %||% 0.7,
         max_n = cfg$high_tissue_n %||% 3L
       )
     }
   }
+
   list(
     Gene_ID = gene_id,
     warning = warn,
+    matrix_scale = "abundance",
+    row_sd_median = row_sd_med,
     specificity = list(
+      combination_tau = tau_combo,
+      combination_summary = combo_summary,
       tissue_tau = tau_tissue,
-      tissue_summary = tissue_summary
+      tissue_summary = tissue_summary,
+      stage_tau = tau_stage,
+      stage_summary = stage_summary,
+      condition_tau = tau_condition,
+      condition_summary = condition_summary,
+      summary = primary_summary,
+      metric = "yanai_tau_combination"
     ),
     relative_level = list(
       percentile = pct,
-      band = .e4_band(pct, rel_hi, rel_mid),
-      cohort_n = length(cohort)
+      value = pct,
+      band = rel_band,
+      summary = rel_band,
+      cohort_n = length(cohort_vals),
+      cohort_size = length(cohort_vals),
+      basis = basis,
+      metric = "percentile_among_expressed_genes",
+      reason = NULL
     ),
     high_tissues = high_tissues,
-    tissues_by_level = tissues_by_level
+    tissues_by_level = tissues_by_level,
+    n_states_combination = length(combo_means)
   )
 }
 
@@ -1193,14 +1396,22 @@
 .e4_prompts <- function(payload) {
   # Qualitative-only prompt: omit raw tau / percentile so the model cannot
   # echo digits (avoids B5 rewrite loops on expression prose).
-  sp <- payload$specificity$tissue_summary %||% NA_character_
+  sp <- payload$specificity$summary %||%
+    payload$specificity$combination_summary %||%
+    payload$specificity$tissue_summary %||% NA_character_
   ht <- as.character(payload$high_tissues %||% character())
   ht <- ht[nzchar(ht)]
   qual <- list(
     Gene_ID = payload$Gene_ID,
     warning = payload$warning,
+    matrix_scale = payload$matrix_scale %||% "abundance",
     tissue_specificity = sp,
-    relative_expression = payload$relative_level$band %||% NA_character_,
+    combination_specificity = payload$specificity$combination_summary,
+    tissue_axis_specificity = payload$specificity$tissue_summary,
+    stage_specificity = payload$specificity$stage_summary,
+    condition_specificity = payload$specificity$condition_summary,
+    relative_expression = payload$relative_level$band %||%
+      payload$relative_level$summary %||% NA_character_,
     high_expression_tissues = if (length(ht)) ht else NULL,
     tissues_by_level = payload$tissues_by_level %||% NULL
   )
@@ -1208,9 +1419,11 @@
     "You summarize RNA-seq tissue specificity and relative expression for one gene.",
     "Use ONLY the categorical labels and tissue names in the payload",
     "(e.g. high / moderate / low).",
+    "Prefer combination_specificity when present.",
     "If tissue_specificity is high or moderate AND high_expression_tissues is",
     "non-empty, you MUST name those tissues as where expression is highest.",
     "Do not invent tissue names absent from the payload.",
+    "If relative_expression is null, do not compare height to other genes.",
     .e_no_digits_prose_rule(),
     "Return JSON only: {\"expression\": \"...\"}."
   )
@@ -1407,6 +1620,8 @@
   sys <- paste(
     "You write a brief English summary of prior source prose for one gene.",
     "Prefer coded category labels over prose if they conflict. Do not invent facts.",
+    "You MUST include one short clause that composite / ranking cues are",
+    "peak-relative (within this peak), not absolute strength across peaks.",
     .e_no_digits_prose_rule(),
     "Do not write validity/caveats (that is a separate step).",
     "Return JSON only: {\"summary\": \"...\"}."
@@ -1415,7 +1630,8 @@
     "Payload JSON:\n",
     jsonlite::toJSON(qual, auto_unbox = TRUE, null = "null"),
     "\nWrite summary with category words only;",
-    " echo label digits only — no invented quantities."
+    " echo label digits only — no invented quantities.",
+    " Mention that scores are peak-relative."
   )
   list(system = sys, user = user, return_key = "summary")
 }
@@ -1484,6 +1700,13 @@
     .e_no_digits_prose_rule(),
     "Return JSON only: {\"validity\": \"...\"}."
   )
+  if (identical(as.character(payload$mapping_mode %||% "gwas")[1L], "qtl")) {
+    sys <- paste(
+      sys,
+      "If PIP/CS appear under QTL, note briefly they are Wakefield ABF",
+      "approximations, not true causal probabilities."
+    )
+  }
   user <- paste0(
     "Payload JSON:\n",
     jsonlite::toJSON(qual, auto_unbox = TRUE, null = "null"),
@@ -1828,8 +2051,18 @@
     MODERATE = p2$MODERATE,
     LOW = p2$LOW,
     MODIFIER = p2$MODIFIER,
-    expression_specificity = if (!is.null(p4)) p4$specificity$tissue_summary else NULL,
-    expression_relative = if (!is.null(p4)) p4$relative_level$band else NULL,
+    expression_specificity = if (!is.null(p4)) {
+      p4$specificity$summary %||%
+        p4$specificity$combination_summary %||%
+        p4$specificity$tissue_summary
+    } else {
+      NULL
+    },
+    expression_relative = if (!is.null(p4)) {
+      p4$relative_level$band %||% p4$relative_level$summary
+    } else {
+      NULL
+    },
     expression_high_tissues = if (!is.null(p4)) p4$high_tissues else character(),
     domain_overlap_n = length(ov$domain_overlaps %||% list()),
     domain_overlaps = ov$domain_overlaps %||% list(),
@@ -2125,6 +2358,7 @@
       paste0(
         "<p><strong>Numeric grounding failures (B5)</strong>: ",
         .report_escape_html(paste(names(e_run$b5_failures), collapse = ", ")),
+        " — B5 checks digits only; non-numeric claims are not verified.",
         "</p>\n"
       )
     )

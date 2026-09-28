@@ -190,12 +190,88 @@ test_that("E4 names high-expression tissues when specific", {
   )
   p4 <- lazyGas:::.e4_build_payload("G1", expr_mat = mat, sample_map = smap)
   expect_true(p4$specificity$tissue_summary %in% c("high", "moderate"))
+  expect_true(p4$specificity$summary %in% c("high", "moderate"))
   expect_true("leaf" %in% p4$high_tissues)
   expect_identical(p4$tissues_by_level[1L], "leaf")
+  expect_identical(p4$matrix_scale, "abundance")
+  expect_true(is.finite(p4$relative_level$cohort_size))
   pr <- lazyGas:::.e4_prompts(p4)
   expect_match(pr$system, "high_expression_tissues")
   tmpl <- lazyGas:::.e_template_text("expression", "G1", p4)
   expect_match(tmpl, "leaf")
+})
+
+test_that("E4 combo tau drops query-axis not_available; Z nulls tau", {
+  mat <- matrix(
+    c(100, 90, 5, 4, 50, 40),
+    nrow = 1L,
+    dimnames = list("G1", paste0("s", 1:6))
+  )
+  smap <- data.frame(
+    sample = colnames(mat),
+    tissue = c("leaf", "leaf", "root", "root", "leaf", "leaf"),
+    stage = c("veg", "veg", "veg", "veg", "not_available", "not_available"),
+    condition = c("control", "control", "control", "control", "drought", "drought"),
+    stringsAsFactors = FALSE
+  )
+  p <- lazyGas:::.e4_build_payload(
+    "G1", expr_mat = mat, sample_map = smap,
+    cfg = list(query_axes = c("tissue", "stage", "condition"))
+  )
+  # columns 5–6 dropped from combo because stage is not_available on query axis
+  expect_true(is.finite(p$specificity$combination_tau))
+  expect_equal(p$n_states_combination, 2L)
+
+  pz <- lazyGas:::.e4_build_payload(
+    "G1", expr_mat = mat, sample_map = smap,
+    cfg = list(matrix_scale = "row_zscore")
+  )
+  expect_null(pz$specificity$combination_tau)
+  expect_null(pz$specificity$summary)
+  expect_null(pz$relative_level$band)
+  expect_identical(pz$relative_level$reason, "row_zscore_height_not_applicable")
+})
+
+test_that("E4 relative height can restrict to same biotype", {
+  mat <- matrix(
+    c(
+      100, 100,
+      10, 10,
+      50, 50
+    ),
+    nrow = 3L, byrow = TRUE,
+    dimnames = list(c("G1", "G2", "G3"), c("leaf", "root"))
+  )
+  bt <- c(G1 = "protein_coding", G2 = "lncRNA", G3 = "protein_coding")
+  p <- lazyGas:::.e4_build_payload(
+    "G1", expr_mat = mat, sample_map = NULL,
+    cfg = list(gene_biotype = bt)
+  )
+  expect_equal(p$relative_level$cohort_size, 2L)
+  expect_match(p$relative_level$basis, "protein_coding")
+})
+
+test_that("E3/E8/E9 prompts carry QTL ABF and peak-relative cues", {
+  p3 <- list(mode = "qtl", peak = list(n_cs_variants = 3L), Gene_ID = "G1",
+             dist2peak_bp = 10, negLog10P = 5, nearest_cs_PIP = 0.2)
+  expect_match(lazyGas:::.e3_prompts(p3)$system, "ABF")
+  expect_match(
+    lazyGas:::.e8_prompts(list(Gene_ID = "G1", prose = list(), coded = list()))$system,
+    "peak-relative"
+  )
+  expect_match(
+    lazyGas:::.e_template_text("summary", "G1", list(coded = list(dist2peak_bp = 1))),
+    "peak-relative"
+  )
+  p9 <- list(
+    peak = list(n_cs_variants = 2L, resolution = "low",
+                resolution_label = "not resolved"),
+    Gene_ID = "G1", mapping_mode = "qtl",
+    dist2peak_bp = 1, negLog10P = 2, max_PIP = NULL, nearest_cs_PIP = 0.1,
+    worst_impact = "LOW", HIGH = 0L, MODERATE = 0L, LOW = 1L, MODIFIER = 0L,
+    domain_overlap_n = 0L
+  )
+  expect_match(lazyGas:::.e9_prompts(p9)$system, "ABF")
 })
 
 test_that("E gene loop use_llm=FALSE templates and HTML order", {
