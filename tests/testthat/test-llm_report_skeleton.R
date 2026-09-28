@@ -166,6 +166,7 @@ test_that("finemap evidence uses max PIP and sources always include finemap", {
     peak_ID = c("1", "1", "2"),
     Gene_ID = c("g1", "g2", "g1"),
     max_PIP = c(0.82, 0.11, 0.99),
+    pip_source = c("snpeff", "snpeff", "gff_window"),
     stringsAsFactors = FALSE
   )
   ev1 <- lazyGas:::.evidence_finemap(
@@ -175,6 +176,16 @@ test_that("finemap evidence uses max PIP and sources always include finemap", {
   )
   expect_equal(ev1$score, 0.82)
   expect_equal(ev1$details$max_PIP, 0.82)
+  expect_match(ev1$snippets, "SnpEff", fixed = TRUE)
+
+  ev_gff <- lazyGas:::.evidence_finemap(
+    "g1",
+    data.frame(peak_ID = "2", Gene_ID = "g1", stringsAsFactors = FALSE),
+    lookup
+  )
+  expect_equal(ev_gff$score, 0.99)
+  expect_identical(ev_gff$details$pip_source, "gff_window")
+  expect_match(ev_gff$snippets, "GFF window", fixed = TRUE)
 
   ev_miss <- lazyGas:::.evidence_finemap(
     "g9",
@@ -189,6 +200,17 @@ test_that("finemap evidence uses max PIP and sources always include finemap", {
   )
   expect_true("finemap" %in% sw$sources)
   expect_equal(unname(sw$weights[["finemap"]]), 0.5)
+})
+
+test_that("llm_report requires work_dir", {
+  expect_error(
+    llm_report(
+      object = structure(list(), class = "LazyGas"),
+      pheno = "x",
+      gff = GenomicRanges::GRanges()
+    ),
+    "work_dir"
+  )
 })
 
 test_that("evidence HTML writes coded metrics and A4 keyword prose", {
@@ -338,6 +360,11 @@ test_that("llm_report writes HTML with table and reuses rank rds", {
   dir.create(out_dir)
   on.exit(unlink(out_dir, recursive = TRUE), add = TRUE)
 
+  wd <- tempfile("explore_")
+  dir.create(wd)
+  on.exit(unlink(wd, recursive = TRUE), add = TRUE)
+  writeLazyGasExploreConfig(wd, mapping_mode = "gwas", top_n = 2L)
+
   q <- phenotypeQuery("fruit weight", tissues = "fruit", use_llm = FALSE)
   rep1 <- llm_report(
     object = res$lg,
@@ -351,7 +378,8 @@ test_that("llm_report writes HTML with table and reuses rank rds", {
     rank_result = ranked,
     peak_id = peak_ids[has_cs][1],
     download_tenor = FALSE,
-    gff = res$gff
+    gff = res$gff,
+    work_dir = wd
   )
   expect_true(grepl("\\.html$", rep1$path))
   expect_true(file.exists(rep1$path))
@@ -376,7 +404,8 @@ test_that("llm_report writes HTML with table and reuses rank rds", {
     rank_result = rep1$rank_rds,
     peak_id = peak_ids[has_cs][1],
     download_tenor = FALSE,
-    gff = res$gff
+    gff = res$gff,
+    work_dir = wd
   )
   expect_equal(nrow(rep2$rank_result), nrow(ranked))
   expect_equal(attr(rep2$rank_result, "phenotypeRank")$query_id, "reuse_q")

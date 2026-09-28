@@ -40,6 +40,10 @@
 #'   the expression channel without \code{expression_matrix}.
 #' @param llm_model,llm_base_url,llm_timeout LLM settings for annotation
 #'   relevance scoring.
+#' @param gff Optional \code{GRanges} for finemap GFF-window fallback when
+#'   SnpEff is missing or does not assign a gene (Phase 2 H1).
+#' @param gff_windows Optional precomputed gene windows (from
+#'   \code{.gff_gene_windows}); overrides building from \code{gff}.
 #'
 #' @return A named list keyed by gene ID; each element is a list of evidence
 #'   records (\code{source}, \code{score}, \code{snippets}, \code{details}).
@@ -68,7 +72,9 @@ collectGeneEvidence <- function(gene_ids,
                                 download_tenor = TRUE,
                                 llm_model = NULL,
                                 llm_base_url = NULL,
-                                llm_timeout = NULL) {
+                                llm_timeout = NULL,
+                                gff = NULL,
+                                gff_windows = NULL) {
   sources <- match.arg(sources, choices = .EVIDENCE_SOURCE_CHOICES, several.ok = TRUE)
   gene_ids <- unique(as.character(gene_ids))
   gene_ids <- gene_ids[nzchar(gene_ids)]
@@ -143,7 +149,9 @@ collectGeneEvidence <- function(gene_ids,
     finemap_lookup <- .finemap_pip_lookup(
       object = object,
       pheno_name = pheno_name_fm,
-      candidate = candidate
+      candidate = candidate,
+      gff = gff,
+      gff_windows = gff_windows
     )
   }
 
@@ -661,9 +669,24 @@ collectGeneEvidence <- function(gene_ids,
   )
 }
 
-#' Max PIP per gene from 95% credible set ∩ SnpEff Gene_ID
+#' Max PIP per gene: SnpEff assignment first, else GFF window (Phase 2 H1)
+#'
+#' For each peak's 95% CS: (1) CS ∩ SnpEff \code{Gene_ID} → \code{max(PIP)};
+#' (2) genes still unassigned (no SnpEff or no hit) get
+#' \code{max(PIP)} of CS variants whose position falls in the gene's GFF window.
 #' @keywords internal
-.finemap_pip_lookup <- function(object, pheno_name, candidate) {
+.finemap_pip_lookup <- function(object,
+                                pheno_name,
+                                candidate,
+                                gff = NULL,
+                                gff_windows = NULL) {
+  empty <- data.frame(
+    peak_ID = character(),
+    Gene_ID = character(),
+    max_PIP = numeric(),
+    pip_source = character(),
+    stringsAsFactors = FALSE
+  )
   if (is.null(candidate) || !"peak_ID" %in% names(candidate)) {
     stop(
       "Finemap scoring requires a candidate table with peak_ID.",
@@ -674,18 +697,31 @@ collectGeneEvidence <- function(gene_ids,
     lazyData(object = object, dataset = "snpeff", pheno = pheno_name),
     error = function(e) NULL
   )
-  if (is.null(snpeff) || !nrow(snpeff) || !"Gene_ID" %in% names(snpeff) ||
-      !"Pos" %in% names(snpeff)) {
-    # SnpEff optional (Phase 2): finemap channel scores stay 0
-    return(data.frame(
-      Gene_ID = character(),
-      max_PIP = numeric(),
-      stringsAsFactors = FALSE
-    ))
+  have_snpeff <- !is.null(snpeff) && nrow(snpeff) &&
+    "Gene_ID" %in% names(snpeff) && "Pos" %in% names(snpeff)
+  if (have_snpeff) {
+    snpeff$Gene_ID <- as.character(snpeff$Gene_ID)
+    snpeff$Chr <- as.character(snpeff$Chr %||% snpeff$chr)
+    snpeff$Pos <- as.numeric(snpeff$Pos)
   }
-  snpeff$Gene_ID <- as.character(snpeff$Gene_ID)
-  snpeff$Chr <- as.character(snpeff$Chr)
-  snpeff$Pos <- as.numeric(snpeff$Pos)
+
+  win <- gff_windows
+  if ((is.null(win) || !is.data.frame(win) || !nrow(win)) && !is.null(gff)) {
+    win <- .gff_gene_windows(gff)
+  }
+  have_gff <- !is.null(win) && is.data.frame(win) && nrow(win) &&
+    all(c("Gene_ID", "Chr", "window_start", "window_end") %in% names(win))
+  if (have_gff) {
+    win$Gene_ID <- as.character(win$Gene_ID)
+    win$Chr <- as.character(win$Chr)
+    win$window_start <- as.numeric(win$window_start)
+    win$window_end <- as.numeric(win$window_end)
+  }
+
+  if (!have_snpeff && !have_gff) {
+    # Neither assignment path available — score 0 (llm_report requires GFF)
+    return(empty)
+  }
 
   peak_ids <- unique(as.character(candidate$peak_ID))
   peak_ids <- peak_ids[!is.na(peak_ids) & nzchar(peak_ids)]
@@ -737,34 +773,91 @@ collectGeneEvidence <- function(gene_ids,
     }
     cred2$Chr <- as.character(cred2$Chr)
     cred2$Pos <- as.numeric(cred2$Pos)
-    merged <- merge(
-      cred2[, c("variant_ID", "PIP", "Chr", "Pos"), drop = FALSE],
-      snpeff[, c("Gene_ID", "Chr", "Pos"), drop = FALSE],
-      by = c("Chr", "Pos")
-    )
-    if (!nrow(merged)) {
+    cred2$PIP <- as.numeric(cred2$PIP)
+
+    pip_by_gene <- list()
+    src_by_gene <- list()
+
+    # (1) SnpEff-first
+    if (have_snpeff) {
+      keep_cols <- intersect(
+        c("variant_ID", "PIP", "Chr", "Pos"),
+        names(cred2)
+      )
+      merged <- merge(
+        cred2[, keep_cols, drop = FALSE],
+        snpeff[, c("Gene_ID", "Chr", "Pos"), drop = FALSE],
+        by = c("Chr", "Pos")
+      )
+      if (nrow(merged)) {
+        merged$Gene_ID <- as.character(merged$Gene_ID)
+        merged$PIP <- as.numeric(merged$PIP)
+        agg <- tapply(merged$PIP, merged$Gene_ID, function(x) {
+          m <- max(x, na.rm = TRUE)
+          if (!is.finite(m)) NA_real_ else m
+        })
+        for (nm in names(agg)) {
+          if (is.finite(agg[[nm]])) {
+            pip_by_gene[[nm]] <- as.numeric(agg[[nm]])
+            src_by_gene[[nm]] <- "snpeff"
+          }
+        }
+      }
+    }
+
+    # (2) GFF window for genes still without a SnpEff PIP
+    cand_peak <- candidate[
+      as.character(candidate$peak_ID) == pid,
+      ,
+      drop = FALSE
+    ]
+    gene_ids <- unique(as.character(cand_peak$Gene_ID))
+    gene_ids <- gene_ids[!is.na(gene_ids) & nzchar(gene_ids)]
+    if (have_gff) {
+      need <- gene_ids
+      if (length(pip_by_gene)) {
+        need <- setdiff(need, names(pip_by_gene))
+      }
+      # Also score genes that appear only via windows (not in cand) when
+      # SnpEff path produced nothing for this peak — prefer candidate set.
+      if (!length(need) && !length(pip_by_gene)) {
+        need <- unique(win$Gene_ID)
+      }
+      for (gid in need) {
+        wrow <- win[win$Gene_ID == gid, , drop = FALSE]
+        if (!nrow(wrow)) next
+        # same Chr preferred; take first matching window
+        hit <- rep(FALSE, nrow(cred2))
+        for (wi in seq_len(nrow(wrow))) {
+          hit <- hit |
+            (cred2$Chr == wrow$Chr[wi] &
+               is.finite(cred2$Pos) &
+               cred2$Pos >= wrow$window_start[wi] &
+               cred2$Pos <= wrow$window_end[wi])
+        }
+        if (!any(hit)) next
+        mp <- max(cred2$PIP[hit], na.rm = TRUE)
+        if (is.finite(mp)) {
+          pip_by_gene[[gid]] <- mp
+          src_by_gene[[gid]] <- "gff_window"
+        }
+      }
+    }
+
+    if (!length(pip_by_gene)) {
       next
     }
-    merged$Gene_ID <- as.character(merged$Gene_ID)
-    merged$PIP <- as.numeric(merged$PIP)
-    agg <- tapply(merged$PIP, merged$Gene_ID, function(x) {
-      m <- max(x, na.rm = TRUE)
-      if (!is.finite(m)) NA_real_ else m
-    })
+    gids <- names(pip_by_gene)
     rows[[length(rows) + 1L]] <- data.frame(
       peak_ID = pid,
-      Gene_ID = names(agg),
-      max_PIP = as.numeric(agg),
+      Gene_ID = gids,
+      max_PIP = vapply(gids, function(g) pip_by_gene[[g]], numeric(1)),
+      pip_source = vapply(gids, function(g) src_by_gene[[g]], character(1)),
       stringsAsFactors = FALSE
     )
   }
   if (!length(rows)) {
-    return(data.frame(
-      peak_ID = character(),
-      Gene_ID = character(),
-      max_PIP = numeric(),
-      stringsAsFactors = FALSE
-    ))
+    return(empty)
   }
   do.call(rbind, rows)
 }
@@ -796,11 +889,21 @@ collectGeneEvidence <- function(gene_ids,
   if (!is.finite(pip)) {
     return(empty)
   }
+  src <- if ("pip_source" %in% names(lookup)) {
+    as.character(lookup$pip_source[hit][which.max(as.numeric(lookup$max_PIP[hit]))])
+  } else {
+    "snpeff"
+  }
+  snip <- if (identical(src, "gff_window")) {
+    sprintf("max_PIP (95%% CS ∩ GFF window) = %.3f", pip)
+  } else {
+    sprintf("max_PIP (95%% CS ∩ SnpEff) = %.3f", pip)
+  }
   list(
     source = "finemap",
     score = max(0, min(1, pip)),
-    snippets = sprintf("max_PIP (95%% CS ∩ SnpEff) = %.3f", pip),
-    details = list(max_PIP = pip, peak_ID = peak_id)
+    snippets = snip,
+    details = list(max_PIP = pip, peak_ID = peak_id, pip_source = src)
   )
 }
 

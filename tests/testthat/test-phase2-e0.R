@@ -179,4 +179,25 @@ test_that("E0 GFF windows and QTL/GWAS gene select", {
   )
   expect_true("G1" %in% gwas$Gene_ID)
   expect_true("max_PIP" %in% names(gwas))
+  expect_true("max_PIP_SnpEff" %in% names(gwas))
+  expect_true(all(is.na(gwas$max_PIP_SnpEff)))
+
+  snpeff <- data.frame(
+    Gene_ID = "G1",
+    Chr = "chr1",
+    Pos = 1500,
+    Annotation_Impact = "HIGH",
+    stringsAsFactors = FALSE
+  )
+  gwas2 <- lazyGas:::.report_e_select_genes(
+    mapping_mode = "gwas",
+    simple_candidates = cand,
+    credible_set = cred,
+    gff_windows = win,
+    snpeff = snpeff,
+    top_n = Inf
+  )
+  expect_true("G1" %in% gwas2$Gene_ID)
+  expect_equal(gwas2$max_PIP[gwas2$Gene_ID == "G1"][1L], 0.4)
+  expect_identical(gwas2$max_PIP_SnpEff[gwas2$Gene_ID == "G1"][1L], "HIGH")
 })

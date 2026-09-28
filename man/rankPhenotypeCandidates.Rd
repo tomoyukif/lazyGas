@@ -25,7 +25,9 @@ rankPhenotypeCandidates(
   query_use_llm = FALSE,
   llm_model = NULL,
   llm_base_url = NULL,
-  llm_timeout = NULL
+  llm_timeout = NULL,
+  gff = NULL,
+  gff_windows = NULL
 )
 }
 \arguments{
@@ -64,6 +66,9 @@ section).}
 
 \item{llm_model, llm_base_url, llm_timeout}{LLM settings for annotation
 relevance (when enabled).}
+
+\item{gff, gff_windows}{Passed to \code{\link[=collectGeneEvidence]{collectGeneEvidence()}} for finemap
+GFF-window fallback when SnpEff is absent.}
 }
 \value{
 A \code{data.frame} sorted by \code{composite_score} with per-source

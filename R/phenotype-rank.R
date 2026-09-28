@@ -32,6 +32,8 @@
 #' @param use_semantic Ignored; LSA annotation scoring was removed.
 #' @param llm_model,llm_base_url,llm_timeout LLM settings for annotation
 #'   relevance (when enabled).
+#' @param gff,gff_windows Passed to [collectGeneEvidence()] for finemap
+#'   GFF-window fallback when SnpEff is absent.
 #'
 #' @return A \code{data.frame} sorted by \code{composite_score} with per-source
 #'   score columns and \code{evidence_json}. Attributes include
@@ -70,7 +72,9 @@ rankPhenotypeCandidates <- function(object,
                                     query_use_llm = FALSE,
                                     llm_model = NULL,
                                     llm_base_url = NULL,
-                                    llm_timeout = NULL) {
+                                    llm_timeout = NULL,
+                                    gff = NULL,
+                                    gff_windows = NULL) {
   if (!inherits(object, "LazyGas")) {
     stop("'object' must be a LazyGas object.", call. = FALSE)
   }
@@ -159,7 +163,9 @@ rankPhenotypeCandidates <- function(object,
     download_tenor = download_tenor,
     llm_model = llm_model,
     llm_base_url = llm_base_url,
-    llm_timeout = llm_timeout
+    llm_timeout = llm_timeout,
+    gff = gff,
+    gff_windows = gff_windows
   )
 
   score_raw <- list()

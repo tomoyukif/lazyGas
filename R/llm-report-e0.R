@@ -729,6 +729,80 @@ classifyAnnColumns <- function(ann,
   )
 }
 
+#' Worst SnpEff impact label among character impacts
+#' @keywords internal
+.e_worst_snpeff_impact <- function(impacts) {
+  labs <- toupper(trimws(as.character(impacts)))
+  labs <- labs[nzchar(labs) & !is.na(labs)]
+  if (!length(labs)) {
+    return(NA_character_)
+  }
+  order_imp <- c("HIGH", "MODERATE", "LOW", "MODIFIER")
+  ranks <- match(labs, order_imp, nomatch = 99L)
+  labs[which.min(ranks)][1L]
+}
+
+#' SnpEff Annotation_Impact for the CS variant(s) that achieve max_PIP
+#'
+#' Prefers rows whose Gene_ID matches \code{gene_id}; otherwise any ANN at
+#' those Chr/Pos. When multiple impacts, returns the worst class.
+#' @keywords internal
+.e_max_pip_snpeff_impact <- function(pip_map,
+                                     snpeff,
+                                     gene_id,
+                                     max_pip,
+                                     window_start = NA_real_,
+                                     window_end = NA_real_,
+                                     chr = NA_character_) {
+  if (is.null(pip_map) || !nrow(pip_map) || is.null(snpeff) || !nrow(snpeff) ||
+      !is.finite(as.numeric(max_pip)[1L])) {
+    return(NA_character_)
+  }
+  icol <- if ("Annotation_Impact" %in% names(snpeff)) {
+    "Annotation_Impact"
+  } else if ("Impact" %in% names(snpeff)) {
+    "Impact"
+  } else {
+    return(NA_character_)
+  }
+  mp <- as.numeric(max_pip)[1L]
+  pm <- pip_map
+  pm$Pos <- as.numeric(pm$Pos)
+  pm$PIP <- as.numeric(pm$PIP)
+  pm$Chr <- as.character(pm$Chr %||% pm$chr)
+  near <- is.finite(pm$PIP) & is.finite(pm$Pos) & abs(pm$PIP - mp) < 1e-9
+  if (is.finite(window_start) && is.finite(window_end)) {
+    near <- near & pm$Pos >= window_start & pm$Pos <= window_end
+  }
+  if (!is.na(chr) && nzchar(as.character(chr)[1L])) {
+    near <- near & pm$Chr == as.character(chr)[1L]
+  }
+  if (!any(near)) {
+    # fall back: any CS row with this PIP (ignore window filter)
+    near <- is.finite(pm$PIP) & is.finite(pm$Pos) & abs(pm$PIP - mp) < 1e-9
+  }
+  if (!any(near)) {
+    return(NA_character_)
+  }
+  pos_hit <- unique(pm$Pos[near])
+  chr_hit <- unique(pm$Chr[near])
+  snp <- snpeff
+  if (!"Gene_ID" %in% names(snp)) {
+    return(NA_character_)
+  }
+  snp$Gene_ID <- as.character(snp$Gene_ID)
+  snp$Pos <- as.numeric(snp$Pos)
+  snp$Chr <- as.character(snp$Chr %||% snp$chr)
+  at <- snp$Pos %in% pos_hit & snp$Chr %in% chr_hit
+  if (!any(at)) {
+    return(NA_character_)
+  }
+  gid <- as.character(gene_id)[1L]
+  prefer <- at & snp$Gene_ID == gid
+  use <- if (any(prefer)) prefer else at
+  .e_worst_snpeff_impact(snp[[icol]][use])
+}
+
 #' Select E genes for one peak (CS + GFF rules)
 #' @keywords internal
 .report_e_select_genes <- function(mapping_mode,
@@ -744,6 +818,7 @@ classifyAnnColumns <- function(ann,
     dist2peak = numeric(),
     max_PIP = numeric(),
     nearest_cs_PIP = numeric(),
+    max_PIP_SnpEff = character(),
     stringsAsFactors = FALSE
   )
   if (is.null(simple_candidates) || !nrow(simple_candidates)) {
@@ -794,6 +869,7 @@ classifyAnnColumns <- function(ann,
   # attach PIP columns
   out$max_PIP <- NA_real_
   out$nearest_cs_PIP <- NA_real_
+  out$max_PIP_SnpEff <- NA_character_
   pip_map <- NULL
   if ("PIP" %in% names(csinfo$sub) && "Pos" %in% names(csinfo$sub)) {
     pip_map <- csinfo$sub
@@ -836,6 +912,26 @@ classifyAnnColumns <- function(ann,
       if (any(hit)) {
         out$max_PIP[i] <- max(as.numeric(pip_map$PIP[hit]), na.rm = TRUE)
       }
+    }
+  }
+  # max_PIP_SnpEff: Impact of the variant(s) that achieve max_PIP (SnpEff present)
+  if (identical(mode, "gwas") && !is.null(snpeff) && nrow(snpeff) &&
+      !is.null(pip_map)) {
+    for (i in seq_len(nrow(out))) {
+      if (!is.finite(out$max_PIP[i])) next
+      gid <- out$Gene_ID[i]
+      wrow <- win[win$Gene_ID == gid & win$Chr == csinfo$Chr, , drop = FALSE]
+      ws <- if (nrow(wrow)) wrow$window_start[1L] else NA_real_
+      we <- if (nrow(wrow)) wrow$window_end[1L] else NA_real_
+      out$max_PIP_SnpEff[i] <- .e_max_pip_snpeff_impact(
+        pip_map = pip_map,
+        snpeff = snpeff,
+        gene_id = gid,
+        max_pip = out$max_PIP[i],
+        window_start = ws,
+        window_end = we,
+        chr = csinfo$Chr
+      )
     }
   }
   # sort + top_n

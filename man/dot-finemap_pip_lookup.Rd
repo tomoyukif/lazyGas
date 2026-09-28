@@ -2,11 +2,19 @@
 % Please edit documentation in R/gene-evidence.R
 \name{.finemap_pip_lookup}
 \alias{.finemap_pip_lookup}
-\title{Max PIP per gene from 95\% credible set ∩ SnpEff Gene_ID}
+\title{Max PIP per gene: SnpEff assignment first, else GFF window (Phase 2 H1)}
 \usage{
-.finemap_pip_lookup(object, pheno_name, candidate)
+.finemap_pip_lookup(
+  object,
+  pheno_name,
+  candidate,
+  gff = NULL,
+  gff_windows = NULL
+)
 }
 \description{
-Max PIP per gene from 95\% credible set ∩ SnpEff Gene_ID
+For each peak's 95\% CS: (1) CS ∩ SnpEff \code{Gene_ID} → \code{max(PIP)};
+(2) genes still unassigned (no SnpEff or no hit) get
+\code{max(PIP)} of CS variants whose position falls in the gene's GFF window.
 }
 \keyword{internal}

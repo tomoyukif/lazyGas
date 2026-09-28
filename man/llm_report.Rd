@@ -24,7 +24,7 @@ llm_report(
   download_tenor = TRUE,
   candidate = NULL,
   gff = NULL,
-  work_dir = NULL,
+  work_dir,
   ann = NULL,
   snpeff = NULL,
   expr_mat = NULL,
@@ -84,10 +84,9 @@ uses the top five peaks by lead \code{negLog10P}.}
 \code{listCandidate(..., gff = ...)}). Credible sets are also required;
 SnpEff is optional.}
 
-\item{work_dir}{Optional Phase 2 E working directory. When set, evidence uses
-the gene×source E pipeline and reads \code{config.yaml}
-(\code{mapping_mode}, \code{top_n}). When \code{NULL}, legacy peak-batch
-evidence prose is used.}
+\item{work_dir}{Required Phase 2 E working directory with \code{config.yaml}
+(\code{mapping_mode}, \code{top_n}). Call \code{\link[=writeLazyGasExploreConfig]{writeLazyGasExploreConfig()}}
+first. Legacy peak-batch evidence without \code{work_dir} is not supported.}
 
 \item{ann}{Optional functional annotation table for E0/E1/E5–E7.}
 

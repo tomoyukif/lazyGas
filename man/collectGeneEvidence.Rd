@@ -23,7 +23,9 @@ collectGeneEvidence(
   download_tenor = TRUE,
   llm_model = NULL,
   llm_base_url = NULL,
-  llm_timeout = NULL
+  llm_timeout = NULL,
+  gff = NULL,
+  gff_windows = NULL
 )
 }
 \arguments{
@@ -73,6 +75,12 @@ the expression channel without \code{expression_matrix}.}
 
 \item{llm_model, llm_base_url, llm_timeout}{LLM settings for annotation
 relevance scoring.}
+
+\item{gff}{Optional \code{GRanges} for finemap GFF-window fallback when
+SnpEff is missing or does not assign a gene (Phase 2 H1).}
+
+\item{gff_windows}{Optional precomputed gene windows (from
+\code{.gff_gene_windows}); overrides building from \code{gff}.}
 }
 \value{
 A named list keyed by gene ID; each element is a list of evidence

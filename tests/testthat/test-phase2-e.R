@@ -39,6 +39,7 @@ test_that("E2/E3 payloads and return keys; E3 has no resolution", {
 
   cand <- data.frame(
     Gene_ID = "G1", dist2peak = 100, max_PIP = 0.2, nearest_cs_PIP = 0.15,
+    max_PIP_SnpEff = "MODERATE",
     stringsAsFactors = FALSE
   )
   cred <- data.frame(
@@ -49,11 +50,16 @@ test_that("E2/E3 payloads and return keys; E3 has no resolution", {
   expect_false("resolution" %in% names(p3))
   expect_false("resolution_for_e9" %in% names(p3))
   expect_true("max_PIP" %in% names(p3))
+  expect_identical(p3$max_PIP_SnpEff, "MODERATE")
   expect_identical(lazyGas:::.e3_prompts(p3)$return_key, "gwas")
+  p3q_qual <- lazyGas:::.e3_qualitative_payload(p3)
+  expect_identical(p3q_qual$max_PIP_SnpEff, "MODERATE")
+  expect_true(p3q_qual$max_PIP %in% c("high", "moderate", "low", "not_available"))
 
   p3q <- lazyGas:::.e3_build_payload("G1", "n", "qtl", cand, cred, peak_id = "1")
   expect_true("nearest_cs_PIP" %in% names(p3q))
   expect_null(p3q$max_PIP)
+  expect_null(p3q$max_PIP_SnpEff)
 })
 
 test_that("SnpEff keeps worst ANN per site; no multi-transcript double-count", {

@@ -833,7 +833,14 @@
   pip_field <- if (identical(mode, "qtl")) {
     list(nearest_cs_PIP = cand_row$nearest_cs_PIP %||% NA_real_)
   } else {
-    list(max_PIP = cand_row$max_PIP %||% NA_real_)
+    list(
+      max_PIP = cand_row$max_PIP %||% NA_real_,
+      max_PIP_SnpEff = {
+        v <- cand_row$max_PIP_SnpEff %||% NA_character_
+        v <- as.character(v)[1L]
+        if (!nzchar(v) || identical(v, "NA")) NA_character_ else v
+      }
+    )
   }
   c(
     list(
@@ -867,7 +874,12 @@
       "probabilities (QTL-specific caveat)."
     )
   } else {
-    "Use max_PIP band for GWAS when present."
+    paste(
+      "Use max_PIP band for GWAS when present.",
+      "When max_PIP_SnpEff is present, weigh functional severity of the",
+      "max-PIP variant (HIGH/MODERATE/LOW/MODIFIER) together with the PIP band",
+      "(e.g. high PIP but LOW/MODIFIER impact → more cautious causal claim)."
+    )
   }
   sys <- paste(
     "You summarize mapping / credible-set context for one gene.",
@@ -875,6 +887,7 @@
     "Use ONLY categorical labels in the payload.",
     .e_no_digits_prose_rule(),
     "Do not narrate CS resolution (reserved for validity).",
+    "Do not invent max_PIP_SnpEff when it is null or absent.",
     "Return JSON only: {\"gwas\": \"...\"}."
   )
   user <- paste0(
@@ -992,20 +1005,30 @@
   pip_qual <- if (identical(mode, "qtl")) {
     list(nearest_cs_PIP = .e4_band(payload$nearest_cs_PIP))
   } else {
-    list(max_PIP = .e4_band(payload$max_PIP))
+    imp <- as.character(payload$max_PIP_SnpEff %||% NA_character_)[1L]
+    if (!nzchar(imp) || identical(imp, "NA") || is.na(imp)) {
+      imp <- NULL
+    }
+    out <- list(max_PIP = .e4_band(payload$max_PIP))
+    if (!is.null(imp)) {
+      out$max_PIP_SnpEff <- toupper(imp)
+    }
+    out
   }
   n_cs <- payload$peak$n_cs_variants %||% NA_integer_
-  list(
-    mode = mode,
-    peak = list(
-      peak_ID = payload$peak$peak_ID,
-      cs_variant_load = .e_count_band(n_cs),
-      cs_region_present = isTRUE(!is.null(payload$peak$cs_region))
+  c(
+    list(
+      mode = mode,
+      peak = list(
+        peak_ID = payload$peak$peak_ID,
+        cs_variant_load = .e_count_band(n_cs),
+        cs_region_present = isTRUE(!is.null(payload$peak$cs_region))
+      ),
+      Gene_ID = payload$Gene_ID,
+      Name = payload$Name %||% "",
+      proximity = .e3_proximity_band(payload$dist2peak_bp),
+      association_signal = .e3_signal_band(payload$negLog10P)
     ),
-    Gene_ID = payload$Gene_ID,
-    Name = payload$Name %||% "",
-    proximity = .e3_proximity_band(payload$dist2peak_bp),
-    association_signal = .e3_signal_band(payload$negLog10P),
     pip_qual
   )
 }
@@ -1013,10 +1036,17 @@
 #' Qualitative coded metrics for E8/E9 LLM payloads
 #' @keywords internal
 .e_coded_qualitative <- function(coded) {
+  imp <- as.character(coded$max_PIP_SnpEff %||% NA_character_)[1L]
+  if (!nzchar(imp) || identical(imp, "NA") || is.na(imp)) {
+    imp <- NULL
+  } else {
+    imp <- toupper(imp)
+  }
   list(
     proximity = .e3_proximity_band(coded$dist2peak_bp),
     association_signal = .e3_signal_band(coded$negLog10P),
     max_PIP = .e4_band(coded$max_PIP),
+    max_PIP_SnpEff = imp,
     nearest_cs_PIP = .e4_band(coded$nearest_cs_PIP),
     worst_impact = coded$worst_impact,
     HIGH = .e_count_band(coded$HIGH),
@@ -1667,6 +1697,7 @@
     dist2peak_bp = coded$dist2peak_bp %||% NA_real_,
     negLog10P = coded$negLog10P %||% NA_real_,
     max_PIP = coded$max_PIP,
+    max_PIP_SnpEff = coded$max_PIP_SnpEff,
     nearest_cs_PIP = coded$nearest_cs_PIP,
     worst_impact = coded$worst_impact,
     HIGH = coded$HIGH %||% 0L,
@@ -1692,6 +1723,7 @@
       dist2peak_bp = payload$dist2peak_bp,
       negLog10P = payload$negLog10P,
       max_PIP = payload$max_PIP,
+      max_PIP_SnpEff = payload$max_PIP_SnpEff,
       nearest_cs_PIP = payload$nearest_cs_PIP,
       worst_impact = payload$worst_impact,
       HIGH = payload$HIGH,
@@ -2058,6 +2090,7 @@
     dist2peak_bp = p3$dist2peak_bp,
     negLog10P = p3$negLog10P,
     max_PIP = p3$max_PIP,
+    max_PIP_SnpEff = p3$max_PIP_SnpEff,
     nearest_cs_PIP = p3$nearest_cs_PIP,
     worst_impact = p2$worst_impact,
     HIGH = p2$HIGH,
@@ -2263,11 +2296,22 @@
     coded <- gr$coded
     gwas_items <- c(
       sprintf("dist2peak_bp: %s", coded$dist2peak_bp %||% "NA"),
-      if (!is.null(coded$max_PIP)) sprintf("max_PIP: %s", coded$max_PIP),
+      if (!is.null(coded$max_PIP) && !identical(coded$max_PIP, NULL)) {
+        sprintf("max_PIP: %s", coded$max_PIP)
+      },
+      {
+        imp <- as.character(coded$max_PIP_SnpEff %||% "")[1L]
+        if (nzchar(imp) && !identical(imp, "NA") && !is.na(imp)) {
+          sprintf("max_PIP_SnpEff: %s", imp)
+        } else {
+          NULL
+        }
+      },
       if (!is.null(coded$nearest_cs_PIP)) {
         sprintf("nearest_cs_PIP: %s", coded$nearest_cs_PIP)
       }
     )
+    gwas_items <- unlist(gwas_items, use.names = FALSE)
     blocks <- c(
       blocks,
       paste0(

@@ -276,10 +276,9 @@ explainPhenotypeCandidates <- function(rank_result,
 #' @param gff Required \code{GRanges} gene models (same object as
 #'   \code{listCandidate(..., gff = ...)}). Credible sets are also required;
 #'   SnpEff is optional.
-#' @param work_dir Optional Phase 2 E working directory. When set, evidence uses
-#'   the gene×source E pipeline and reads \code{config.yaml}
-#'   (\code{mapping_mode}, \code{top_n}). When \code{NULL}, legacy peak-batch
-#'   evidence prose is used.
+#' @param work_dir Required Phase 2 E working directory with \code{config.yaml}
+#'   (\code{mapping_mode}, \code{top_n}). Call [writeLazyGasExploreConfig()]
+#'   first. Legacy peak-batch evidence without \code{work_dir} is not supported.
 #' @param ann Optional functional annotation table for E0/E1/E5–E7.
 #' @param snpeff Optional SnpEff table for E2 / GWAS gene assignment.
 #' @param expr_mat Optional expression matrix (genes × samples) for E4.
@@ -326,7 +325,7 @@ llm_report <- function(object,
                        download_tenor = TRUE,
                        candidate = NULL,
                        gff = NULL,
-                       work_dir = NULL,
+                       work_dir,
                        ann = NULL,
                        snpeff = NULL,
                        expr_mat = NULL,
@@ -342,23 +341,27 @@ llm_report <- function(object,
   if (!inherits(object, "LazyGas")) {
     stop("'object' must be a LazyGas object.", call. = FALSE)
   }
-  use_e_path <- !is.null(work_dir) && nzchar(as.character(work_dir)[1L])
-  e_cfg <- NULL
-  if (use_e_path) {
-    work_dir <- path.expand(as.character(work_dir)[1L])
-    if (!dir.exists(work_dir)) {
-      dir.create(work_dir, recursive = TRUE, showWarnings = FALSE)
-    }
-    cfg_path <- file.path(work_dir, "config.yaml")
-    if (!file.exists(cfg_path)) {
-      stop(
-        "work_dir is set but config.yaml is missing. ",
-        "Call writeLazyGasExploreConfig(work_dir, mapping_mode=...) first.",
-        call. = FALSE
-      )
-    }
-    e_cfg <- readLazyGasExploreConfig(work_dir)
+  if (missing(work_dir) || is.null(work_dir) || !nzchar(as.character(work_dir)[1L])) {
+    stop(
+      "'work_dir' is required. Create it with writeLazyGasExploreConfig()",
+      " (config.yaml) before calling llm_report().",
+      call. = FALSE
+    )
   }
+  work_dir <- path.expand(as.character(work_dir)[1L])
+  if (!dir.exists(work_dir)) {
+    dir.create(work_dir, recursive = TRUE, showWarnings = FALSE)
+  }
+  cfg_path <- file.path(work_dir, "config.yaml")
+  if (!file.exists(cfg_path)) {
+    stop(
+      "config.yaml is missing in work_dir. ",
+      "Call writeLazyGasExploreConfig(work_dir, mapping_mode=...) first.",
+      call. = FALSE
+    )
+  }
+  e_cfg <- readLazyGasExploreConfig(work_dir)
+  use_e_path <- TRUE
   if (is.character(rank_result) && length(rank_result) == 1L &&
       nzchar(rank_result)) {
     rank_result <- .read_rank_result(rank_result)
@@ -444,7 +447,8 @@ llm_report <- function(object,
       query_use_llm = FALSE,
       llm_model = llm$model,
       llm_base_url = llm$base_url,
-      llm_timeout = llm$timeout
+      llm_timeout = llm$timeout,
+      gff = gff
     )
     rank_args <- c(rank_args, extra_rank)
     rank_parts <- list()
