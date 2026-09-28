@@ -123,6 +123,75 @@ test_that("E2 domain AA overlap same protein ID only", {
   expect_equal(ov$domain_id_match_rate, 1)
 })
 
+test_that("E2 does not cross-isoform hit TX2 domain with TX1 variant", {
+  snp <- data.frame(
+    Gene_ID = "G1",
+    Annotation_Impact = "MODERATE",
+    Annotation = "missense_variant",
+    Feature_ID = "TX1",
+    `Pos.in.AA` = "150",
+    `HGVS.p` = "p.A50V",
+    stringsAsFactors = FALSE,
+    check.names = FALSE
+  )
+  # Only TX2 has a domain covering AA 150; TX1 variant must not hit it
+  ip <- data.frame(
+    protein_id = "TX2",
+    start = 100,
+    stop = 200,
+    description = "DomB",
+    stringsAsFactors = FALSE
+  )
+  pmap <- data.frame(
+    Gene_ID = c("G1", "G1"),
+    transcript_id = c("TX1", "TX2"),
+    protein_id = c("TX1", "TX2"),
+    stringsAsFactors = FALSE
+  )
+  # TX1 has aa_pos but no InterPro row → match rate 0 and warn; no false DomB hit
+  expect_warning(
+    ov <- lazyGas:::.e2_domain_overlaps(snp, ip, pmap, "G1"),
+    "InterProScan ID match rate"
+  )
+  expect_equal(length(ov$domain_overlaps), 0L)
+  expect_equal(ov$domain_id_match_rate, 0)
+})
+
+test_that("E2 warns when InterProScan ID match rate is below 80%", {
+  snp <- data.frame(
+    Gene_ID = "G1",
+    Annotation_Impact = c("MODERATE", "MODERATE", "MODERATE", "MODERATE", "MODERATE"),
+    Annotation = rep("missense_variant", 5L),
+    Feature_ID = c("TX1", "TX_MISS", "TX_MISS", "TX_MISS", "TX_MISS"),
+    `Pos.in.AA` = c("150", "10", "20", "30", "40"),
+    stringsAsFactors = FALSE,
+    check.names = FALSE
+  )
+  ip <- data.frame(
+    protein_id = "TX1",
+    start = 100,
+    stop = 200,
+    description = "DomA",
+    stringsAsFactors = FALSE
+  )
+  pmap <- data.frame(
+    Gene_ID = "G1",
+    transcript_id = "TX1",
+    protein_id = "TX1",
+    stringsAsFactors = FALSE
+  )
+  expect_warning(
+    ov <- lazyGas:::.e2_domain_overlaps(snp, ip, pmap, "G1"),
+    "InterProScan ID match rate"
+  )
+  expect_true(is.finite(ov$domain_id_match_rate))
+  expect_lt(ov$domain_id_match_rate, 0.8)
+  expect_match(ov$warning, "80%", fixed = TRUE)
+  # Only TX1 variant may overlap DomA
+  expect_equal(length(ov$domain_overlaps), 1L)
+  expect_identical(ov$domain_overlaps[[1L]]$worst_overlapping_impact, "MODERATE")
+})
+
 test_that("simple candidate helper columns", {
   cand <- data.frame(
     peak_ID = 1L,
