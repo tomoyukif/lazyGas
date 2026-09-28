@@ -283,6 +283,11 @@ explainPhenotypeCandidates <- function(rank_result,
 #' @param ann Optional functional annotation table for E0/E1/E5–E7.
 #' @param snpeff Optional SnpEff table for E2 / GWAS gene assignment.
 #' @param expr_mat Optional expression matrix (genes × samples) for E4.
+#'   Must be abundance (TPM / counts / FPKM / similar). Row-Z is not expected;
+#'   if median row SD falls in about \code{[0.8, 1.2]}, a warning is issued and
+#'   recorded in run metadata—no hard stop (user decides). Set
+#'   \code{matrix_scale = "row_zscore"} in explore \code{config.yaml} only when
+#'   the matrix is known Z; then Yanai τ and relative height are suppressed.
 #' @param interpro Optional InterProScan interval table for E2 domain overlap.
 #' @param reinterpret If \code{TRUE} (default), build Phase-2 F hypothesis
 #'   cards and select evidence genes via \code{gene_select}.
@@ -808,7 +813,8 @@ llm_report <- function(object,
       .e4_warn_row_z(
         expr_mat,
         e_cfg$row_sd_z_warn_lo %||% 0.8,
-        e_cfg$row_sd_z_warn_hi %||% 1.2
+        e_cfg$row_sd_z_warn_hi %||% 1.2,
+        emit = TRUE
       )
     } else {
       NULL

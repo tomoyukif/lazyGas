@@ -262,6 +262,19 @@ recalc <- lazyData(object = lg, dataset = "recalc", pheno = "Trait1")
 `haploPlot()` titles include peak `-log10P` and `Coef.add` (original units for
 continuous traits).
 
+### Expression matrix for `llm_report` (E4)
+
+Pass **abundance** values (TPM, counts, FPKM, logTPM, and similar)—not
+row-wise Z-scores. Yanai τ and relative-height percentiles assume a
+non-negative quantity scale.
+
+If the median per-gene row SD falls in about `[0.8, 1.2]`, the pipeline
+**warns** and records the check in run metadata, but does **not** hard-stop:
+metrics alone cannot prove the matrix is row-Z, so the final call is yours.
+To suppress τ / relative height when you know the input is row-Z, set
+`matrix_scale: row_zscore` in the explore `config.yaml` from
+`writeLazyGasExploreConfig()`.
+
 ## Contributing
 
 Issues and pull requests are welcome on

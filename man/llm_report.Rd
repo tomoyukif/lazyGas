@@ -93,7 +93,12 @@ evidence prose is used.}
 
 \item{snpeff}{Optional SnpEff table for E2 / GWAS gene assignment.}
 
-\item{expr_mat}{Optional expression matrix (genes × samples) for E4.}
+\item{expr_mat}{Optional expression matrix (genes × samples) for E4.
+Must be abundance (TPM / counts / FPKM / similar). Row-Z is not expected;
+if median row SD falls in about \code{[0.8, 1.2]}, a warning is issued and
+recorded in run metadata—no hard stop (user decides). Set
+\code{matrix_scale = "row_zscore"} in explore \code{config.yaml} only when
+the matrix is known Z; then Yanai τ and relative height are suppressed.}
 
 \item{interpro}{Optional InterProScan interval table for E2 domain overlap.}
 

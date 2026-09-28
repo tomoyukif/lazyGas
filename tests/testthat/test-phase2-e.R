@@ -201,6 +201,38 @@ test_that("E4 names high-expression tissues when specific", {
   expect_match(tmpl, "leaf")
 })
 
+test_that("E4 row-Z SD heuristic warns softly without hard-stop", {
+  set.seed(1L)
+  # Near unit row SD → Z-like suspicion
+  zmat <- matrix(
+    rnorm(5L * 6L),
+    nrow = 5L,
+    dimnames = list(paste0("G", 1:5), paste0("s", 1:6))
+  )
+  expect_warning(
+    msg <- lazyGas:::.e4_warn_row_z(zmat, emit = TRUE),
+    "row-Z|abundance|Median row SD",
+    ignore.case = TRUE
+  )
+  expect_true(is.character(msg) && nzchar(msg))
+  expect_match(msg, "hard-stop", fixed = TRUE)
+
+  # Clear abundance scale → no warning message
+  amat <- matrix(
+    c(100, 90, 5, 4, 3, 2,
+      80, 70, 6, 5, 4, 3,
+      60, 50, 8, 7, 2, 1),
+    nrow = 3L, byrow = TRUE,
+    dimnames = list(c("G1", "G2", "G3"), paste0("s", 1:6))
+  )
+  expect_null(lazyGas:::.e4_warn_row_z(amat, emit = TRUE))
+  # Payload still builds under abundance (soft contract)
+  p <- lazyGas:::.e4_build_payload("G1", expr_mat = amat, sample_map = NULL)
+  expect_identical(p$matrix_scale, "abundance")
+  expect_true(is.finite(p$specificity$combination_tau) ||
+                is.finite(p$specificity$tissue_tau))
+})
+
 test_that("E4 combo tau drops query-axis not_available; Z nulls tau", {
   mat <- matrix(
     c(100, 90, 5, 4, 50, 40),

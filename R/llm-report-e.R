@@ -1083,8 +1083,16 @@
   out
 }
 
+#' Soft check for row-Z–like expression matrices (never hard-stops).
+#'
+#' Metrics alone cannot prove a matrix is row-Z; when the median row SD falls
+#' in \code{[lo, hi]} we return a message (and optionally emit
+#' \code{warning()}) so the user can decide. Processing continues as abundance
+#' unless \code{matrix_scale} is set to \code{row_zscore}.
+#'
+#' @param emit If \code{TRUE}, also call \code{warning()} with the message.
 #' @keywords internal
-.e4_warn_row_z <- function(mat, lo = 0.8, hi = 1.2) {
+.e4_warn_row_z <- function(mat, lo = 0.8, hi = 1.2, emit = FALSE) {
   if (is.null(mat)) {
     return(NULL)
   }
@@ -1093,10 +1101,15 @@
   rsd <- apply(m, 1L, stats::sd, na.rm = TRUE)
   med <- stats::median(rsd[is.finite(rsd)], na.rm = TRUE)
   if (is.finite(med) && med >= lo && med <= hi) {
-    return(paste0(
+    msg <- paste0(
       "Median row SD=", signif(med, 3),
-      " is in [", lo, ",", hi, "] — input may be row-Z; tau requires abundance."
-    ))
+      " is in [", lo, ",", hi, "] — input may be row-Z; tau requires abundance.",
+      " Confirm the matrix is TPM/counts (not row-Z); pipeline does not hard-stop."
+    )
+    if (isTRUE(emit)) {
+      warning(msg, call. = FALSE)
+    }
+    return(msg)
   }
   NULL
 }

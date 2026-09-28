@@ -27,7 +27,9 @@ writeLazyGasExploreConfig <- function(work_dir,
       relative_moderate = 0.4,
       row_sd_z_warn_lo = 0.8,
       row_sd_z_warn_hi = 1.2,
-      # abundance (default) | row_zscore — Z forbids Yanai tau / relative height
+      # abundance (default) | row_zscore. Prefer abundance; row-Z is soft-warn
+      # only (median row SD ~1) — never hard-stop. Declared row_zscore nulls
+      # Yanai tau / relative height.
       matrix_scale = "abundance",
       # NULL = auto (axes with any non-NA coarse label in sample_map)
       query_axes = NULL
