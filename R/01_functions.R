@@ -288,12 +288,24 @@ open_snpeff <- function(gds_fn) {
 #' closeGDS(lgas)
 #'
 #' @exportClass LazyGas
-#' @importFrom methods setClass slot
+#' @importFrom methods setClass slot setAs setMethod S3Part
 #' @import GBScleanR
 #'
 setClass(Class = "LazyGas",
          contains = "GbsrGenotypeData",
-         slots = c(lazydata = "list"))
+         slots = c(lazydata = "list"),
+         prototype = list(lazydata = list()))
+
+# SeqArray/GBScleanR hybrid: LazyGas extends SeqVarGDSClass + gds.class (oldClass).
+# Under devtools::load_all(), default coerce to SeqVarGDSClass can become a hollow
+# object; SeqArray validity then calls index.gdsn(object) → object$root and fails
+# with "$ operator not defined for this S4 class". Force S3Part-based coerce.
+setAs("LazyGas", "SeqVarGDSClass", function(from) {
+  methods::S3Part(from, strictS3 = TRUE)
+})
+setAs("LazyGas", "gds.class", function(from) {
+  methods::S3Part(from, strictS3 = TRUE)
+})
 
 ################################################################################
 # Inherited methods
@@ -338,9 +350,13 @@ setMethod("closeGDS",
 #' and SNP IDs. Random alleles will be assigned if `snp.allele = NULL`.
 #' `snp.chromosome` and `snp.marker` must be supplied.
 #'
+#' The GDS file is opened with [GBScleanR::loadGDS()] so that SeqArray-backed
+#' accessors (for example [GBScleanR::getSamID()] in [assignPheno()]) receive a
+#' valid connection. Using `gdsfmt::openfn.gds()` alone is not sufficient.
+#'
 #' @importFrom GBScleanR loadGDS countGenotype
 #' @importClassesFrom GBScleanR GbsrGenotypeData
-#' @importFrom gdsfmt exist.gdsn objdesp.gdsn
+#' @importFrom gdsfmt closefn.gds exist.gdsn objdesp.gdsn
 #'
 #' @export
 #'
@@ -349,21 +365,14 @@ buildLazyGas <- function(gds_fn = "",
                          overwrite = FALSE,
                          create_gds = NULL){
   if(!all(sapply(X = create_gds, FUN = is.null))){
-    out <- .createGDS(gds_fn = gds_fn, create_gds = create_gds)
-    out <- new(Class = "GbsrGenotypeData", out)
-    nmar <- objdesp.gdsn(index.gdsn(node = out$root, "variant.id"))$dim
-    nsam <- objdesp.gdsn(index.gdsn(node = out$root, "sample.id"))$dim
-    out@marker <- data.frame(valid = rep(TRUE, nmar))
-    out@sample <- data.frame(valid = rep(TRUE, nsam))
+    raw_gds <- .createGDS(gds_fn = gds_fn, create_gds = create_gds)
+    closefn.gds(gdsfile = raw_gds)
+    # SeqArray connection required by GBScleanR accessors (e.g. getSamID)
+    out <- loadGDS(x = gds_fn, load_filter = load_filter, verbose = FALSE)
 
   } else {
-    # Load the GDS file and apply the load filter if specified
-    out <- openfn.gds(filename = gds_fn, readonly = FALSE)
-    out <- new(Class = "GbsrGenotypeData", out)
-    nmar <- objdesp.gdsn(index.gdsn(node = out$root, "variant.id"))$dim
-    nsam <- objdesp.gdsn(index.gdsn(node = out$root, "sample.id"))$dim
-    out@marker <- data.frame(valid = rep(TRUE, nmar))
-    out@sample <- data.frame(valid = rep(TRUE, nsam))
+    # SeqArray connection required by GBScleanR accessors (e.g. getSamID)
+    out <- loadGDS(x = gds_fn, load_filter = load_filter, verbose = FALSE)
   }
 
   # Check if the "lazygas" node already exists in the GDS file
@@ -384,7 +393,7 @@ buildLazyGas <- function(gds_fn = "",
   }
 
   # Create a new LazyGas object and return it
-  out <- new(Class = "LazyGas", out)
+  out <- methods::new(Class = "LazyGas", out, lazydata = list())
   return(out)
 }
 
@@ -528,6 +537,20 @@ buildLazyGas <- function(gds_fn = "",
                  new_node = "data",
                  val = genotype,
                  storage = "bit2")
+  }
+
+  # GBScleanR::loadGDS() may run seqOptimize when genotype/~data is absent;
+  # SeqArray requires a phase/data node (sample x SNP, unphased = 0).
+  if (!exist.gdsn(node = index.gdsn(gds, ""), path = "phase/data")) {
+    if (!exist.gdsn(node = index.gdsn(gds, ""), path = "phase")) {
+      addfolder.gdsn(node = index.gdsn(gds, ""), name = "phase")
+    }
+    phase <- matrix(0L, nrow = n_sample, ncol = n_snp)
+    .create_gdsn(root_node = gds,
+                 target_node = "phase",
+                 new_node = "data",
+                 val = phase,
+                 storage = "bit1")
   }
 
   if(!check$haplotype || !check$dosage){
@@ -1107,6 +1130,11 @@ makeConvFun <-  function(geno_format = c("genotype", "corrected", "dosage", "hap
 ################################################################################
 #' Scan QTL
 #'
+#' Continuous phenotypes are standardized internally before regression. Stored
+#' \code{Coef.*} columns are rescaled to the original phenotype units (change in
+#' phenotype per genotype unit). Binary phenotypes are not standardized; their
+#' coefficients remain on the GLM scale (log-odds).
+#'
 #' @param object A LazyGas object
 #' @param out_fn Prefix of output file name
 #' @param formula The formula of the regression model
@@ -1221,8 +1249,13 @@ setMethod("scanAssoc",
 
               # Retrieve the phenotype data from the GDS object
               binary <- getPheno(object = object)$pheno_type$binary[i]
-              i_pheno <- getPheno(object = object)$pheno[, i_pheno_names]
-              i_pheno <- .standardize(val = i_pheno, binary = binary)
+              i_pheno_raw <- getPheno(object = object)$pheno[, i_pheno_names]
+              pheno_scale <- if (isTRUE(binary)) {
+                1
+              } else {
+                stats::sd(i_pheno_raw, na.rm = TRUE)
+              }
+              i_pheno <- .standardize(val = i_pheno_raw, binary = binary)
 
               # Perform regression analysis and store results
               .perform_regression(object = object,
@@ -1235,7 +1268,8 @@ setMethod("scanAssoc",
                                   dokruskal = dokruskal,
                                   i_pheno_names = i_pheno_names,
                                   binary = binary,
-                                  method = method)
+                                  method = method,
+                                  pheno_scale = pheno_scale)
             }
 
             # Add additional information to the root node in the GDS object
@@ -1264,6 +1298,26 @@ setMethod("scanAssoc",
   }
 }
 
+#' Multiply stored Coef.* by phenotype SD (continuous traits only)
+#' @keywords internal
+.rescale_scan_coefs <- function(mat, pheno_scale) {
+  if (is.null(mat)) {
+    return(mat)
+  }
+  if (length(pheno_scale) != 1L || !is.finite(pheno_scale) || pheno_scale <= 0) {
+    return(mat)
+  }
+  if (abs(pheno_scale - 1) < .Machine$double.eps^0.5) {
+    return(mat)
+  }
+  coef_cols <- grep("^Coef\\.", colnames(mat), value = TRUE)
+  if (length(coef_cols) == 0L) {
+    return(mat)
+  }
+  mat[, coef_cols] <- mat[, coef_cols, drop = FALSE] * pheno_scale
+  mat
+}
+
 ## Sub-function to perform regression analysis and store results
 #' @importFrom gdsfmt apply.gdsn
 #' @importFrom gaston as.bed.matrix GRM association.test
@@ -1277,7 +1331,8 @@ setMethod("scanAssoc",
                                 dokruskal,
                                 i_pheno_names,
                                 binary,
-                                method) {
+                                method,
+                                pheno_scale = 1) {
   margin <- switch(geno_format,
                    "genotype" = 3,
                    "corrected" = 3,
@@ -1372,6 +1427,10 @@ setMethod("scanAssoc",
   p_values <- cbind(p_values,
                     FDR = p.adjust(p = p_values[, "P.model"], method = "fdr"),
                     negLog10P = -log10(p_values[, "P.model"]))
+
+  # Continuous phenotypes were standardized for regression; restore Coef.* to
+  # original phenotype units (binary / pheno_scale==1 left unchanged).
+  p_values <- .rescale_scan_coefs(mat = p_values, pheno_scale = pheno_scale)
 
   # Add results to the scan node in the GDS object
   .create_gdsn(root_node = object$root,

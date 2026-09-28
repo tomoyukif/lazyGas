@@ -19,8 +19,6 @@ recalcAssoc(
 \item{object}{A LazyGas object.}
 
 \item{n_threads}{description}
-
-\item{refine_position}{}
 }
 \value{
 None. The function modifies the LazyGas object in place.

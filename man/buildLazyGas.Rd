@@ -43,4 +43,8 @@ be supplied in the \code{create_gds} list. If \code{sample.id}, \code{snp.id}, a
 and SNP IDs. Random alleles will be assigned if \code{snp.allele = NULL}.
 \code{snp.chromosome} and \code{snp.marker} must be supplied.
 }
+
+The GDS file is opened with \code{\link[GBScleanR:loadGDS]{GBScleanR::loadGDS()}} so that SeqArray-backed
+accessors (for example \code{\link[GBScleanR:getSamID]{GBScleanR::getSamID()}} in \code{\link[=assignPheno]{assignPheno()}}) receive a
+valid connection. Using \code{gdsfmt::openfn.gds()} alone is not sufficient.
 }

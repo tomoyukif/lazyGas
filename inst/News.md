@@ -1,3 +1,15 @@
+Changes in version 0.5.2 (2026-09-28)
++ Open GDS files in `buildLazyGas()` via `GBScleanR::loadGDS()` (instead of
+  `gdsfmt::openfn.gds()` alone) so SeqArray-backed accessors such as
+  `getSamID()` used by `assignPheno()` receive a valid connection. When
+  creating a GDS with `create_gds`, close the writer handle before `loadGDS()`
+  and ensure a SeqArray `phase/data` node exists.
++ Fix `LazyGas` → `SeqVarGDSClass` / `gds.class` coerce via `S3Part` so
+  `new("LazyGas", ...)` / `devtools::load_all()` work with current GBScleanR.
++ Rescale stored GWAS `Coef.*` columns to original phenotype units after
+  continuous-trait standardization. Binary phenotypes are unchanged (GLM
+  log-odds scale).
+
 Changes in version 0.5.1 (2026-05-18)
 + Skip recreation of existing `lazygas/scan`, `lazygas/peakcall`, `lazygas/recalc`, and `lazygas/candidate` GDS nodes on reruns; update peakcall attributes when the peakcall node already exists.
 + Document the `limit_peakcall` argument in `callPeakBlock()`.
