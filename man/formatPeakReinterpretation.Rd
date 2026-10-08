@@ -8,7 +8,8 @@ formatPeakReinterpretation(
   x,
   peak_id = NULL,
   language = c("en", "ja"),
-  format = c("html", "markdown")
+  format = c("html", "markdown"),
+  evidence_gene_ids = NULL
 )
 }
 \arguments{
@@ -19,6 +20,9 @@ formatPeakReinterpretation(
 \item{language}{Ignored for chrome (English); accepted for API parity.}
 
 \item{format}{\code{"html"} or \code{"markdown"}.}
+
+\item{evidence_gene_ids}{Optional Gene_ID vector that appear under Evidence.
+In HTML, matching Gene_ID cells become in-page links; others stay plain text.}
 }
 \value{
 Character scalar.

@@ -2280,6 +2280,7 @@
     interpretation = ui$interpretation %||% "Integrated interpretation",
     validity = ui$validity
   )
+  selection_map <- e_run$selection %||% character()
   parts <- character()
   for (i in seq_len(nrow(e_run$genes))) {
     gid <- e_run$genes$Gene_ID[i]
@@ -2406,7 +2407,16 @@
     }
     parts <- c(
       parts,
-      paste0("<h4>", .report_escape_html(title), "</h4>\n", paste(blocks, collapse = ""))
+      paste0(
+        "<h4 id=\"", .report_escape_html(.report_evidence_anchor_id(gid)), "\">",
+        .report_escape_html(title), "</h4>\n",
+        .report_evidence_selection_note_html(
+          gid,
+          selection_map = selection_map,
+          language = language
+        ),
+        paste(blocks, collapse = "")
+      )
     )
   }
   if (length(e_run$b5_failures)) {

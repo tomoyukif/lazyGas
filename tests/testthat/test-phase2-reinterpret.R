@@ -129,6 +129,28 @@ test_that("distance gate off keeps far strong genes in function view", {
   html <- formatPeakReinterpretation(ri, peak_id = 1, format = "html")
   expect_match(html, "far_strong", fixed = TRUE)
   expect_match(html, "<th>view</th>", fixed = TRUE)
+  html_link <- formatPeakReinterpretation(
+    ri,
+    peak_id = 1,
+    format = "html",
+    evidence_gene_ids = "near_weak"
+  )
+  expect_match(html_link, 'href="#evidence-gene-near_weak"', fixed = TRUE)
+  expect_false(grepl("href=\"#evidence-gene-far_strong\"", html_link, fixed = TRUE))
+  sel <- lazyGas:::.report_evidence_selection_map(
+    composite_ids = c("near_weak", "shared"),
+    card_ids = c("far_strong", "shared")
+  )
+  expect_equal(unname(sel[["near_weak"]]), "composite")
+  expect_equal(unname(sel[["far_strong"]]), "card")
+  expect_equal(unname(sel[["shared"]]), "both")
+  note_both <- lazyGas:::.report_evidence_selection_note_html(
+    "shared",
+    selection_map = sel,
+    language = "en"
+  )
+  expect_match(note_both, "Selected by", fixed = TRUE)
+  expect_match(note_both, "both composite_score ranking and hypothesis cards", fixed = TRUE)
 })
 
 test_that("weak-only peak yields empty function champion", {

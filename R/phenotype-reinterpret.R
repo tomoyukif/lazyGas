@@ -335,14 +335,14 @@ conflictTable <- function(x) {
 #'
 #' @param x A \code{PeakReinterpretation}.
 #' @param peak_id Peak id.
-#' @param mode One of \code{"union_champions"}, \code{"composite_top_n"},
-#'   \code{"union_all"}.
+#' @param mode One of \code{"union_all"} (default), \code{"union_champions"},
+#'   or \code{"composite_top_n"}.
 #' @param composite_ids Optional Gene_ID vector for composite top_n / union_all.
 #' @return Character vector of Gene_ID (no \code{NA}).
 #' @export
 geneSetForReport <- function(x,
                              peak_id,
-                             mode = c("union_champions", "composite_top_n", "union_all"),
+                             mode = c("union_all", "union_champions", "composite_top_n"),
                              composite_ids = NULL) {
   mode <- match.arg(mode)
   if (!inherits(x, "PeakReinterpretation")) {
@@ -366,6 +366,35 @@ geneSetForReport <- function(x,
     return(comp)
   }
   unique(c(champ_ids, support_ids, comp))
+}
+
+#' Map Evidence genes to selection source (composite / card / both)
+#'
+#' @param composite_ids Gene_IDs from composite_score ranking (Candidate top N).
+#' @param card_ids Gene_IDs from hypothesis cards (champion / support).
+#' @return Named character vector: Gene_ID -> \code{"composite"}, \code{"card"},
+#'   or \code{"both"}.
+#' @keywords internal
+.report_evidence_selection_map <- function(composite_ids, card_ids) {
+  comp <- unique(stats::na.omit(as.character(composite_ids %||% character())))
+  card <- unique(stats::na.omit(as.character(card_ids %||% character())))
+  all_ids <- unique(c(comp, card))
+  if (!length(all_ids)) {
+    return(character())
+  }
+  out <- vapply(all_ids, function(g) {
+    in_c <- g %in% comp
+    in_h <- g %in% card
+    if (in_c && in_h) {
+      "both"
+    } else if (in_c) {
+      "composite"
+    } else {
+      "card"
+    }
+  }, character(1L))
+  names(out) <- all_ids
+  out
 }
 
 #' Champion Gene_ID helper
@@ -400,12 +429,15 @@ champion <- function(x, peak, view) {
 #' @param peak_id Required when \code{x} is a full PeakReinterpretation.
 #' @param language Ignored for chrome (English); accepted for API parity.
 #' @param format \code{"html"} or \code{"markdown"}.
+#' @param evidence_gene_ids Optional Gene_ID vector that appear under Evidence.
+#'   In HTML, matching Gene_ID cells become in-page links; others stay plain text.
 #' @return Character scalar.
 #' @export
 formatPeakReinterpretation <- function(x,
                                        peak_id = NULL,
                                        language = c("en", "ja"),
-                                       format = c("html", "markdown")) {
+                                       format = c("html", "markdown"),
+                                       evidence_gene_ids = NULL) {
   language <- match.arg(language)
   format <- match.arg(format)
   pk <- if (inherits(x, "PeakReinterpretation")) {
@@ -456,6 +488,17 @@ formatPeakReinterpretation <- function(x,
   }
 
   # HTML
+  link_gid <- if (exists(".report_link_gene_id_html", mode = "function")) {
+    function(gid) .report_link_gene_id_html(gid, evidence_gene_ids)
+  } else {
+    function(gid) {
+      g <- as.character(gid)[1L]
+      if (is.na(g) || !nzchar(g)) {
+        return("(none)")
+      }
+      g
+    }
+  }
   esc <- if (exists(".report_escape_html", mode = "function")) {
     .report_escape_html
   } else {
@@ -470,14 +513,11 @@ formatPeakReinterpretation <- function(x,
   rows <- character()
   for (i in seq_len(nrow(ch))) {
     gid <- ch$Gene_ID[i]
-    if (is.na(gid) || !nzchar(as.character(gid))) {
-      gid <- "(none)"
-    }
     detail <- ch$reason_detail[i] %||% ch$reason_code[i]
     rows <- c(
       rows,
       paste0(
-        "<tr><td>", esc(ch$view[i]), "</td><td>", esc(gid),
+        "<tr><td>", esc(ch$view[i]), "</td><td>", link_gid(gid),
         "</td><td>", esc(detail), "</td></tr>"
       )
     )

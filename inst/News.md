@@ -5,6 +5,19 @@ the release or documentation update for that version.
 
 ---
 
+## Changes in version 0.9.2 (2026-10-08)
+
+### AI HTML report: Gene_ID → Evidence links; region gene count
++ Hypothesis cards and Candidate list Gene_ID cells link to
+  `#evidence-gene-<Gene_ID>` when that gene has an Evidence block on the same
+  peak; otherwise they stay plain text.
++ Candidate list shows **Genes in candidate region** (CS∩GFF count per peak),
+  distinct from Evidence gene-set size (`gene_select`).
++ `formatPeakReinterpretation(..., evidence_gene_ids=)` enables the Hypothesis
+  card links; Evidence gene headings carry matching HTML `id` anchors.
+
+---
+
 ## Changes in version 0.9.2 (2026-09-14)
 
 ### recalcAssoc: keep correlated peak groups; narrow with CS
@@ -26,8 +39,10 @@ the release or documentation update for that version.
   synonym phrases only (related phrases are not strong); empty function seat
   is `NA` ("no function hypothesis").
 + `llm_report()` defaults to `reinterpret = TRUE` and
-  `gene_select = "union_champions"`; HTML gains **Hypothesis cards** before
-  the candidate list; Evidence / E gene sets follow the champion union.
+  `gene_select = "union_all"` (composite Candidate top N ∪ card
+  champion/support); HTML gains **Hypothesis cards** before the candidate
+  list. Each Evidence gene opens with a **Selected by** note
+  (composite ranking / hypothesis cards / both).
 + Companion store section `phenotype_reinterpret/` and
   `lazyData(..., "phenotype_reinterpret")`.
 

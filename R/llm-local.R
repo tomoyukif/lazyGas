@@ -237,13 +237,16 @@ explainPhenotypeCandidates <- function(rank_result,
 #'
 #' Ranks candidates (with required SnpEff + credible-set / finemap channel),
 #' then writes an HTML report: basic info, per-peak credible-set comment,
-#' scrollable score table, and evidence frames. Report chrome (headings,
-#' tables, CS comments) is always English. \code{language = "ja"} only
-#' translates LLM-generated per-gene prose (keywords / expression / validity)
-#' when \code{use_llm = TRUE}; technical terms and input strings stay unchanged.
-#' Ranking scores appear only in the table. PIP / distance / -log10P /
-#' SnpEff counts are written by code. Evidence verification is not included
-#' yet (Phase 2 B5 deferred).
+#' optional Hypothesis cards, scrollable Candidate list (with CS∩GFF
+#' \dQuote{Genes in candidate region} count), and Evidence frames. Gene_ID
+#' cells in Hypothesis cards and the Candidate table link to
+#' \code{#evidence-gene-<Gene_ID>} when that gene has an Evidence block on
+#' the same peak. Report chrome (headings, tables, CS comments) is always
+#' English. \code{language = "ja"} only translates LLM-generated per-gene
+#' prose (keywords / expression / validity) when \code{use_llm = TRUE};
+#' technical terms and input strings stay unchanged. Ranking scores appear
+#' only in the table. PIP / distance / -log10P / SnpEff counts are written
+#' by code.
 #'
 #' @param object A \code{LazyGas} object with candidate genes.
 #' @param pheno Phenotype name or index.
@@ -293,8 +296,8 @@ explainPhenotypeCandidates <- function(rank_result,
 #' @param reinterpret_rules,reinterpret_views Passed to
 #'   [reinterpretPeakCandidates()].
 #' @param gene_select Evidence gene set when \code{reinterpret = TRUE}:
-#'   \code{"union_champions"} (default), \code{"composite_top_n"}, or
-#'   \code{"union_all"}.
+#'   \code{"union_all"} (default; composite top N ∪ card champion/support),
+#'   \code{"union_champions"}, or \code{"composite_top_n"}.
 #' @param ... Passed to [rankPhenotypeCandidates()] when ranking.
 #'   \code{top_n} and \code{save} in \code{...} are ignored.
 #'
@@ -333,7 +336,7 @@ llm_report <- function(object,
                        reinterpret = TRUE,
                        reinterpret_rules = reinterpretDefaultRules(),
                        reinterpret_views = reinterpretDefaultViews(),
-                       gene_select = c("union_champions", "composite_top_n", "union_all"),
+                       gene_select = c("union_all", "union_champions", "composite_top_n"),
                        ...) {
   language <- match.arg(language)
   gene_select <- match.arg(gene_select)
@@ -602,6 +605,7 @@ llm_report <- function(object,
     reinterpret_peak <- NULL
     evidence_rank <- NULL
     gene_set <- character()
+    selection_map <- character()
     if (!is.null(reinterpret_obj)) {
       reinterpret_peak <- reinterpret_obj$peaks[[as.character(pid)]]
       top_ids <- if (nrow(rank_peak)) {
@@ -609,11 +613,21 @@ llm_report <- function(object,
       } else {
         character()
       }
+      card_ids <- geneSetForReport(
+        reinterpret_obj,
+        peak_id = pid,
+        mode = "union_champions",
+        composite_ids = NULL
+      )
       gene_set <- geneSetForReport(
         reinterpret_obj,
         peak_id = pid,
         mode = gene_select,
         composite_ids = top_ids
+      )
+      selection_map <- .report_evidence_selection_map(
+        composite_ids = top_ids,
+        card_ids = card_ids
       )
       if (length(gene_set) && nrow(rank_peak)) {
         evidence_rank <- rank_peak[
@@ -658,7 +672,7 @@ llm_report <- function(object,
         }
       }
       if (length(gene_set) && nrow(simple) && "Gene_ID" %in% names(simple)) {
-        # Prefer union_champions / gene_select set; fall back if empty intersection
+        # Prefer gene_select set; fall back if empty intersection
         simple_f <- simple[as.character(simple$Gene_ID) %in% gene_set, , drop = FALSE]
         if (nrow(simple_f)) {
           simple <- simple_f
@@ -667,8 +681,13 @@ llm_report <- function(object,
       if (nrow(simple) && !"Chr" %in% names(simple) && "Gene_chr" %in% names(simple)) {
         simple$Chr <- simple$Gene_chr
       }
-      # E top_n from config; legacy report top_n only for candidate table display
-      e_top <- e_cfg$top_n %||% Inf
+      # Curated gene_set: keep all CS∩GFF hits (do not re-truncate by PIP top_n).
+      # Otherwise E top_n comes from explore config.
+      e_top <- if (length(gene_set)) {
+        Inf
+      } else {
+        e_cfg$top_n %||% Inf
+      }
       kw_hits <- .keyword_hits_from_rank_result(
         if (!is.null(evidence_rank) && nrow(evidence_rank)) {
           evidence_rank
@@ -712,6 +731,9 @@ llm_report <- function(object,
         gff_windows = e_gff_tables$windows,
         protein_map = e_gff_tables$protein_map
       )
+      if (length(selection_map)) {
+        e_run$selection <- selection_map
+      }
       if (length(e_run$b5_failures)) {
         e_b5_all <- c(e_b5_all, e_run$b5_failures)
       }
@@ -735,7 +757,8 @@ llm_report <- function(object,
         llm = llm,
         e_run = e_run,
         reinterpret_peak = reinterpret_peak,
-        evidence_rank = evidence_rank
+        evidence_rank = evidence_rank,
+        selection_map = selection_map
       )
     )
   }

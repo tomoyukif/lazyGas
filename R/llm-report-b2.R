@@ -21,6 +21,11 @@
     candidate_list = "Candidate list",
     hypothesis_cards = "Hypothesis cards",
     evidence = "Evidence",
+    genes_in_region = "Genes in candidate region",
+    selected_by = "Selected by",
+    selected_composite = "composite_score ranking (Candidate list top N)",
+    selected_card = "hypothesis cards (champion / support)",
+    selected_both = "both composite_score ranking and hypothesis cards",
     score_note = paste(
       "Scores are a weighted sum of values normalized to 0–1",
       "among candidates within this peak"
@@ -244,7 +249,80 @@
 
 #' Candidate score table (scrollable)
 #' @keywords internal
-.report_candidate_table_html <- function(rank_sub, sources, language = "en") {
+#' HTML id for an Evidence gene heading
+#' @keywords internal
+.report_evidence_anchor_id <- function(gene_id) {
+  gid <- as.character(gene_id)[1L]
+  if (!nzchar(gid) || is.na(gid)) {
+    return("evidence-gene-unknown")
+  }
+  paste0("evidence-gene-", gsub("[^A-Za-z0-9_-]", "_", gid))
+}
+
+#' Gene_ID cell: link to Evidence heading when that gene has Evidence
+#' @keywords internal
+.report_link_gene_id_html <- function(gene_id, evidence_gene_ids = NULL) {
+  gid <- as.character(gene_id)[1L]
+  if (!nzchar(gid) || is.na(gid)) {
+    return(.report_escape_html("(none)"))
+  }
+  esc <- .report_escape_html(gid)
+  ev <- unique(stats::na.omit(as.character(evidence_gene_ids %||% character())))
+  if (length(ev) && gid %in% ev) {
+    return(sprintf(
+      "<a href=\"#%s\">%s</a>",
+      .report_escape_html(.report_evidence_anchor_id(gid)),
+      esc
+    ))
+  }
+  esc
+}
+
+#' Count genes overlapping the peak candidate region
+#' @keywords internal
+.report_n_genes_in_region <- function(rank_peak,
+                                      chr,
+                                      region_start,
+                                      region_end) {
+  if (is.null(rank_peak) || !nrow(rank_peak) || !"Gene_ID" %in% names(rank_peak)) {
+    return(0L)
+  }
+  ids <- as.character(rank_peak$Gene_ID)
+  rs <- suppressWarnings(as.numeric(region_start)[1L])
+  re <- suppressWarnings(as.numeric(region_end)[1L])
+  chr_s <- as.character(chr)[1L]
+  has_coords <- all(c("Gene_chr", "Gene_start") %in% names(rank_peak)) &&
+    is.finite(rs) && is.finite(re) && nzchar(chr_s) && !is.na(chr_s)
+  if (!has_coords) {
+    return(length(unique(ids[!is.na(ids) & nzchar(ids)])))
+  }
+  norm_chr <- function(x) {
+    x <- tolower(as.character(x))
+    x <- sub("^chr", "", x)
+    num <- grepl("^[0-9]+$", x)
+    stripped <- sub("^0+", "", x)
+    stripped[!nzchar(stripped) & num] <- "0"
+    x[num] <- stripped[num]
+    x
+  }
+  gchr <- norm_chr(rank_peak$Gene_chr)
+  gst <- suppressWarnings(as.numeric(rank_peak$Gene_start))
+  gend <- if ("Gene_end" %in% names(rank_peak)) {
+    suppressWarnings(as.numeric(rank_peak$Gene_end))
+  } else {
+    gst
+  }
+  gend[!is.finite(gend)] <- gst[!is.finite(gend)]
+  same_chr <- gchr == norm_chr(chr_s)
+  overlaps <- same_chr & is.finite(gst) & is.finite(gend) &
+    gst <= re & gend >= rs
+  length(unique(ids[overlaps & !is.na(ids) & nzchar(ids)]))
+}
+
+.report_candidate_table_html <- function(rank_sub,
+                                         sources,
+                                         language = "en",
+                                         evidence_gene_ids = NULL) {
   ui <- .report_i18n(language)
   sources <- intersect(as.character(sources), .EVIDENCE_SOURCE_CHOICES)
   if (!length(sources)) {
@@ -270,7 +348,7 @@
   body_rows <- character(nrow(rank_sub))
   for (i in seq_len(nrow(rank_sub))) {
     cells <- c(
-      .report_escape_html(rank_sub$Gene_ID[i]),
+      .report_link_gene_id_html(rank_sub$Gene_ID[i], evidence_gene_ids),
       .report_escape_html(.report_name_cell(rank_sub$Name[i])),
       .report_fmt_score(unlist(rank_sub[i, score_cols, drop = TRUE])),
       .report_fmt_score(rank_sub$composite_score[i])
@@ -691,11 +769,45 @@
 
 #' Evidence HTML for genes in one peak
 #' @keywords internal
+.report_evidence_selection_note_html <- function(gene_id,
+                                                 selection_map = NULL,
+                                                 language = "en") {
+  ui <- .report_i18n(language)
+  if (is.null(selection_map) || !length(selection_map)) {
+    return("")
+  }
+  gid <- as.character(gene_id)[1L]
+  key <- unname(selection_map[gid])
+  if (is.null(key) || !length(key) || is.na(key) || !nzchar(as.character(key)[1L])) {
+    return("")
+  }
+  detail <- switch(
+    as.character(key)[1L],
+    both = ui$selected_both,
+    composite = ui$selected_composite,
+    card = ui$selected_card,
+    NULL
+  )
+  if (is.null(detail)) {
+    return("")
+  }
+  paste0(
+    "<p><em>",
+    .report_escape_html(ui$selected_by),
+    ": ",
+    .report_escape_html(detail),
+    "</em></p>\n"
+  )
+}
+
+#' Evidence HTML for genes in one peak
+#' @keywords internal
 .report_evidence_html <- function(rank_sub,
                                   query,
                                   language = "en",
                                   use_llm = FALSE,
-                                  llm = NULL) {
+                                  llm = NULL,
+                                  selection_map = NULL) {
   ui <- .report_i18n(language)
   if (!nrow(rank_sub)) {
     return(paste0("<p>", .report_escape_html("(no genes)"), "</p>\n"))
@@ -777,7 +889,16 @@
     )
     parts <- c(
       parts,
-      paste0("<h4>", .report_escape_html(title), "</h4>\n", paste(blocks, collapse = ""))
+      paste0(
+        "<h4 id=\"", .report_escape_html(.report_evidence_anchor_id(gid)), "\">",
+        .report_escape_html(title), "</h4>\n",
+        .report_evidence_selection_note_html(
+          gid,
+          selection_map = selection_map,
+          language = language
+        ),
+        paste(blocks, collapse = "")
+      )
     )
   }
   paste(parts, collapse = "\n")
@@ -843,7 +964,8 @@
                                       llm = NULL,
                                       e_run = NULL,
                                       reinterpret_peak = NULL,
-                                      evidence_rank = NULL) {
+                                      evidence_rank = NULL,
+                                      selection_map = NULL) {
   ui <- .report_i18n(language)
   header <- sprintf(
     "Peak %s — %s:%s (%s-%s)",
@@ -852,6 +974,16 @@
     .report_fmt_pos(pos),
     .report_fmt_pos(region_start),
     .report_fmt_pos(region_end)
+  )
+  n_region <- .report_n_genes_in_region(
+    rank_peak = rank_peak,
+    chr = chr,
+    region_start = region_start,
+    region_end = region_end
+  )
+  region_count_html <- paste0(
+    "<p>", .report_escape_html(ui$genes_in_region), ": ",
+    .report_escape_html(as.character(n_region)), "</p>\n"
   )
   cs_html <- .report_cs_comment_html(
     object = object,
@@ -873,6 +1005,19 @@
   } else {
     sub
   }
+  evidence_gene_ids <- if (!is.null(e_run) && !is.null(e_run$genes) &&
+                           nrow(e_run$genes) && "Gene_ID" %in% names(e_run$genes)) {
+    as.character(e_run$genes$Gene_ID)
+  } else if (!is.null(evidence_src) && nrow(evidence_src) &&
+             "Gene_ID" %in% names(evidence_src)) {
+    as.character(evidence_src$Gene_ID)
+  } else {
+    character()
+  }
+  if (!is.null(e_run) && length(selection_map) &&
+      (is.null(e_run$selection) || !length(e_run$selection))) {
+    e_run$selection <- selection_map
+  }
   evidence_html <- if (!is.null(e_run)) {
     .report_evidence_html_e(e_run, language = language)
   } else {
@@ -881,7 +1026,8 @@
       query = query,
       language = language,
       use_llm = use_llm,
-      llm = llm
+      llm = llm,
+      selection_map = selection_map
     )
   }
   hyp_html <- ""
@@ -891,17 +1037,24 @@
       formatPeakReinterpretation(
         reinterpret_peak,
         language = language,
-        format = "html"
+        format = "html",
+        evidence_gene_ids = evidence_gene_ids
       )
     )
   }
   paste0(
     "<h2>", .report_escape_html(header), "</h2>\n",
+    region_count_html,
     cs_html,
     hyp_html,
     "<h3>", .report_escape_html(ui$candidate_list), "</h3>\n",
     if (nrow(sub)) {
-      .report_candidate_table_html(sub, sources = sources, language = language)
+      .report_candidate_table_html(
+        sub,
+        sources = sources,
+        language = language,
+        evidence_gene_ids = evidence_gene_ids
+      )
     } else {
       "<p>(no candidates)</p>\n"
     },

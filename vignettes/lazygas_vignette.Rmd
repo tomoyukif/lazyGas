@@ -896,6 +896,63 @@ tags from potentially independent signals.
 - Not colocalization (`coloc`); trait-side PIP for eQTL integration is out of scope here.
 - Not proof of causality — a reporting aid for peak blocks you already detected.
 
+### AI HTML report (`llm_report`, Phase 2 E path)
+
+After candidates and credible sets exist, `llm_report()` can write a
+fixed-skeleton HTML evidence report. Create an explore working directory first:
+
+```{r eval=FALSE}
+e_wd <- "path/to/e_work"
+writeLazyGasExploreConfig(e_wd, mapping_mode = "gwas", top_n = 10)
+# mapping_mode = "qtl" for biparental / QTL stores
+```
+
+**Required:** LazyGas object with candidates and credible sets for the reported
+peaks, `gff`, and `work_dir` (with `config.yaml`). **Optional E inputs:**
+`ann` (functional annotation table), `snpeff`, `expr_mat` (expression),
+`interpro` (InterProScan intervals).
+
+For **expression (`expr_mat`)**, pass abundance (TPM, counts, FPKM, logTPM, …),
+not row-wise Z-scores. Yanai τ / relative height assume a non-negative quantity
+scale. If the median per-gene row SD is about `[0.8, 1.2]`, the pipeline
+**warns** and records metadata but does **not** hard-stop. To suppress those
+metrics when the matrix is known row-Z, set `matrix_scale: row_zscore` in
+`config.yaml`.
+
+**B5 numeric grounding** checks digits in each evidence frame against that
+frame’s JSON allowlist only. Failures appear at the end of the peak Evidence
+block and in run metadata. Non-numeric overclaims are **not** verified—B5
+pass does not mean the whole narrative is grounded.
+
+**Narrative wording:** phenotype “related” terms are indirect lexical links
+(not phenotype proof; cap 20); composite scores in prose are peak-relative;
+credible-set `low` resolution means not resolved (QTL reports should note
+Wakefield ABF assumptions).
+
+**HTML navigation:** per peak, Hypothesis cards → Candidate list → Evidence.
+Gene_ID in Hypothesis / Candidate links to `#evidence-gene-<Gene_ID>` when that
+gene has an Evidence block; otherwise plain text. **Genes in candidate region**
+is the CS∩GFF count for the peak (not the Evidence `gene_select` size).
+
+**Out of scope for Phase 2:** Shiny AI report tab (design track C), and
+Phase 3 work (literature KG, de novo GO/KEGG fetch, ontology DAG/map walks).
+Use `runLazyGasExplorer()` for interactive ranking; use `llm_report()` for the
+Phase 2 HTML evidence report.
+
+```{r eval=FALSE}
+rep <- llm_report(
+  object = lg,
+  pheno = "Trait1",
+  query = phenotypeQuery(text = "trait keywords...", tissues = "leaf"),
+  gff = gff,
+  work_dir = e_wd,
+  ann = ann,                 # optional
+  expr_mat = expr_mat,       # optional abundance matrix
+  out_dir = "path/to/ai_report"
+)
+# -> HTML under out_dir; open rep$path
+```
+
 ### Phenotype explorer and local LLM (Apptainer, official setup)
 
 Since v0.7.0, lazyGas can rank candidate genes by phenotype-guided evidence and

@@ -106,6 +106,48 @@ test_that("candidate table HTML scrolls and uses 3 decimals", {
   expect_match(html, "Scores are a weighted sum", fixed = TRUE)
   # empty Name cell still present
   expect_match(html, "<td></td>", fixed = TRUE)
+
+  html_link <- lazyGas:::.report_candidate_table_html(
+    ranked,
+    sources = c("annotation", "snpeff", "gwas", "expression", "finemap"),
+    language = "en",
+    evidence_gene_ids = "g1"
+  )
+  expect_match(html_link, 'href="#evidence-gene-g1"', fixed = TRUE)
+  expect_false(grepl("href=\"#evidence-gene-g2\"", html_link, fixed = TRUE))
+})
+
+test_that("evidence gene anchors and region gene counts", {
+  expect_equal(
+    lazyGas:::.report_evidence_anchor_id("Os01g0846450"),
+    "evidence-gene-Os01g0846450"
+  )
+  expect_equal(
+    lazyGas:::.report_evidence_anchor_id("Olon:gene"),
+    "evidence-gene-Olon_gene"
+  )
+  linked <- lazyGas:::.report_link_gene_id_html(
+    "Os01g0846450",
+    evidence_gene_ids = c("Os01g0846450", "g2")
+  )
+  expect_match(linked, 'href="#evidence-gene-Os01g0846450"', fixed = TRUE)
+  plain <- lazyGas:::.report_link_gene_id_html(
+    "Os01g0174000",
+    evidence_gene_ids = c("Os01g0846450")
+  )
+  expect_equal(plain, "Os01g0174000")
+
+  ranked <- data.frame(
+    Gene_ID = c("in1", "in2", "out"),
+    Gene_chr = c("chr01", "1", "chr01"),
+    Gene_start = c(100L, 500L, 50000L),
+    Gene_end = c(200L, 600L, 50100L),
+    stringsAsFactors = FALSE
+  )
+  expect_equal(
+    lazyGas:::.report_n_genes_in_region(ranked, "chr01", 1, 1000),
+    2L
+  )
 })
 
 test_that("rank result csv/rds round-trip preserves rows and attributes", {
