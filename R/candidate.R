@@ -2,18 +2,18 @@
 
 #' List candidate genes for peak blocks
 #'
-#' Always writes the thin **simple candidate** table (Gene_ID + position) and
-#' the Gene↔transcript/protein map. When \code{output_list = TRUE} (default),
-#' also stores the legacy wide joined candidate / SnpEff tables used by
-#' interactive HTML reports.
+#' Always writes the thin **simple candidate** table (Gene_ID + position),
+#' the Gene↔transcript/protein map, and the wide joined candidate / SnpEff
+#' tables used by ranking and interactive HTML reports.
 #'
 #' @param object A \code{LazyGas} object.
 #' @param gff Gene annotation \code{GRanges}.
 #' @param snpeff Optional \code{snpeff_gds} from \code{open_snpeff()}.
 #' @param ann Optional annotation \code{data.frame} with \code{Gene_ID}.
 #' @param recalc If \code{TRUE}, use recalculated peaks.
-#' @param output_list If \code{TRUE}, also write the legacy wide candidate and
-#'   SnpEff tables. If \code{FALSE}, only simple candidate + ID map are stored.
+#' @param gff_fn Optional path to the GFF file (recorded in inputs manifest).
+#' @param snpeff_fn Optional path to the SnpEff GDS (recorded in inputs manifest).
+#' @param ann_fn Optional path to the annotation table (recorded in inputs manifest).
 #' @param ... Unused; for S4 compatibility.
 #'
 #' @return The \code{LazyGas} object (invisibly), updated in its store.
@@ -23,7 +23,9 @@ setGeneric("listCandidate", function(object,
                                      snpeff = NULL,
                                      ann = NULL,
                                      recalc = FALSE,
-                                     output_list = TRUE,
+                                     gff_fn = NULL,
+                                     snpeff_fn = NULL,
+                                     ann_fn = NULL,
                                      ...)
   standardGeneric("listCandidate"))
 
@@ -34,9 +36,10 @@ setMethod("listCandidate",
                    snpeff = NULL,
                    ann = NULL,
                    recalc = FALSE,
-                   output_list = TRUE,
+                   gff_fn = NULL,
+                   snpeff_fn = NULL,
+                   ann_fn = NULL,
                    ...){
-            output_list <- isTRUE(output_list)
             if (recalc) {
               if (!.store_section_exists(object, "recalc")) {
                 stop("No recalc data in the input LazyGas object.\n",
@@ -61,6 +64,20 @@ setMethod("listCandidate",
             ## Function to create the necessary folders in the GDS object
             .create_candidate_folders(object = object)
 
+            .warn_inputs_manifest_mismatch(
+              object,
+              section = "candidate",
+              inputs = .inputs_fingerprint_candidate(
+                gff = gff,
+                snpeff = snpeff,
+                ann = ann,
+                recalc = recalc,
+                gff_fn = gff_fn,
+                snpeff_fn = snpeff_fn,
+                ann_fn = ann_fn
+              )
+            )
+
             pheno <- getPheno(object = object)
 
             for(i in seq_along(pheno$pheno_names)){
@@ -71,13 +88,24 @@ setMethod("listCandidate",
                                gff = gff,
                                snpeff = snpeff,
                                pheno_name = pheno_name,
-                               recalc = recalc,
-                               output_list = output_list)
+                               recalc = recalc)
 
-              if (output_list) {
-                .finalize_gdsn_candidate(object = object, pheno_name = pheno_name)
-              }
+              .finalize_gdsn_candidate(object = object, pheno_name = pheno_name)
             }
+
+            .store_write_inputs_manifest(
+              object,
+              section = "candidate",
+              inputs = .inputs_fingerprint_candidate(
+                gff = gff,
+                snpeff = snpeff,
+                ann = ann,
+                recalc = recalc,
+                gff_fn = gff_fn,
+                snpeff_fn = snpeff_fn,
+                ann_fn = ann_fn
+              )
+            )
             invisible(object)
           })
 #' @importFrom GenomeInfoDb seqlevels
@@ -180,18 +208,14 @@ setMethod("listCandidate",
                              gff,
                              snpeff,
                              pheno_name,
-                             recalc,
-                             output_list = TRUE){
+                             recalc){
   message("Processing: ", pheno_name)
-  output_list <- isTRUE(output_list)
   peakcall <- .get_peakcall(object = object,
                             pheno_name = pheno_name,
                             recalc = recalc)
 
   if (is.null(peakcall)) {
-    if (output_list) {
-      .store_write_candidate(object, pheno_name, candidate = NULL, snpeff = NULL)
-    }
+    .store_write_candidate(object, pheno_name, candidate = NULL, snpeff = NULL)
     empty_simple <- .simple_candidate_from_wide(NULL, gff = gff)
     protein_map <- .gff_gene_protein_map(gff)
     .store_write_simple_candidate(object, pheno_name, empty_simple)
@@ -229,10 +253,6 @@ setMethod("listCandidate",
   protein_map <- .gff_gene_protein_map(gff)
   .store_write_simple_candidate(object, pheno_name, simple)
   .store_write_gene_protein_map(object, protein_map)
-
-  if (!output_list) {
-    return(invisible(NULL))
-  }
 
   if(!is.null(candidate_list)){
     if(!is.null(ann)){

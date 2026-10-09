@@ -104,3 +104,119 @@ test_that("multitrait empty shared_genes has stable columns", {
   )
   expect_equal(nrow(empty), 0L)
 })
+
+test_that("CS overlap Jaccard and labels follow plan rules", {
+  expect_equal(lazyGas:::.multitrait_cs_jaccard(c("a", "b"), c("b", "c")), 1 / 3)
+  expect_equal(lazyGas:::.multitrait_cs_jaccard(character(), character()), NA_real_)
+
+  expect_equal(
+    lazyGas:::.multitrait_label_cs_overlap(
+      n_overlap = 2L,
+      lead_a_in_cs_b = TRUE,
+      lead_b_in_cs_a = FALSE,
+      resolution_a = "high",
+      resolution_b = "moderate",
+      cs_fraction_a = 0.1,
+      cs_fraction_b = 0.2
+    ),
+    "shared-compatible"
+  )
+  expect_equal(
+    lazyGas:::.multitrait_label_cs_overlap(
+      n_overlap = 1L,
+      lead_a_in_cs_b = FALSE,
+      lead_b_in_cs_a = FALSE,
+      resolution_a = "high",
+      resolution_b = "high",
+      cs_fraction_a = 0.1,
+      cs_fraction_b = 0.1
+    ),
+    "possible-shared"
+  )
+  expect_equal(
+    lazyGas:::.multitrait_label_cs_overlap(
+      n_overlap = 0L,
+      lead_a_in_cs_b = FALSE,
+      lead_b_in_cs_a = FALSE,
+      resolution_a = "high",
+      resolution_b = "moderate",
+      cs_fraction_a = 0.1,
+      cs_fraction_b = 0.1
+    ),
+    "independent-nearby"
+  )
+  expect_equal(
+    lazyGas:::.multitrait_label_cs_overlap(
+      n_overlap = 5L,
+      lead_a_in_cs_b = TRUE,
+      lead_b_in_cs_a = TRUE,
+      resolution_a = "low",
+      resolution_b = "low",
+      cs_fraction_a = 0.9,
+      cs_fraction_b = 0.9
+    ),
+    "inconclusive"
+  )
+  expect_equal(
+    lazyGas:::.multitrait_label_cs_overlap(
+      n_overlap = 3L,
+      lead_a_in_cs_b = TRUE,
+      lead_b_in_cs_a = FALSE,
+      resolution_a = "low",
+      resolution_b = "high",
+      cs_fraction_a = 0.85,
+      cs_fraction_b = 0.9
+    ),
+    "inconclusive"
+  )
+  expect_equal(
+    lazyGas:::.multitrait_label_cs_overlap(
+      n_overlap = 1L,
+      lead_a_in_cs_b = FALSE,
+      lead_b_in_cs_a = FALSE,
+      resolution_a = "low",
+      resolution_b = "high",
+      cs_fraction_a = 0.5,
+      cs_fraction_b = 0.2
+    ),
+    "possible-shared"
+  )
+
+  empty <- lazyGas:::.multitrait_empty_cs_overlap()
+  expect_true(is.data.frame(empty))
+  expect_equal(nrow(empty), 0L)
+  expect_true(all(c(
+    "cluster_id", "n_overlap", "jaccard", "share_label",
+    "lead_a_in_cs_b", "lead_b_in_cs_a", "resolution_a", "resolution_b"
+  ) %in% names(empty)))
+})
+
+test_that("compareCrossTraitCredibleSets labels synthetic CS pairs", {
+  cs_a <- list(
+    members = c("m1", "m2", "m3"),
+    resolution = "high",
+    cs_fraction = 0.1,
+    n_in_set = 3L
+  )
+  cs_b <- list(
+    members = c("m2", "m4"),
+    resolution = "high",
+    cs_fraction = 0.1,
+    n_in_set = 2L
+  )
+  row <- lazyGas:::.multitrait_cs_overlap_row(
+    cluster_id = 1L,
+    trait_a = "trait_a",
+    peak_ID_a = 1L,
+    lead_a = "m1",
+    cs_a = cs_a,
+    trait_b = "trait_b",
+    peak_ID_b = 2L,
+    lead_b = "m2",
+    cs_b = cs_b
+  )
+  expect_equal(row$n_overlap, 1L)
+  expect_true(row$lead_b_in_cs_a)
+  expect_false(row$lead_a_in_cs_b)
+  expect_equal(row$share_label, "shared-compatible")
+})

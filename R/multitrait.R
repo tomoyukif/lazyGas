@@ -401,3 +401,331 @@ plotMultiTraitOverview <- function(object,
     stringsAsFactors = FALSE
   )
 }
+
+################################################################################
+#' Compare cross-trait peaks by credible-set overlap
+#'
+#' For multi-trait peak clusters from [clusterCrossTraitPeaks()], compute
+#' Wakefield ABF credible sets per peak (via [calcCredibleSet()]) and label
+#' whether pairs of peaks from different traits are compatible with a shared
+#' signal. This is an **optional** follow-up to the main pipeline — it is not a
+#' default [runLazyGas()] step.
+#'
+#' Labels:
+#' \itemize{
+#'   \item \code{shared-compatible}: overlap \eqn{\ge} 1, lead of either peak in
+#'     the other CS, both resolutions not \code{low}
+#'   \item \code{possible-shared}: overlap but weaker evidence
+#'   \item \code{independent-nearby}: same cluster, no CS overlap, both resolved
+#'   \item \code{inconclusive}: both \code{low}, or overlap driven by large CS
+#'     fractions, or unresolved non-overlap
+#' }
+#'
+#' @param object A \code{LazyGas} object.
+#' @param recalc Use recalculated peaks / blocks.
+#' @param clusters Optional cluster table from [clusterCrossTraitPeaks()]. If
+#'   \code{NULL}, clusters are computed with \code{dist_threshold} /
+#'   \code{r2_threshold}.
+#' @param dist_threshold,r2_threshold Passed to [clusterCrossTraitPeaks()] when
+#'   \code{clusters} is \code{NULL}.
+#' @param coverage,prior_W,prior_V,use_conditional Passed to [calcCredibleSet()].
+#' @param large_cs_fraction Both sides at or above this locus fraction with
+#'   overlap → \code{inconclusive} when either resolution is \code{low}
+#'   (default 0.8).
+#' @param store If \code{TRUE}, write \code{multitrait/cs_overlap} to the
+#'   companion store.
+#'
+#' @return A list with \code{pairs} (data.frame) and \code{clusters} (the
+#'   cluster table used). Retrieve stored pairs with
+#'   \code{lazyData(object, dataset = "multitrait", kind = "cs_overlap")}.
+#' @seealso [clusterCrossTraitPeaks()], [calcCredibleSet()], [plotMultiTraitOverview()]
+#' @export
+compareCrossTraitCredibleSets <- function(object,
+                                          recalc = TRUE,
+                                          clusters = NULL,
+                                          dist_threshold = 500000L,
+                                          r2_threshold = 0.6,
+                                          coverage = 0.95,
+                                          prior_W = 0.15,
+                                          prior_V = 0.04,
+                                          use_conditional = TRUE,
+                                          large_cs_fraction = 0.8,
+                                          store = TRUE) {
+  if (!inherits(object, "LazyGas")) {
+    stop("'object' must be a LazyGas object.", call. = FALSE)
+  }
+  if (is.null(clusters)) {
+    clusters <- clusterCrossTraitPeaks(
+      object = object,
+      recalc = recalc,
+      dist_threshold = dist_threshold,
+      r2_threshold = r2_threshold,
+      store = store
+    )
+  }
+  if (nrow(clusters) == 0L) {
+    pairs <- .multitrait_empty_cs_overlap()
+    if (store) {
+      .store_write_section_df(object, "multitrait", "cs_overlap", pairs, pheno_name = NULL)
+    }
+    return(list(pairs = pairs, clusters = clusters))
+  }
+
+  multi_ids <- unique(clusters$cluster_id[
+    duplicated(clusters$cluster_id) | duplicated(clusters$cluster_id, fromLast = TRUE)
+  ])
+  if (length(multi_ids) == 0L) {
+    pairs <- .multitrait_empty_cs_overlap()
+    if (store) {
+      .store_write_section_df(object, "multitrait", "cs_overlap", pairs, pheno_name = NULL)
+    }
+    return(list(pairs = pairs, clusters = clusters))
+  }
+
+  cs_cache <- new.env(parent = emptyenv())
+  get_cs <- function(trait, peak_id) {
+    key <- paste(trait, peak_id, sep = "\r")
+    if (exists(key, envir = cs_cache, inherits = FALSE)) {
+      return(get(key, envir = cs_cache, inherits = FALSE))
+    }
+    cred <- tryCatch(
+      calcCredibleSet(
+        object = object,
+        pheno = trait,
+        peak_id = peak_id,
+        coverage = coverage,
+        prior_W = prior_W,
+        prior_V = prior_V,
+        use_conditional = use_conditional,
+        recalc = recalc,
+        store = store
+      ),
+      error = function(e) {
+        warning(
+          "calcCredibleSet failed for trait=", trait, " peak_id=", peak_id,
+          ": ", conditionMessage(e),
+          call. = FALSE
+        )
+        NULL
+      }
+    )
+    info <- .multitrait_cs_info(cred)
+    assign(key, info, envir = cs_cache)
+    info
+  }
+
+  pair_rows <- list()
+  for (cid in multi_ids) {
+    cl <- clusters[clusters$cluster_id == cid, , drop = FALSE]
+    n <- nrow(cl)
+    if (n < 2L) {
+      next
+    }
+    for (i in seq_len(n - 1L)) {
+      for (j in (i + 1L):n) {
+        if (identical(as.character(cl$trait[i]), as.character(cl$trait[j]))) {
+          next
+        }
+        # Stable trait order for reproducible pair orientation
+        if (as.character(cl$trait[i]) <= as.character(cl$trait[j])) {
+          a <- i
+          b <- j
+        } else {
+          a <- j
+          b <- i
+        }
+        cs_a <- get_cs(cl$trait[a], cl$peak_ID[a])
+        cs_b <- get_cs(cl$trait[b], cl$peak_ID[b])
+        pair_rows[[length(pair_rows) + 1L]] <- .multitrait_cs_overlap_row(
+          cluster_id = cid,
+          trait_a = cl$trait[a],
+          peak_ID_a = cl$peak_ID[a],
+          lead_a = cl$peak_variant_ID[a],
+          cs_a = cs_a,
+          trait_b = cl$trait[b],
+          peak_ID_b = cl$peak_ID[b],
+          lead_b = cl$peak_variant_ID[b],
+          cs_b = cs_b,
+          large_cs_fraction = large_cs_fraction
+        )
+      }
+    }
+  }
+
+  pairs <- if (length(pair_rows) == 0L) {
+    .multitrait_empty_cs_overlap()
+  } else {
+    out <- do.call(rbind, pair_rows)
+    rownames(out) <- NULL
+    out
+  }
+
+  if (store) {
+    .store_write_section_df(object, "multitrait", "cs_overlap", pairs, pheno_name = NULL)
+  }
+  list(pairs = pairs, clusters = clusters)
+}
+
+.multitrait_empty_cs_overlap <- function() {
+  data.frame(
+    cluster_id = integer(),
+    trait_a = character(),
+    peak_ID_a = integer(),
+    lead_a = character(),
+    trait_b = character(),
+    peak_ID_b = integer(),
+    lead_b = character(),
+    n_cs_a = integer(),
+    n_cs_b = integer(),
+    n_overlap = integer(),
+    jaccard = numeric(),
+    lead_a_in_cs_b = logical(),
+    lead_b_in_cs_a = logical(),
+    resolution_a = character(),
+    resolution_b = character(),
+    cs_fraction_a = numeric(),
+    cs_fraction_b = numeric(),
+    share_label = character(),
+    stringsAsFactors = FALSE
+  )
+}
+
+.multitrait_cs_info <- function(cred) {
+  empty <- list(
+    members = character(),
+    resolution = NA_character_,
+    cs_fraction = NA_real_,
+    n_in_set = 0L
+  )
+  if (is.null(cred) || !is.data.frame(cred) || nrow(cred) == 0L) {
+    return(empty)
+  }
+  if (!"in_credible_set" %in% names(cred)) {
+    return(empty)
+  }
+  members <- as.character(cred$variant_ID[cred$in_credible_set %in% TRUE])
+  summ <- attr(cred, "summary")
+  resolution <- if (!is.null(summ$resolution)) {
+    as.character(summ$resolution)
+  } else {
+    n <- length(members)
+    if (n <= 3L) "high" else if (n <= 10L) "moderate" else "low"
+  }
+  cs_fraction <- if (!is.null(summ$credible_set_fraction)) {
+    as.numeric(summ$credible_set_fraction)
+  } else {
+    NA_real_
+  }
+  list(
+    members = unique(members[!is.na(members)]),
+    resolution = resolution,
+    cs_fraction = cs_fraction,
+    n_in_set = length(unique(members[!is.na(members)]))
+  )
+}
+
+.multitrait_cs_jaccard <- function(set_a, set_b) {
+  set_a <- unique(as.character(set_a))
+  set_b <- unique(as.character(set_b))
+  set_a <- set_a[!is.na(set_a) & nzchar(set_a)]
+  set_b <- set_b[!is.na(set_b) & nzchar(set_b)]
+  if (length(set_a) == 0L && length(set_b) == 0L) {
+    return(NA_real_)
+  }
+  n_int <- length(intersect(set_a, set_b))
+  n_uni <- length(union(set_a, set_b))
+  if (n_uni == 0L) {
+    return(NA_real_)
+  }
+  n_int / n_uni
+}
+
+.multitrait_label_cs_overlap <- function(n_overlap,
+                                         lead_a_in_cs_b,
+                                         lead_b_in_cs_a,
+                                         resolution_a,
+                                         resolution_b,
+                                         cs_fraction_a,
+                                         cs_fraction_b,
+                                         large_cs_fraction = 0.8) {
+  res_a <- as.character(resolution_a)
+  res_b <- as.character(resolution_b)
+  both_low <- identical(res_a, "low") && identical(res_b, "low")
+  either_low <- identical(res_a, "low") || identical(res_b, "low")
+  neither_low <- !either_low && !is.na(res_a) && !is.na(res_b) &&
+    nzchar(res_a) && nzchar(res_b)
+  large_both <- is.finite(cs_fraction_a) && is.finite(cs_fraction_b) &&
+    cs_fraction_a >= large_cs_fraction && cs_fraction_b >= large_cs_fraction
+
+  if (is.na(n_overlap)) {
+    return("inconclusive")
+  }
+  if (both_low) {
+    return("inconclusive")
+  }
+  if (n_overlap >= 1L && large_both && either_low) {
+    return("inconclusive")
+  }
+  if (n_overlap == 0L) {
+    if (neither_low) {
+      return("independent-nearby")
+    }
+    return("inconclusive")
+  }
+  lead_ok <- isTRUE(lead_a_in_cs_b) || isTRUE(lead_b_in_cs_a)
+  if (lead_ok && neither_low) {
+    return("shared-compatible")
+  }
+  "possible-shared"
+}
+
+.multitrait_cs_overlap_row <- function(cluster_id,
+                                       trait_a,
+                                       peak_ID_a,
+                                       lead_a,
+                                       cs_a,
+                                       trait_b,
+                                       peak_ID_b,
+                                       lead_b,
+                                       cs_b,
+                                       large_cs_fraction = 0.8) {
+  members_a <- cs_a$members
+  members_b <- cs_b$members
+  n_overlap <- length(intersect(members_a, members_b))
+  jaccard <- .multitrait_cs_jaccard(members_a, members_b)
+  lead_a_chr <- as.character(lead_a)
+  lead_b_chr <- as.character(lead_b)
+  lead_a_in_b <- length(members_b) > 0L && lead_a_chr %in% members_b
+  lead_b_in_a <- length(members_a) > 0L && lead_b_chr %in% members_a
+  share_label <- .multitrait_label_cs_overlap(
+    n_overlap = n_overlap,
+    lead_a_in_cs_b = lead_a_in_b,
+    lead_b_in_cs_a = lead_b_in_a,
+    resolution_a = cs_a$resolution,
+    resolution_b = cs_b$resolution,
+    cs_fraction_a = cs_a$cs_fraction,
+    cs_fraction_b = cs_b$cs_fraction,
+    large_cs_fraction = large_cs_fraction
+  )
+  data.frame(
+    cluster_id = as.integer(cluster_id),
+    trait_a = as.character(trait_a),
+    peak_ID_a = as.integer(peak_ID_a),
+    lead_a = lead_a_chr,
+    trait_b = as.character(trait_b),
+    peak_ID_b = as.integer(peak_ID_b),
+    lead_b = lead_b_chr,
+    n_cs_a = as.integer(cs_a$n_in_set),
+    n_cs_b = as.integer(cs_b$n_in_set),
+    n_overlap = as.integer(n_overlap),
+    jaccard = as.numeric(jaccard),
+    lead_a_in_cs_b = as.logical(lead_a_in_b),
+    lead_b_in_cs_a = as.logical(lead_b_in_a),
+    resolution_a = as.character(cs_a$resolution),
+    resolution_b = as.character(cs_b$resolution),
+    cs_fraction_a = as.numeric(cs_a$cs_fraction),
+    cs_fraction_b = as.numeric(cs_b$cs_fraction),
+    share_label = as.character(share_label),
+    stringsAsFactors = FALSE
+  )
+}

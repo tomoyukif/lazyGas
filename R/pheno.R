@@ -2,7 +2,8 @@
 #'
 #' @param object A LazyGas object
 #' @param pheno A data.frame of phenotype data that must contain a sample id
-#' column named `id` or `ID`
+#'   column named \code{id}, \code{ID}, or \code{sample_id} (precedence:
+#'   \code{id}/\code{ID} over \code{sample_id}).
 #'
 #' @importMethodsFrom GBScleanR getSamID
 #'
@@ -14,8 +15,11 @@ setGeneric("assignPheno", function(object, pheno, rename = NULL, ...)
 setMethod("assignPheno",
           "LazyGas",
           function(object, pheno, rename){
-            # Get index for either 'ID' or 'id' column
+            # Prefer id/ID; otherwise accept sample_id (snapshot / exports)
             sampleID_pheno_index <- grep("^ID$|^id$", colnames(pheno))
+            if (length(sampleID_pheno_index) == 0L) {
+              sampleID_pheno_index <- which(colnames(pheno) == "sample_id")
+            }
 
             # Extract phenotype names
             pheno_names <- colnames(pheno)[-sampleID_pheno_index]
@@ -23,7 +27,7 @@ setMethod("assignPheno",
             # Check if the sample ID column exists and is valid
             if(length(sampleID_pheno_index) != 1){
               stop("The input `pheno` data.frame has an invalid structure.",
-                   "\n It must contain a sample id column named `id` or `ID`.")
+                   "\n It must contain a sample id column named `id`, `ID`, or `sample_id`.")
             }
             # Extract sample IDs from the phenotype data
             sampleID_pheno <- pheno[, sampleID_pheno_index]

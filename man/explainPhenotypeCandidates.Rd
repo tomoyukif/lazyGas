@@ -13,7 +13,9 @@ explainPhenotypeCandidates(
   language = c("ja", "en"),
   model = NULL,
   base_url = NULL,
-  timeout = NULL
+  timeout = NULL,
+  save = FALSE,
+  out_fn = NULL
 )
 }
 \arguments{
@@ -31,6 +33,11 @@ explainPhenotypeCandidates(
 \item{language}{Response language: \code{"ja"} or \code{"en"}.}
 
 \item{model, base_url, timeout}{Ignored; kept for call compatibility.}
+
+\item{save}{If \code{TRUE}, write Markdown under the companion
+\code{reports/} folder (requires \code{object}). Default \code{FALSE}.}
+
+\item{out_fn}{Optional explicit Markdown path when \code{save = TRUE}.}
 }
 \value{
 A character string (Markdown).

@@ -319,6 +319,9 @@ server <- function(input, output, session) {
           append_log("Reading phenotype CSV: ", pheno_raw)
           pheno_df <- read.csv(pheno_raw, stringsAsFactors = FALSE, check.names = FALSE)
           id_col <- grep("^ID$|^id$", names(pheno_df))
+          if (length(id_col) == 0L) {
+            id_col <- which(names(pheno_df) == "sample_id")
+          }
           n_traits <- ncol(pheno_df) - length(id_col)
           rename_vec <- .parse_rename(input$trait_rename, n_traits)
 

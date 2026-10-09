@@ -96,8 +96,17 @@ rankPhenotypeCandidates <- function(object,
     candidate <- lazyData(object = object, dataset = "candidate", pheno = pheno_name)
   }
   if (is.null(candidate) || nrow(candidate) == 0L) {
-    stop("No candidate data found for phenotype '", pheno_name, "'.",
-         call. = FALSE)
+    has_simple <- .store_dataset_exists(object, "simple_candidate", pheno_name)
+    stop(
+      "No wide candidate data found for phenotype '", pheno_name, "'. ",
+      if (has_simple) {
+        "A simple_candidate table exists but ranking requires the wide candidate. "
+      } else {
+        ""
+      },
+      "Run listCandidate() (wide tables are always written) before ranking.",
+      call. = FALSE
+    )
   }
   if (!"Gene_ID" %in% names(candidate)) {
     stop("Candidate data lacks Gene_ID column.", call. = FALSE)

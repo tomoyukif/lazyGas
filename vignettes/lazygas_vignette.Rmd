@@ -67,16 +67,15 @@ devtools::load_all("/path/to/lazyGas")
 |---------|---------|
 | `shiny` | `runLazyGasRunner()` pipeline UI; `runLazyGasExplorer()` (GWAS / locus / ranking / chat) |
 | `base64enc` | Static Manhattan PNG in HTML / explorer |
-| `DBI`, `RSQLite` | `lazygas_store = "sqlite"` |
-| `processx` | Background Ollama from R |
-| `httr2`, `curl` | Local LLM HTTP API |
+| `processx` | Background Ollama from R (optional extras) |
+| `httr2`, `curl` | Local LLM HTTP API (optional extras) |
 | `rentrez` | PubMed literature evidence (explorer; optional) |
 
 `plotly`, `htmltools`, and `reactable` are package **Imports** (HTML reports and
-explorer plots).
+explorer plots). Companion storage is **Parquet only**.
 
 ```{r eval=FALSE}
-install.packages(c("shiny", "base64enc", "DBI", "RSQLite", "processx", "httr2", "curl"))
+install.packages(c("shiny", "base64enc", "processx", "httr2", "curl"))
 ```
 
 ### Optional local LLM (phenotype explorer)
@@ -124,19 +123,12 @@ time, but it does apply when reloading the GDS file for reanalysis.
 ### Where association results are stored
 Genotypes and marker coordinates stay in the GDS file. Since lazyGas v0.5.0,
 association outputs (`scan`, `peakcall`, `recalc`, `candidate`, and related
-metadata) are written to a **companion store** by default, not into a `lazygas/`
-subtree inside the GDS. Choose the backend with `lazygas_store` in
-`buildLazyGas()`:
-
-| `lazygas_store` | Location |
-|-----------------|----------|
-| `"parquet"` (default) | `{gds_stem}.lazygas/` (Parquet files and `meta.json`) |
-| `"sqlite"` | `{gds_stem}.lazygas.sqlite` (requires **DBI** and **RSQLite**) |
-| `"gds"` | `lazygas/` subtree inside the GDS file (legacy layout) |
-| `"auto"` | GDS subtree if it already exists; otherwise Parquet companion |
+metadata) are written to a **Parquet companion store**
+`{gds_stem}.lazygas/` (not into a `lazygas/` subtree inside the GDS).
+Only `lazygas_store = "parquet"` is supported.
 
 For the sample data above, scan results are written under
-`sample.lazygas/scan/` next to `sample.gds` when the default is used.
+`sample.lazygas/scan/` next to `sample.gds`.
 <br>
   
 If you have genotype information that are not stored in a GDS file, you can build 
@@ -480,8 +472,7 @@ includes only one of the peaks. If the full model is preferred over the reduced
 model at a p-value threshold (the default is 0.05), the two peaks are considered
 independent. Otherwise, the higher peak (the one with the greater -log10(P)
 value) is retained, and the other is removed and recorded as grouped with the 
-higher peak in the `groups` dataset (companion store by default, or the GDS
-`lazygas/recalc/groups/` subtree when `lazygas_store = "gds"`).
+higher peak in the `groups` dataset (companion Parquet store).
   
 <br>
 
@@ -826,6 +817,26 @@ plotMultiTraitOverview(lg, recalc = TRUE)
 clusterCrossTraitPeaks(lg, dist_threshold = 500000, r2_threshold = 0.6)
 ```
 
+Optionally score whether clustered cross-trait peaks are compatible with a
+**shared signal** via credible-set overlap (not a default `runLazyGas()` step):
+
+```{r eval=FALSE}
+# Prefer tighter screening (distance and LD) before CS comparison when possible
+cs_ov <- compareCrossTraitCredibleSets(
+  lg,
+  recalc = TRUE,
+  dist_threshold = 500000,
+  r2_threshold = 0.6
+)
+cs_ov$pairs
+lazyData(lg, dataset = "multitrait", kind = "cs_overlap")
+```
+
+Labels: `shared-compatible`, `possible-shared`, `independent-nearby`,
+`inconclusive` (see `?compareCrossTraitCredibleSets`). Large /
+`low`-resolution credible sets often mean a shared LD block, not a shared
+causal SNP.
+
 Fine-mapping within a peak (conditional scan and credible set):
 
 ```{r eval=FALSE}
@@ -895,66 +906,32 @@ tags from potentially independent signals.
 - Not a replacement for SuSiE/FINEMAP (no explicit LD-aware multi-SNP model).
 - Not colocalization (`coloc`); trait-side PIP for eQTL integration is out of scope here.
 - Not proof of causality — a reporting aid for peak blocks you already detected.
+- Cross-trait **CS overlap** (`compareCrossTraitCredibleSets()`) is a separate
+  optional helper on top of multi-trait clustering; it does not claim coloc.
 
-### AI HTML report (`llm_report`, Phase 2 E path)
+### Ranking and HTML reports (non-LLM / this build)
 
-After candidates and credible sets exist, `llm_report()` can write a
-fixed-skeleton HTML evidence report. Create an explore working directory first:
-
-```{r eval=FALSE}
-e_wd <- "path/to/e_work"
-writeLazyGasExploreConfig(e_wd, mapping_mode = "gwas", top_n = 10)
-# mapping_mode = "qtl" for biparental / QTL stores
-```
-
-**Required:** LazyGas object with candidates and credible sets for the reported
-peaks, `gff`, and `work_dir` (with `config.yaml`). **Optional E inputs:**
-`ann` (functional annotation table), `snpeff`, `expr_mat` (expression),
-`interpro` (InterProScan intervals).
-
-For **expression (`expr_mat`)**, pass abundance (TPM, counts, FPKM, logTPM, …),
-not row-wise Z-scores. Yanai τ / relative height assume a non-negative quantity
-scale. If the median per-gene row SD is about `[0.8, 1.2]`, the pipeline
-**warns** and records metadata but does **not** hard-stop. To suppress those
-metrics when the matrix is known row-Z, set `matrix_scale: row_zscore` in
-`config.yaml`.
-
-**B5 numeric grounding** checks digits in each evidence frame against that
-frame’s JSON allowlist only. Failures appear at the end of the peak Evidence
-block and in run metadata. Non-numeric overclaims are **not** verified—B5
-pass does not mean the whole narrative is grounded.
-
-**Narrative wording:** phenotype “related” terms are indirect lexical links
-(not phenotype proof; cap 20); composite scores in prose are peak-relative;
-credible-set `low` resolution means not resolved (QTL reports should note
-Wakefield ABF assumptions).
-
-**HTML navigation:** per peak, Hypothesis cards → Candidate list → Evidence.
-Gene_ID in Hypothesis / Candidate links to `#evidence-gene-<Gene_ID>` when that
-gene has an Evidence block; otherwise plain text. **Genes in candidate region**
-is the CS∩GFF count from E-path GFF windows overlapping the peak region—not
-the Candidate list row count and not the Evidence `gene_select` size. Ranked
-genes may appear in the table without overlapping the CS; the count uses
-`gff_windows` (not rank `Gene_start` alone).
-
-**Out of scope for Phase 2:** Shiny AI report tab (design track C), and
-Phase 3 work (literature KG, de novo GO/KEGG fetch, ontology DAG/map walks).
-Use `runLazyGasExplorer()` for interactive ranking; use `llm_report()` for the
-Phase 2 HTML evidence report.
+This vignette matches the **master** non-LLM core. After candidates exist:
 
 ```{r eval=FALSE}
-rep <- llm_report(
-  object = lg,
-  pheno = "Trait1",
-  query = phenotypeQuery(text = "trait keywords...", tissues = "leaf"),
-  gff = gff,
-  work_dir = e_wd,
-  ann = ann,                 # optional
-  expr_mat = expr_mat,       # optional abundance matrix
-  out_dir = "path/to/ai_report"
+q <- phenotypeQuery(text = "trait keywords...", tissues = "leaf")
+ranked <- rankPhenotypeCandidates(object = lg, pheno = "Trait1", query = q)
+md <- explainPhenotypeCandidates(ranked, query = q, object = lg)
+# save = TRUE writes under {stem}.lazygas/reports/
+
+makeInteractiveDashboard(
+  object = lg, pheno = "Trait1", gff = gff,
+  out_fn = file.path(paste0(tools::file_path_sans_ext(gds_fn), ".lazygas"),
+                     "reports", "Trait1_dashboard.html")
 )
-# -> HTML under out_dir; open rep$path
 ```
+
+`listCandidate()` always writes wide + simple candidate tables.
+LLM HTML (`llm_report()`, explore `work_dir`, B5) is on the **agentic** line.
+
+When you change GFF/annotation inputs, delete the affected companion sections
+(or `runLazyGas(..., resume = FALSE)`). A changed `inputs_manifest.json`
+fingerprint warns but does not auto-rerun.
 
 ### Phenotype explorer and local LLM (Apptainer, official setup)
 

@@ -5,6 +5,37 @@ the release or documentation update for that version.
 
 ---
 
+## Changes in version 0.10.0 (2026-10-09) — I/O hardening (master)
+
+### Multi-trait CS overlap (optional)
++ Add **`compareCrossTraitCredibleSets()`**: after
+  `clusterCrossTraitPeaks()`, compare Wakefield ABF credible sets across
+  traits and label pairs (`shared-compatible`, `possible-shared`,
+  `independent-nearby`, `inconclusive`). Opt-in only — not a default
+  `runLazyGas()` step. Results store as `multitrait/cs_overlap`
+  (`lazyData(..., dataset = "multitrait", kind = "cs_overlap")`).
+  See `?compareCrossTraitCredibleSets` and the vignette multi-trait section.
+
+### Companion store and candidates
++ Companion store is **Parquet only** (`lazygas_store = "parquet"`). Modes
+  `sqlite`, `gds`, and `auto` are rejected.
++ `listCandidate()` / `runLazyGas()` no longer take `output_list`. Wide
+  candidate tables are **always** written (simple candidate sidecar remains).
++ `inputs_manifest.json` records fingerprints for candidate inputs; mismatch
+  against current inputs warns (does not auto-delete). After changing GFF/ann,
+  delete the relevant companion section or use `resume = FALSE`.
++ Default HTML from `runLazyGas` summary/dashboard steps goes to
+  `{companion}/reports/{pheno}_*.html`.
++ `explainPhenotypeCandidates(..., save = TRUE)` can write Markdown under
+  `reports/` (default still in-memory only).
++ `assignPheno()` accepts `sample_id` as well as `id`/`ID`.
+
+### Docs
++ README documents the non-LLM ranking/report path. `llm_report()` belongs to
+  the agentic / LLM-enabled line, not this build.
+
+---
+
 ## Changes in version 0.9.2 (2026-10-09)
 
 ### AI HTML report: fix Genes in candidate region = 0

@@ -1,5 +1,46 @@
 ################################################################################
-# Evidence-selection helpers used by reinterpret HTML notes
+# Evidence-selection / HTML helpers used by reinterpret reports
+
+#' Escape text for HTML attributes and body
+#' @keywords internal
+.report_escape_html <- function(x) {
+  x <- as.character(x)
+  x[is.na(x)] <- ""
+  x <- gsub("&", "&amp;", x, fixed = TRUE)
+  x <- gsub("<", "&lt;", x, fixed = TRUE)
+  x <- gsub(">", "&gt;", x, fixed = TRUE)
+  x <- gsub("\"", "&quot;", x, fixed = TRUE)
+  x
+}
+
+#' HTML id for an Evidence gene heading
+#' @keywords internal
+.report_evidence_anchor_id <- function(gene_id) {
+  gid <- as.character(gene_id)[1L]
+  if (!nzchar(gid) || is.na(gid)) {
+    return("evidence-gene-unknown")
+  }
+  paste0("evidence-gene-", gsub("[^A-Za-z0-9_-]", "_", gid))
+}
+
+#' Gene_ID cell: link to Evidence heading when that gene has Evidence
+#' @keywords internal
+.report_link_gene_id_html <- function(gene_id, evidence_gene_ids = NULL) {
+  gid <- as.character(gene_id)[1L]
+  if (!nzchar(gid) || is.na(gid)) {
+    return(.report_escape_html("(none)"))
+  }
+  esc <- .report_escape_html(gid)
+  ev <- unique(stats::na.omit(as.character(evidence_gene_ids %||% character())))
+  if (length(ev) && gid %in% ev) {
+    return(sprintf(
+      "<a href=\"#%s\">%s</a>",
+      .report_escape_html(.report_evidence_anchor_id(gid)),
+      esc
+    ))
+  }
+  esc
+}
 
 #' Map gene IDs to how they were selected for a report section
 #' @keywords internal

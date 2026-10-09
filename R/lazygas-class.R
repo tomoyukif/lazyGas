@@ -62,8 +62,10 @@ setMethod("closeGDS",
 #'
 #' @param gds_fn A path to a GDS file
 #' @param load_filter A logical value to indicate whether apply filrering stored in the input GDS file to samples and markers.
-#' @param overwrite If `TRUE`, replace existing lazyGas results in the companion store (or GDS `lazygas/` folder when `lazygas_store = "gds"`).
-#' @param lazygas_store Where to store association results: `"parquet"` (default companion folder `{stem}.lazygas/`), `"sqlite"`, `"gds"` (legacy GDS subtree), or `"auto"`.
+#' @param overwrite If `TRUE`, replace existing lazyGas results in the companion
+#'   Parquet store (`{stem}.lazygas/`).
+#' @param lazygas_store Companion store mode. Only \code{"parquet"} is supported
+#'   (default folder \code{{stem}.lazygas/}).
 #' @param companion_path Optional path to an existing companion store when it
 #'   does not sit next to \code{gds_fn} (e.g. Shiny file uploads). See
 #'   [resolveLazyGasPaths()].
@@ -100,7 +102,7 @@ buildLazyGas <- function(gds_fn = "",
                          load_filter = TRUE,
                          overwrite = FALSE,
                          create_gds = NULL,
-                         lazygas_store = c("parquet", "sqlite", "gds", "auto"),
+                         lazygas_store = "parquet",
                          companion_path = NULL){
   if(!all(sapply(X = create_gds, FUN = is.null))){
     raw_gds <- .createGDS(gds_fn = gds_fn, create_gds = create_gds)
@@ -112,30 +114,20 @@ buildLazyGas <- function(gds_fn = "",
     out <- loadGDS(x = gds_fn, load_filter = load_filter, verbose = FALSE)
   }
 
-  lazygas_store <- match.arg(lazygas_store)
-
-  if (lazygas_store == "gds") {
-    if (exist.gdsn(node = out$root, path = "lazygas")) {
-      if (overwrite) {
-        .create_gdsn(root_node = out$root, target_node = "",
-                     new_node = "lazygas", is_folder = TRUE)
-      } else {
-        message(
-          "Some LazyGas data has already been recorded in the input GDS file.",
-          "\nCreate a LazyGas object with the recorded LazyGas data."
-        )
-      }
-    } else {
-      .create_gdsn(root_node = out$root, target_node = "",
-                   new_node = "lazygas", is_folder = TRUE)
-    }
+  lazygas_store <- as.character(lazygas_store)[1L]
+  if (!identical(lazygas_store, "parquet")) {
+    stop(
+      "lazygas_store must be \"parquet\". ",
+      "Modes \"sqlite\", \"gds\", and \"auto\" are no longer supported.",
+      call. = FALSE
+    )
   }
 
   out <- new(Class = "LazyGas", out, lazydata = list(), store = list())
   out <- .store_init(
     object = out,
     gds_fn = gds_fn,
-    store = lazygas_store,
+    store = "parquet",
     overwrite = overwrite,
     companion_path = companion_path
   )

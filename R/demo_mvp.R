@@ -123,6 +123,19 @@ runMvpDemo <- function(out_dir = file.path(getwd(), "demo_output", "mvp"),
     print(mt$shared_genes)
   }
 
+  message("\n--- Cross-trait credible-set overlap (optional) ---")
+  cs_ov <- compareCrossTraitCredibleSets(
+    object = lg,
+    clusters = mt$clusters,
+    recalc = TRUE,
+    store = TRUE
+  )
+  if (nrow(cs_ov$pairs) > 0L) {
+    print(cs_ov$pairs)
+  } else {
+    message("No multi-trait cluster pairs to compare.")
+  }
+
   message("\n--- Fine-mapping (first trait, peak 1) ---")
   peak_id <- 1L
   fm <- runFineMapping(

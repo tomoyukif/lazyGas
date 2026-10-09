@@ -4,7 +4,8 @@
 loads genotypes from GDS files (via [GBScleanR](https://github.com/tomoyukif/GBScleanR)),
 stores association outputs in a companion Parquet dataset, and provides peak
 calling, candidate-gene listing, variant visualization, interactive HTML reports,
-cross-trait analysis, fine-mapping helpers, a thin **pipeline runner** Shiny app
+cross-trait analysis (including optional credible-set overlap across traits),
+fine-mapping helpers, a thin **pipeline runner** Shiny app
 (`runLazyGasRunner()`), and a **phenotype explorer** Shiny app (`runLazyGasExplorer()`;
 GWAS / locus plots plus optional local LLM support).
 
@@ -53,9 +54,8 @@ devtools::load_all("/path/to/lazyGas")
 |---------|----------|
 | `shiny` | `runLazyGasRunner()` pipeline UI; `runLazyGasExplorer()` phenotype explorer |
 | `base64enc` | Static Manhattan PNGs in HTML reports / explorer (`what = "scan_png"` style) |
-| `DBI`, `RSQLite` | Companion store `lazygas_store = "sqlite"` |
-| `processx` | Background Ollama server from R |
-| `httr2`, `curl` | Local LLM HTTP calls |
+| `processx` | Background Ollama server from R (agentic / explorer extras) |
+| `httr2`, `curl` | Local LLM HTTP calls (optional extras) |
 | `rentrez` | Literature evidence in phenotype explorer (optional) |
 | `BiocStyle`, `knitr`, `rmarkdown` | Building vignettes |
 | `testthat` | Running package tests |
@@ -64,7 +64,7 @@ devtools::load_all("/path/to/lazyGas")
 explorer plots). Install as needed for Suggested features, for example:
 
 ```R
-install.packages(c("shiny", "base64enc", "DBI", "RSQLite", "processx", "httr2", "curl"))
+install.packages(c("shiny", "base64enc", "processx", "httr2", "curl"))
 ```
 
 ### 4. Optional local LLM (phenotype explorer)
@@ -137,7 +137,7 @@ runDashboardDemo(out_dir = "demo_output")
 ```
 
 **MVP feature demo** (v0.6+ APIs: `runLazyGas()`, GWAS QC, multi-trait peaks,
-fine-mapping):
+optional `compareCrossTraitCredibleSets()`, fine-mapping):
 
 ```R
 runMvpDemo(out_dir = "demo_output/mvp")
@@ -201,11 +201,12 @@ library(GBScleanR)
 
 gds_fn <- "path/to/your/input.gds"
 lg <- buildLazyGas(gds_fn = gds_fn, load_filter = TRUE, overwrite = FALSE)
-# lazygas_store = "sqlite"  -> single .lazygas.sqlite file
-# lazygas_store = "gds"     -> legacy storage inside the GDS file
+# Companion store is always Parquet: path/to/your/input.lazygas/
 ```
 
 ### Phenotype data
+
+Sample id column must be `id`, `ID`, or `sample_id` (`id`/`ID` preferred).
 
 ```R
 pheno <- read.csv("path/to/phenotype_data.csv")
@@ -262,95 +263,57 @@ recalc <- lazyData(object = lg, dataset = "recalc", pheno = "Trait1")
 `haploPlot()` titles include peak `-log10P` and `Coef.add` (original units for
 continuous traits).
 
-### AI HTML report (`llm_report`, Phase 2 E path)
+### Multi-trait peaks and optional CS overlap
 
-`llm_report()` ranks candidates and writes a fixed-skeleton HTML report with
-per-source LLM evidence. Call `writeLazyGasExploreConfig(work_dir, ...)` first;
-`work_dir` (with `config.yaml`, including `mapping_mode`) is **required**.
+Not part of the default `runLazyGas()` steps — call when you have multiple
+phenotypes and want a cross-trait view:
 
-#### Required inputs
+```R
+plotMultiTraitOverview(lg, recalc = TRUE)
+clusterCrossTraitPeaks(lg, dist_threshold = 500000, r2_threshold = 0.6)
 
-| Input | Required? | Role |
-|-------|-----------|------|
-| LazyGas object + companion store | Yes | Scan / peaks / candidates / credible sets |
-| `gff` | Yes | Gene windows and Gene↔transcript/protein map |
-| Credible sets for reported peaks | Yes | Fine-map channel; run `runFineMapping()` (or equivalent) beforehand |
-| `work_dir` + explore `config.yaml` | Yes | E working directory (`mapping_mode` = `gwas` or `qtl`) |
-| Candidate table | From store or `candidate=` | Gene_ID list for the phenotype / peaks |
-| Local LLM (agentic branch) | Yes for prose path | Health-checked Ollama endpoint |
+# Optional: label shared vs independent signals via credible-set overlap
+cs_ov <- compareCrossTraitCredibleSets(lg, recalc = TRUE)
+cs_ov$pairs
+lazyData(lg, dataset = "multitrait", kind = "cs_overlap")
+```
 
-#### Optional E inputs
+### Ranking and reports (this release / master)
 
-| Input | Argument | Role |
-|-------|----------|------|
-| Functional annotation table | `ann` | Free text, GO, KEGG, domains (columns classified via LLM) |
-| SnpEff table | `snpeff` | Variant→gene effects (E2); optional if CS+GFF suffice |
-| Expression matrix | `expr_mat` | E4 tissue / specificity metrics (see below) |
-| InterProScan intervals | `interpro` | Domain overlap with HIGH-impact variants (E2) |
+This build is the **non-LLM** core. Prefer:
 
-Only fixed Phase 2 sources above are wired. Literature KG fetch and
-GO/KEGG **de novo** acquisition are **not** part of this path (Phase 3).
+- `phenotypeQuery()` + `rankPhenotypeCandidates()` for ranking
+- `explainPhenotypeCandidates()` for a Markdown template summary
+  (`save = TRUE` writes under `{stem}.lazygas/reports/`)
+- `makeInteractiveDashboard()` / `makeInteractiveSummary()`, or
+  `runLazyGas(..., steps = c(..., "dashboard"|"summary"))` for HTML
+  (default under `{stem}.lazygas/reports/{pheno}_dashboard.html`)
 
-#### Expression matrix (E4 / TPM)
+`listCandidate()` always writes both the wide candidate table and the thin
+simple-candidate sidecar. The old `output_list` argument is removed.
 
-Pass **abundance** values (TPM, counts, FPKM, logTPM, and similar)—not
-row-wise Z-scores. Yanai τ and relative-height percentiles assume a
-non-negative quantity scale.
+LLM HTML reports (`llm_report()`, explore `work_dir`, B5 grounding, etc.) live
+on the **agentic** branch / LLM-enabled releases—not in this package build.
 
-If the median per-gene row SD falls in about `[0.8, 1.2]`, the pipeline
-**warns** and records the check in run metadata, but does **not** hard-stop:
-metrics alone cannot prove the matrix is row-Z, so the final call is yours.
-To suppress τ / relative height when you know the input is row-Z, set
-`matrix_scale: row_zscore` in the explore `config.yaml` from
-`writeLazyGasExploreConfig()`.
+### Re-running after input changes
 
-#### B5 numeric grounding — limits
+`runLazyGas(resume = TRUE)` skips steps whose companion sections already exist.
+If you change GFF, annotation, SnpEff, or similar inputs, **delete the affected
+companion sections** (e.g. `candidate/`, `snpeff/`) or call with
+`resume = FALSE`, then re-run. Successful `listCandidate()` / ranking writes
+`inputs_manifest.json` in the companion store; a mismatch against current inputs
+emits a **warning** (it does not auto-delete or re-run).
 
-B5 checks **digits** in each evidence frame against an allowlist built from
-that frame’s JSON payload (plus numeric tokens already present in ID/label
-strings). On failure: at most one LLM rewrite (+ scrutiny), then an English
-template; failures are listed at the end of the peak Evidence block
-(**Numeric grounding failures**) and recorded in run metadata.
+### Companion layout (target)
 
-B5 does **not** verify non-numeric overclaims (enzyme names, pathways, tissue
-specificity phrasing, etc.). “B5 passed” does **not** mean the whole narrative
-is grounded—only that checked numbers matched the payload.
+| Layer | Location |
+|-------|----------|
+| Genotypes | `.gds` |
+| Analysis results | `{stem}.lazygas/` (Parquet only) |
+| HTML / Markdown reports | `{stem}.lazygas/reports/` (defaults) |
 
-#### Narrative wording limits (A2 / E8 / E9)
-
-- Phenotype **related** expansions are **indirect lexical links**, not direct
-  phenotype proof (cap 20 synonyms / related terms).
-- Composite ranking scores in prose are **peak-relative**.
-- Credible-set `resolution = "low"` means **not resolved** (display label);
-  QTL reports must mention Wakefield ABF assumptions where PIP/CS are discussed.
-
-#### HTML navigation (Hypothesis / Candidate → Evidence)
-
-Per peak, the report order is **Hypothesis cards** → **Candidate list** →
-**Evidence**. Gene_ID cells in Hypothesis cards and the Candidate table link to
-`#evidence-gene-<Gene_ID>` when that gene has an Evidence block on the same
-peak; champions or ranked genes without Evidence stay plain text.
-
-**Genes in candidate region** (shown above the Candidate list) is the **CS∩GFF**
-count for that peak: genes whose E-path GFF windows overlap the credible-set /
-report region. It is **not** the Candidate list row count and **not** the
-Evidence gene-set size (`gene_select`). Ranked candidates can sit near the peak
-without overlapping the CS interval, so the list can be non-empty while the
-region count is smaller—or vice versa when GFF windows cover more genes than
-the displayed top_n table. Counting uses `gff_windows` when the E path runs;
-it does not treat rank `Gene_start` alone as a zero-width gene.
-
-#### Out of scope for Phase 2
-
-| Item | Status |
-|------|--------|
-| Shiny **AI report** tab (design track C) | Deferred — not a Phase 2 completion requirement |
-| Phase 3 (literature KG, AmiGO/KEGG de novo fetch, DAG/map walks) | Explicitly later; not required to close Phase 2 |
-| Sub-agent orchestration (track D) | Not adopted |
-
-Existing Shiny apps (`runLazyGasRunner()`, `runLazyGasExplorer()`) remain
-supported for pipeline / ranking UI; they are not the Phase 2 AI HTML report
-surface.
+Eval demos under `ai_assited_genetics/demo/` keep inputs in `demo_data/`,
+companions in `stores/`, and run scripts under `run/`.
 
 ## Contributing
 

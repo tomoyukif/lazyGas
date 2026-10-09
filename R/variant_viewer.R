@@ -148,8 +148,11 @@ makeInteractiveDashboard <- function(object,
   if (is.null(genes)) {
     candidate <- lazyData(object = object, dataset = "candidate", pheno = pheno_name)
     if (is.null(candidate) || nrow(candidate) == 0L) {
-      stop("No candidate data. Run listCandidate() first, or set genes = ....",
-           call. = FALSE)
+      stop(
+        "No wide candidate data. Run listCandidate() first (wide tables are ",
+        "always written), or set genes = ....",
+        call. = FALSE
+      )
     }
     if (!"Gene_ID" %in% names(candidate)) {
       stop("Candidate data has no Gene_ID column.", call. = FALSE)

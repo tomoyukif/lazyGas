@@ -10,7 +10,8 @@ assignPheno(object, pheno, rename = NULL, ...)
 \item{object}{A LazyGas object}
 
 \item{pheno}{A data.frame of phenotype data that must contain a sample id
-column named \code{id} or \code{ID}}
+column named \code{id}, \code{ID}, or \code{sample_id} (precedence:
+\code{id}/\code{ID} over \code{sample_id}).}
 }
 \description{
 Assign phenotype data to a LazyGas object

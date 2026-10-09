@@ -150,7 +150,7 @@ test_that("distance gate off keeps far strong genes in function view", {
     language = "en"
   )
   expect_match(note_both, "Selected by", fixed = TRUE)
-  expect_match(note_both, "both composite_score ranking and hypothesis cards", fixed = TRUE)
+  expect_match(note_both, "top composite score and hypothesis card", fixed = TRUE)
 })
 
 test_that("weak-only peak yields empty function champion", {

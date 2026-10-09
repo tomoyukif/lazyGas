@@ -12,6 +12,9 @@
 #' @param use_llm Ignored; kept for call compatibility (always template path).
 #' @param language Response language: \code{"ja"} or \code{"en"}.
 #' @param model,base_url,timeout Ignored; kept for call compatibility.
+#' @param save If \code{TRUE}, write Markdown under the companion
+#'   \code{reports/} folder (requires \code{object}). Default \code{FALSE}.
+#' @param out_fn Optional explicit Markdown path when \code{save = TRUE}.
 #'
 #' @return A character string (Markdown).
 #' @export
@@ -25,7 +28,9 @@ explainPhenotypeCandidates <- function(rank_result,
                                        language = c("ja", "en"),
                                        model = NULL,
                                        base_url = NULL,
-                                       timeout = NULL) {
+                                       timeout = NULL,
+                                       save = FALSE,
+                                       out_fn = NULL) {
   language <- match.arg(language)
   if (!is.data.frame(rank_result) || nrow(rank_result) == 0L) {
     stop("'rank_result' must be a non-empty data.frame.", call. = FALSE)
@@ -52,11 +57,28 @@ explainPhenotypeCandidates <- function(rank_result,
   top_n <- as.integer(top_n)[1L]
   sub <- rank_result[seq_len(min(top_n, nrow(rank_result))), , drop = FALSE]
   evidence_bundle <- .phenotype_evidence_bundle(rank_result = sub)
-  .explain_phenotype_template(
+  md <- .explain_phenotype_template(
     query = query,
     evidence_bundle = evidence_bundle,
     language = language
   )
+
+  if (isTRUE(save)) {
+    if (is.null(object)) {
+      stop("'object' is required when save = TRUE.", call. = FALSE)
+    }
+    if (is.null(out_fn) || !nzchar(as.character(out_fn)[1L])) {
+      out_fn <- .default_explain_path(
+        object,
+        query_id = query$query_id %||% meta$query_id,
+        pheno = meta$pheno %||% NULL
+      )
+    } else {
+      dir.create(dirname(out_fn), recursive = TRUE, showWarnings = FALSE)
+    }
+    writeLines(md, out_fn, useBytes = TRUE)
+  }
+  md
 }
 
 #' Answer a free-text question about ranked candidates (rule-based)
