@@ -5,6 +5,16 @@ the release or documentation update for that version.
 
 ---
 
+## Changes in version 0.9.2 (2026-10-09)
+
+### AI HTML report: fix Genes in candidate region = 0
++ **Genes in candidate region** now counts CS∩GFF from E-path `gff_windows`
+  when available (not rank `Gene_start` alone). Missing `Gene_end` no longer
+  treats a gene as a zero-width point, which falsely reported 0 while the
+  Candidate list still listed genes (e.g. Amylose / Wx).
+
+---
+
 ## Changes in version 0.9.2 (2026-10-08)
 
 ### AI HTML report: Gene_ID → Evidence links; region gene count

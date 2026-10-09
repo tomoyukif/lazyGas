@@ -278,42 +278,65 @@
   esc
 }
 
-#' Count genes overlapping the peak candidate region
+#' Normalize chromosome labels for overlap checks (chr06 / 06 / 6 → 6)
+#' @keywords internal
+.report_norm_chr <- function(x) {
+  x <- tolower(as.character(x))
+  x <- sub("^chr", "", x)
+  num <- grepl("^[0-9]+$", x)
+  stripped <- sub("^0+", "", x)
+  stripped[!nzchar(stripped) & num] <- "0"
+  x[num] <- stripped[num]
+  x
+}
+
+#' Count genes overlapping the peak candidate region (CS∩GFF)
+#'
+#' Prefers \code{gff_windows} (same windows as the E path). Falls back to
+#' \code{rank_peak} intervals when \code{Gene_end} is present. Never treats
+#' \code{Gene_start} alone as a zero-width gene (that falsely yielded 0).
+#'
 #' @keywords internal
 .report_n_genes_in_region <- function(rank_peak,
                                       chr,
                                       region_start,
-                                      region_end) {
+                                      region_end,
+                                      gff_windows = NULL) {
+  rs <- suppressWarnings(as.numeric(region_start)[1L])
+  re <- suppressWarnings(as.numeric(region_end)[1L])
+  chr_s <- as.character(chr)[1L]
+  region_ok <- is.finite(rs) && is.finite(re) && nzchar(chr_s) && !is.na(chr_s)
+
+  if (region_ok && !is.null(gff_windows) && is.data.frame(gff_windows) &&
+      nrow(gff_windows) &&
+      all(c("Gene_ID", "Chr", "window_start", "window_end") %in% names(gff_windows))) {
+    gchr <- .report_norm_chr(gff_windows$Chr)
+    gst <- suppressWarnings(as.numeric(gff_windows$window_start))
+    gend <- suppressWarnings(as.numeric(gff_windows$window_end))
+    ids <- as.character(gff_windows$Gene_ID)
+    overlaps <- gchr == .report_norm_chr(chr_s) &
+      is.finite(gst) & is.finite(gend) &
+      gst <= re & gend >= rs
+    return(length(unique(ids[overlaps & !is.na(ids) & nzchar(ids)])))
+  }
+
   if (is.null(rank_peak) || !nrow(rank_peak) || !"Gene_ID" %in% names(rank_peak)) {
     return(0L)
   }
   ids <- as.character(rank_peak$Gene_ID)
-  rs <- suppressWarnings(as.numeric(region_start)[1L])
-  re <- suppressWarnings(as.numeric(region_end)[1L])
-  chr_s <- as.character(chr)[1L]
-  has_coords <- all(c("Gene_chr", "Gene_start") %in% names(rank_peak)) &&
-    is.finite(rs) && is.finite(re) && nzchar(chr_s) && !is.na(chr_s)
+  has_end <- "Gene_end" %in% names(rank_peak) &&
+    any(is.finite(suppressWarnings(as.numeric(rank_peak$Gene_end))))
+  has_coords <- region_ok &&
+    all(c("Gene_chr", "Gene_start") %in% names(rank_peak)) &&
+    has_end
   if (!has_coords) {
+    # Missing Gene_end: do not pretend Gene_start is a point gene.
     return(length(unique(ids[!is.na(ids) & nzchar(ids)])))
   }
-  norm_chr <- function(x) {
-    x <- tolower(as.character(x))
-    x <- sub("^chr", "", x)
-    num <- grepl("^[0-9]+$", x)
-    stripped <- sub("^0+", "", x)
-    stripped[!nzchar(stripped) & num] <- "0"
-    x[num] <- stripped[num]
-    x
-  }
-  gchr <- norm_chr(rank_peak$Gene_chr)
+  gchr <- .report_norm_chr(rank_peak$Gene_chr)
   gst <- suppressWarnings(as.numeric(rank_peak$Gene_start))
-  gend <- if ("Gene_end" %in% names(rank_peak)) {
-    suppressWarnings(as.numeric(rank_peak$Gene_end))
-  } else {
-    gst
-  }
-  gend[!is.finite(gend)] <- gst[!is.finite(gend)]
-  same_chr <- gchr == norm_chr(chr_s)
+  gend <- suppressWarnings(as.numeric(rank_peak$Gene_end))
+  same_chr <- gchr == .report_norm_chr(chr_s)
   overlaps <- same_chr & is.finite(gst) & is.finite(gend) &
     gst <= re & gend >= rs
   length(unique(ids[overlaps & !is.na(ids) & nzchar(ids)]))
@@ -965,7 +988,8 @@
                                       e_run = NULL,
                                       reinterpret_peak = NULL,
                                       evidence_rank = NULL,
-                                      selection_map = NULL) {
+                                      selection_map = NULL,
+                                      gff_windows = NULL) {
   ui <- .report_i18n(language)
   header <- sprintf(
     "Peak %s — %s:%s (%s-%s)",
@@ -979,7 +1003,8 @@
     rank_peak = rank_peak,
     chr = chr,
     region_start = region_start,
-    region_end = region_end
+    region_end = region_end,
+    gff_windows = gff_windows
   )
   region_count_html <- paste0(
     "<p>", .report_escape_html(ui$genes_in_region), ": ",

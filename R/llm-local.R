@@ -758,7 +758,8 @@ llm_report <- function(object,
         e_run = e_run,
         reinterpret_peak = reinterpret_peak,
         evidence_rank = evidence_rank,
-        selection_map = selection_map
+        selection_map = selection_map,
+        gff_windows = if (!is.null(e_gff_tables)) e_gff_tables$windows else NULL
       )
     )
   }

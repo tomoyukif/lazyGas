@@ -148,6 +148,35 @@ test_that("evidence gene anchors and region gene counts", {
     lazyGas:::.report_n_genes_in_region(ranked, "chr01", 1, 1000),
     2L
   )
+
+  # Gene_start alone must not be treated as a zero-width gene (Wx-like case).
+  start_only <- data.frame(
+    Gene_ID = "Os06g0133000",
+    Gene_chr = "chr06",
+    Gene_start = 1765622L,
+    stringsAsFactors = FALSE
+  )
+  expect_equal(
+    lazyGas:::.report_n_genes_in_region(
+      start_only, "chr06", 1766460, 1767937
+    ),
+    1L
+  )
+
+  # Prefer gff_windows (CS∩GFF) over rank start-only rows.
+  wins <- data.frame(
+    Gene_ID = c("Os06g0133000", "far"),
+    Chr = c("chr06", "chr06"),
+    window_start = c(1762622L, 2000000L),
+    window_end = c(1771156L, 2001000L),
+    stringsAsFactors = FALSE
+  )
+  expect_equal(
+    lazyGas:::.report_n_genes_in_region(
+      start_only, "chr06", 1766460, 1767937, gff_windows = wins
+    ),
+    1L
+  )
 })
 
 test_that("rank result csv/rds round-trip preserves rows and attributes", {
