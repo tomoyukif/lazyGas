@@ -13,8 +13,7 @@
 #'   store.
 #' @param pheno Phenotype name or index.
 #' @param query A [PhenotypeQuery] object or character string. Character input
-#'   is parsed via [phenotypeQuery()] with \code{use_llm = FALSE} unless
-#'   \code{query_use_llm = TRUE}.
+#'   is parsed via [phenotypeQuery()].
 #' @param sources Evidence sources to use (see [collectGeneEvidence()]).
 #' @param weights Named numeric vector of source weights (renormalized over
 #'   active sources). Default: [phase1DefaultWeights()].
@@ -22,16 +21,18 @@
 #'   keeps every scored gene (scoring always covers the full candidate set).
 #' @param candidate Optional candidate \code{data.frame}; when \code{NULL},
 #'   candidates are loaded from the companion store.
-#' @param expression_matrix,expression_meta Passed to [collectGeneEvidence()].
+#' @param ann_column_map Required when \code{annotation} is in \code{sources}
+#'   (see [readAnnColumnMap()]).
+#' @param expression_matrix,expression_sample_map Required when
+#'   \code{expression} is in \code{sources} (see [readExpressionSampleMap()]).
+#' @param expression_meta Deprecated alias for \code{expression_sample_map}.
 #' @param ortholog_table,ortholog_cols Ortholog data for ortholog evidence.
 #' @param use_cache Use the companion-store evidence cache.
 #' @param save Save ranked results to the companion store (\code{phenotype_rank}
 #'   section).
-#' @param use_keyword,use_llm_relevance,download_tenor,query_use_llm
-#'   Passed through to evidence / query helpers.
-#' @param use_semantic Ignored; LSA annotation scoring was removed.
-#' @param llm_model,llm_base_url,llm_timeout LLM settings for annotation
-#'   relevance (when enabled).
+#' @param use_keyword Passed through to evidence helpers.
+#' @param use_semantic,use_llm_relevance,download_tenor,query_use_llm,llm_model,llm_base_url,llm_timeout
+#'   Ignored; retained for call compatibility.
 #' @param gff,gff_windows Passed to [collectGeneEvidence()] for finemap
 #'   GFF-window fallback when SnpEff is absent.
 #'
@@ -40,12 +41,16 @@
 #'   \code{phenotypeRank} metadata.
 #' @export
 #'
-#' @seealso [phenotypeQuery()], [collectGeneEvidence()], [llm_report()]
+#' @seealso [phenotypeQuery()], [collectGeneEvidence()], [readAnnColumnMap()],
+#'   [readExpressionSampleMap()]
 #'
 #' @examples
 #' \dontrun{
-#' q <- phenotypeQuery("heading date", tissues = "leaf", use_llm = FALSE)
-#' ranked <- rankPhenotypeCandidates(lg, pheno = "Heading date", query = q)
+#' q <- phenotypeQuery("heading date", tissues = "leaf")
+#' ranked <- rankPhenotypeCandidates(
+#'   lg, pheno = "Heading date", query = q,
+#'   ann_column_map = "ann_column_map.csv"
+#' )
 #' head(ranked[, c("Gene_ID", "composite_score", "score_annotation", "score_snpeff")])
 #' }
 rankPhenotypeCandidates <- function(object,
@@ -55,7 +60,9 @@ rankPhenotypeCandidates <- function(object,
                                     weights = phase1DefaultWeights(),
                                     top_n = 30L,
                                     candidate = NULL,
+                                    ann_column_map = NULL,
                                     expression_matrix = NULL,
+                                    expression_sample_map = NULL,
                                     expression_meta = NULL,
                                     ortholog_table = NULL,
                                     ortholog_cols = c(
@@ -68,7 +75,7 @@ rankPhenotypeCandidates <- function(object,
                                     use_keyword = NULL,
                                     use_semantic = NULL,
                                     use_llm_relevance = NULL,
-                                    download_tenor = TRUE,
+                                    download_tenor = FALSE,
                                     query_use_llm = FALSE,
                                     llm_model = NULL,
                                     llm_base_url = NULL,
@@ -94,7 +101,6 @@ rankPhenotypeCandidates <- function(object,
   if (is.character(query)) {
     query <- phenotypeQuery(
       text = query,
-      use_llm = isTRUE(query_use_llm),
       object = object,
       save = save
     )
@@ -103,6 +109,10 @@ rankPhenotypeCandidates <- function(object,
          call. = FALSE)
   } else if (save && !is.null(query$query_id)) {
     .store_write_phenotype_query(object, query)
+  }
+
+  if (is.null(expression_sample_map) && !is.null(expression_meta)) {
+    expression_sample_map <- expression_meta
   }
 
   sources <- match.arg(sources, choices = .EVIDENCE_SOURCE_CHOICES, several.ok = TRUE)
@@ -152,18 +162,14 @@ rankPhenotypeCandidates <- function(object,
     object = object,
     pheno = pheno_name,
     sources = sources,
+    ann_column_map = ann_column_map,
     expression_matrix = expression_matrix,
-    expression_meta = expression_meta,
+    expression_sample_map = expression_sample_map,
     ortholog_table = ortholog_table,
     ortholog_cols = ortholog_cols,
     use_cache = use_cache,
     use_keyword = use_keyword,
     use_semantic = use_semantic,
-    use_llm_relevance = use_llm_relevance,
-    download_tenor = download_tenor,
-    llm_model = llm_model,
-    llm_base_url = llm_base_url,
-    llm_timeout = llm_timeout,
     gff = gff,
     gff_windows = gff_windows
   )

@@ -1,3 +1,21 @@
+
+.test_ann_column_map <- function(candidate = NULL) {
+  cols <- c("Description", "GO", "Name")
+  if (!is.null(candidate)) {
+    cols <- intersect(cols, names(candidate))
+  }
+  if (!length(cols)) {
+    cols <- "Description"
+  }
+  data.frame(
+    column = cols,
+    class = ifelse(cols == "GO", "go", "free_description"),
+    use_for_ranking = TRUE,
+    note = NA_character_,
+    stringsAsFactors = FALSE
+  )
+}
+
 make_test_candidate <- function() {
   data.frame(
     peak_ID = rep(1L, 4L),
@@ -103,13 +121,15 @@ test_that("rankPhenotypeCandidates ranks demo candidates", {
   rownames(expr_meta) <- expr_meta$sample
   ortho <- read.csv(file.path(extdata, "demo_orthologs.csv"), stringsAsFactors = FALSE)
 
+  cand <- lazyData(res$lg, dataset = "candidate", pheno = res$pheno_name)
   ranked <- rankPhenotypeCandidates(
     object = res$lg,
     pheno = res$pheno_name,
     query = q,
     sources = c("annotation", "gwas", "expression", "ortholog"),
+    ann_column_map = .test_ann_column_map(cand),
     expression_matrix = expr_mat,
-    expression_meta = expr_meta,
+    expression_sample_map = expr_meta,
     ortholog_table = ortho,
     top_n = 10L,
     save = TRUE
@@ -129,8 +149,9 @@ test_that("rankPhenotypeCandidates ranks demo candidates", {
     pheno = res$pheno_name,
     query = q,
     sources = c("annotation", "gwas", "expression", "ortholog"),
+    ann_column_map = .test_ann_column_map(cand),
     expression_matrix = expr_mat,
-    expression_meta = expr_meta,
+    expression_sample_map = expr_meta,
     ortholog_table = ortho,
     top_n = NULL,
     save = FALSE
@@ -183,17 +204,13 @@ test_that("collectGeneEvidence returns annotation scores", {
     query = q,
     candidate = cand,
     sources = c("annotation", "gwas"),
+    ann_column_map = .test_ann_column_map(cand),
     use_cache = FALSE
   )
   expect_length(ev, nrow(cand))
   expect_true(ev[["g1"]]$annotation$score >= ev[["g2"]]$annotation$score)
 })
 
-test_that("llmHealthCheck fails gracefully without server", {
-  skip_if_not_installed("lazyGas")
-  ok <- llmHealthCheck(base_url = "http://127.0.0.1:1", timeout = 1)
-  expect_false(isTRUE(ok))
-})
 
 test_that("phenotype query list via lazyData", {
   skip_if_not_installed("lazyGas")
@@ -281,53 +298,9 @@ test_that("resolveLazyGasPaths finds companion store", {
   expect_true(file.exists(paths$gds))
 })
 
-test_that("describeOllamaStatus reports unreachable server", {
-  skip_if_not_installed("lazyGas")
-  st <- describeOllamaStatus(base_url = "http://127.0.0.1:1", model = "llama3.2:3b")
-  expect_true(grepl("Not running|not configured|CLI not found", st))
-})
 
-test_that("lazyGasOllamaHome returns a directory path", {
-  skip_if_not_installed("lazyGas")
-  path <- lazyGasOllamaHome()
-  expect_type(path, "character")
-  expect_true(nzchar(path))
-})
 
-test_that("Apptainer Ollama helpers are exported", {
-  skip_if_not_installed("lazyGas")
-  exports <- getNamespaceExports("lazyGas")
-  expect_true(all(c(
-    "configureLazyGasOllama",
-    "buildLazyGasOllamaSif",
-    "lazyGasOllamaHome"
-  ) %in% exports))
-})
 
-test_that("Phase4 exports are registered", {
-  skip_if_not_installed("lazyGas")
-  exports <- getNamespaceExports("lazyGas")
-  expect_true(all(c(
-    "phenotypeQuery",
-    "collectGeneEvidence",
-    "rankPhenotypeCandidates",
-    "answerPhenotypeQuestion",
-    "llmChat",
-    "llmHealthCheck",
-    "restorePhenoFromStore",
-    "resolveLazyGasPaths",
-    "startOllamaServer",
-    "startLocalLLM",
-    "pullOllamaModel",
-    "describeOllamaStatus",
-    "configureLazyGasOllama",
-    "buildLazyGasOllamaSif",
-    "lazyGasOllamaHome",
-    "runExplorerDemo",
-    "runLazyGasExplorer",
-    "runLazyGasRunner"
-  ) %in% exports))
-})
 
 test_that("runner Shiny app is a thin pipeline launcher", {
   skip_if_not_installed("lazyGas")

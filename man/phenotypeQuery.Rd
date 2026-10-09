@@ -32,24 +32,12 @@ conditions (optional).}
 
 \item{species}{Target species name (optional).}
 
-\item{use_llm}{If \code{TRUE}, attempt LLM-based structuring via
-\code{\link[=llmChat]{llmChat()}} (phrase split, then synonym and related expand).
-If \code{FALSE}, use the unigram fallback and leave synonym/related
-empty. Annotation LLM relevance is also off on that path.}
+\item{use_llm}{Ignored; kept for call compatibility (always deterministic).}
 
-\item{synonym_phrases, related_phrases}{Optional lists of
-\code{list(phrase, from_user, source)} used when \code{use_llm = TRUE}
-instead of calling the expander LLMs (\code{NULL} = call LLM;
-\code{list()} = skip that expand). Ignored when \code{use_llm = FALSE}.}
+\item{synonym_phrases, related_phrases}{Ignored in this build (always empty
+unless you assign them on the returned object).}
 
-\item{llm_model}{Model name passed to Ollama (default from
-\code{LAZYGAS_LLM_MODEL} or \code{"gemma4-31b-64k:latest"}).}
-
-\item{llm_base_url}{Ollama base URL (default from \code{LAZYGAS_LLM_URL}).}
-
-\item{llm_timeout}{Per-call timeout in seconds for query parse / synonym /
-related LLM requests (default 600). Gemma 31B over a tunnel often needs
-more than 90s; short timeouts fall back to \code{parsed_by = "fallback"}.}
+\item{llm_model, llm_base_url, llm_timeout}{Ignored.}
 
 \item{object}{Optional \code{LazyGas} object; when \code{save = TRUE} the
 query is written to the companion store.}
@@ -63,16 +51,14 @@ A \code{PhenotypeQuery} object (list with class attribute).
 \description{
 Parses free text (and optional tissue/stage/condition fields) into a
 \code{PhenotypeQuery} object used by \code{\link[=rankPhenotypeCandidates]{rankPhenotypeCandidates()}} and
-\code{\link[=collectGeneEvidence]{collectGeneEvidence()}}. When \code{use_llm = TRUE} and a local Ollama
-server is reachable, the query is structured via JSON output from the LLM;
-otherwise a deterministic token-based parser is used.
+\code{\link[=collectGeneEvidence]{collectGeneEvidence()}}. Uses a deterministic token-based parser only
+(no LLM).
 }
 \examples{
 q <- phenotypeQuery(
   "fruit weight at maturity",
   tissues = "fruit",
-  stage = "maturation",
-  use_llm = FALSE
+  stage = "maturation"
 )
 q$trait_keywords
 }

@@ -11,7 +11,9 @@ collectGeneEvidence(
   object = NULL,
   pheno = NULL,
   sources = phase1DefaultSources(),
+  ann_column_map = NULL,
   expression_matrix = NULL,
+  expression_sample_map = NULL,
   expression_meta = NULL,
   ortholog_table = NULL,
   ortholog_cols = c(gene_id = "gene_id", ortholog_id = "ortholog_id", score = "score"),
@@ -20,7 +22,7 @@ collectGeneEvidence(
   use_keyword = NULL,
   use_semantic = NULL,
   use_llm_relevance = NULL,
-  download_tenor = TRUE,
+  download_tenor = FALSE,
   llm_model = NULL,
   llm_base_url = NULL,
   llm_timeout = NULL,
@@ -36,8 +38,7 @@ collectGeneEvidence(
 \item{candidate}{Candidate-gene \code{data.frame} (optional if \code{object}
 and \code{pheno} are given).}
 
-\item{object}{\code{LazyGas} object for cache I/O, candidate lookup, and
-TENOR cache path.}
+\item{object}{\code{LazyGas} object for cache I/O and candidate lookup.}
 
 \item{pheno}{Phenotype name or index when reading candidates from \code{object}.}
 
@@ -45,13 +46,18 @@ TENOR cache path.}
 \code{"snpeff"}, \code{"gwas"}, \code{"expression"}, \code{"literature"},
 \code{"ortholog"}, \code{"finemap"}.}
 
-\item{expression_matrix}{Optional gene x sample expression matrix
-(\code{data.frame} or matrix) with row names = gene IDs. When \code{NULL}
-and \code{expression} is requested, \code{\link[=evaluateTenorExpression]{evaluateTenorExpression()}} is used.}
+\item{ann_column_map}{Path or \code{\link[=readAnnColumnMap]{readAnnColumnMap()}} result. Required when
+\code{annotation} is in \code{sources}.}
 
-\item{expression_meta}{Optional \code{data.frame} with one row per sample
-column in \code{expression_matrix}; should include \code{tissue} and/or
-\code{stage} columns when available.}
+\item{expression_matrix}{Gene x sample expression matrix (\code{data.frame}
+or matrix) with row names = gene IDs. Required when \code{expression}
+is in \code{sources}.}
+
+\item{expression_sample_map}{Path or \code{\link[=readExpressionSampleMap]{readExpressionSampleMap()}} result
+(or legacy meta \code{data.frame} with a \code{sample} column). Required
+when \code{expression} is in \code{sources}.}
+
+\item{expression_meta}{Deprecated alias for \code{expression_sample_map}.}
 
 \item{ortholog_table}{Optional ortholog table with gene/ortholog IDs (and
 optionally scores) used as one evidence channel in ranking.}
@@ -64,20 +70,14 @@ optionally scores) used as one evidence channel in ranking.}
 \item{literature_max}{Maximum PubMed hits per gene (when \pkg{rentrez} is
 available).}
 
-\item{use_keyword, use_llm_relevance}{Annotation channel flags
-(defaults from \code{inst/config/ai-lazygas-models.yaml}).}
+\item{use_keyword}{Annotation keyword matching flag (default from config).}
 
-\item{use_semantic}{Ignored; LSA / semantic annotation scoring was removed.
-Retained for call compatibility.}
+\item{use_semantic}{Ignored; retained for call compatibility.}
 
-\item{download_tenor}{If \code{TRUE}, download missing TENOR CSVs when using
-the expression channel without \code{expression_matrix}.}
-
-\item{llm_model, llm_base_url, llm_timeout}{LLM settings for annotation
-relevance scoring.}
+\item{use_llm_relevance, download_tenor, llm_model, llm_base_url, llm_timeout}{Ignored; retained for call compatibility.}
 
 \item{gff}{Optional \code{GRanges} for finemap GFF-window fallback when
-SnpEff is missing or does not assign a gene (Phase 2 H1).}
+SnpEff is missing or does not assign a gene.}
 
 \item{gff_windows}{Optional precomputed gene windows (from
 \code{.gff_gene_windows}); overrides building from \code{gff}.}
@@ -87,15 +87,19 @@ A named list keyed by gene ID; each element is a list of evidence
 records (\code{source}, \code{score}, \code{snippets}, \code{details}).
 }
 \description{
-Gathers annotation, SnpEff, GWAS, expression (TENOR or matrix), literature,
+Gathers annotation, SnpEff, GWAS, expression (user matrix), literature,
 and ortholog evidence for each gene in \code{gene_ids}, optionally using
 cached results in the companion store.
 }
 \details{
-Phase 1 default sources are \code{annotation}, \code{snpeff}, \code{gwas},
-and \code{expression}. Annotation scores combine phrase-aware keyword
-matching and optional LLM relevance via \code{max} (LSA / text2vec removed).
+Default sources are \code{annotation}, \code{snpeff}, \code{gwas}, and
+\code{expression}. Annotation scoring uses phrase-aware keyword matching
+only. When \code{annotation} is among \code{sources},
+\code{\link[=readAnnColumnMap]{readAnnColumnMap()}} input is required. When \code{expression} is among
+\code{sources}, both \code{expression_matrix} and
+\code{\link[=readExpressionSampleMap]{readExpressionSampleMap()}} input are required.
 }
 \seealso{
-\code{\link[=rankPhenotypeCandidates]{rankPhenotypeCandidates()}}, \code{\link[=evaluateTenorExpression]{evaluateTenorExpression()}}
+\code{\link[=rankPhenotypeCandidates]{rankPhenotypeCandidates()}}, \code{\link[=readAnnColumnMap]{readAnnColumnMap()}},
+\code{\link[=readExpressionSampleMap]{readExpressionSampleMap()}}
 }

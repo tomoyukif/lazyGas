@@ -1,0 +1,4 @@
+column,class,use_for_ranking,note
+Gene_ID,other,FALSE,identifier
+Name,other,FALSE,gene symbol
+Description,free_description,TRUE,demo free text

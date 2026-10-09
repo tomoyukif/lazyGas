@@ -258,54 +258,11 @@ phase1DefaultSources <- function() {
   cfg$phase1
 }
 
-.ai_config_llm_settings <- function(model = NULL, base_url = NULL, timeout = NULL) {
-  cfg <- .ai_config_models()
-  def <- cfg$default %||% list()
-  agents <- cfg$agents %||% list()
-  main <- agents$main %||% list()
-
-  resolved_model <- if (!is.null(model) && nzchar(model)) {
-    model
-  } else if (!is.null(main$model) && nzchar(main$model)) {
-    as.character(main$model)
-  } else {
-    Sys.getenv("LAZYGAS_LLM_MODEL", unset = "gemma4-31b-64k:latest")
-  }
-
-  resolved_url <- if (!is.null(base_url) && nzchar(base_url)) {
-    base_url
-  } else if (!is.null(def$base_url) && nzchar(def$base_url)) {
-    as.character(def$base_url)
-  } else {
-    Sys.getenv("LAZYGAS_LLM_URL", unset = "http://127.0.0.1:11435")
-  }
-
-  resolved_timeout <- if (!is.null(timeout) && is.finite(as.numeric(timeout)[1L])) {
-    as.numeric(timeout)[1L]
-  } else if (!is.null(def$timeout) && is.finite(as.numeric(def$timeout)[1L])) {
-    as.numeric(def$timeout)[1L]
-  } else {
-    600
-  }
-
-  list(
-    model = resolved_model,
-    base_url = sub("/+$", "", resolved_url),
-    timeout = resolved_timeout,
-    ranking = agents$ranking %||% list()
-  )
-}
-
 .ai_config_ranking_flags <- function() {
   cfg <- .ai_config_models()
   ranking <- cfg$agents$ranking %||% list()
   list(
     use_keyword = isTRUE(ranking$use_keyword %||% TRUE),
-    use_semantic = FALSE,
-    use_llm_relevance = isTRUE(ranking$use_llm_relevance %||% TRUE),
-    llm_model = as.character(
-      ranking$llm_model %||%
-        (cfg$agents$main$model %||% "gemma4-31b-64k:latest")
-    )
+    use_semantic = FALSE
   )
 }

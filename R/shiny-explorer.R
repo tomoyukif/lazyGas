@@ -1,10 +1,9 @@
 #' Launch the lazyGas phenotype explorer (Shiny)
 #'
 #' Opens an interactive Shiny application for phenotype-guided candidate-gene
-#' exploration with optional local LLM explanations. The UI also embeds the
-#' same GWAS overview and per-gene locus views used by
-#' [makeInteractiveDashboard()] (phenotype distribution, Manhattan, peaks,
-#' haplotype plots, and on-demand variant viewer).
+#' exploration. The UI embeds the same GWAS overview and per-gene locus views
+#' used by [makeInteractiveDashboard()] (phenotype distribution, Manhattan,
+#' peaks, haplotype plots, and on-demand variant viewer).
 #'
 #' @param gds_path Optional default GDS path pre-filled in the Shiny UI.
 #' @param ... Arguments passed to \code{shiny::runApp()}.

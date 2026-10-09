@@ -1,30 +1,35 @@
 ################################################################################
 #' Collect multi-source evidence for candidate genes
 #'
-#' Gathers annotation, SnpEff, GWAS, expression (TENOR or matrix), literature,
+#' Gathers annotation, SnpEff, GWAS, expression (user matrix), literature,
 #' and ortholog evidence for each gene in \code{gene_ids}, optionally using
 #' cached results in the companion store.
 #'
-#' Phase 1 default sources are \code{annotation}, \code{snpeff}, \code{gwas},
-#' and \code{expression}. Annotation scores combine phrase-aware keyword
-#' matching and optional LLM relevance via \code{max} (LSA / text2vec removed).
+#' Default sources are \code{annotation}, \code{snpeff}, \code{gwas}, and
+#' \code{expression}. Annotation scoring uses phrase-aware keyword matching
+#' only. When \code{annotation} is among \code{sources},
+#' [readAnnColumnMap()] input is required. When \code{expression} is among
+#' \code{sources}, both \code{expression_matrix} and
+#' [readExpressionSampleMap()] input are required.
 #'
 #' @param gene_ids Character vector of gene identifiers.
 #' @param query A [PhenotypeQuery] object or character search string.
 #' @param candidate Candidate-gene \code{data.frame} (optional if \code{object}
 #'   and \code{pheno} are given).
-#' @param object \code{LazyGas} object for cache I/O, candidate lookup, and
-#'   TENOR cache path.
+#' @param object \code{LazyGas} object for cache I/O and candidate lookup.
 #' @param pheno Phenotype name or index when reading candidates from \code{object}.
 #' @param sources Evidence sources to collect. Any of \code{"annotation"},
 #'   \code{"snpeff"}, \code{"gwas"}, \code{"expression"}, \code{"literature"},
 #'   \code{"ortholog"}, \code{"finemap"}.
-#' @param expression_matrix Optional gene x sample expression matrix
-#'   (\code{data.frame} or matrix) with row names = gene IDs. When \code{NULL}
-#'   and \code{expression} is requested, [evaluateTenorExpression()] is used.
-#' @param expression_meta Optional \code{data.frame} with one row per sample
-#'   column in \code{expression_matrix}; should include \code{tissue} and/or
-#'   \code{stage} columns when available.
+#' @param ann_column_map Path or [readAnnColumnMap()] result. Required when
+#'   \code{annotation} is in \code{sources}.
+#' @param expression_matrix Gene x sample expression matrix (\code{data.frame}
+#'   or matrix) with row names = gene IDs. Required when \code{expression}
+#'   is in \code{sources}.
+#' @param expression_sample_map Path or [readExpressionSampleMap()] result
+#'   (or legacy meta \code{data.frame} with a \code{sample} column). Required
+#'   when \code{expression} is in \code{sources}.
+#' @param expression_meta Deprecated alias for \code{expression_sample_map}.
 #' @param ortholog_table Optional ortholog table with gene/ortholog IDs (and
 #'   optionally scores) used as one evidence channel in ranking.
 #' @param ortholog_cols Named character vector mapping column names
@@ -32,16 +37,12 @@
 #' @param use_cache Read/write evidence cache in the companion store.
 #' @param literature_max Maximum PubMed hits per gene (when \pkg{rentrez} is
 #'   available).
-#' @param use_keyword,use_llm_relevance Annotation channel flags
-#'   (defaults from \code{inst/config/ai-lazygas-models.yaml}).
-#' @param use_semantic Ignored; LSA / semantic annotation scoring was removed.
-#'   Retained for call compatibility.
-#' @param download_tenor If \code{TRUE}, download missing TENOR CSVs when using
-#'   the expression channel without \code{expression_matrix}.
-#' @param llm_model,llm_base_url,llm_timeout LLM settings for annotation
-#'   relevance scoring.
+#' @param use_keyword Annotation keyword matching flag (default from config).
+#' @param use_semantic Ignored; retained for call compatibility.
+#' @param use_llm_relevance,download_tenor,llm_model,llm_base_url,llm_timeout
+#'   Ignored; retained for call compatibility.
 #' @param gff Optional \code{GRanges} for finemap GFF-window fallback when
-#'   SnpEff is missing or does not assign a gene (Phase 2 H1).
+#'   SnpEff is missing or does not assign a gene.
 #' @param gff_windows Optional precomputed gene windows (from
 #'   \code{.gff_gene_windows}); overrides building from \code{gff}.
 #'
@@ -49,14 +50,17 @@
 #'   records (\code{source}, \code{score}, \code{snippets}, \code{details}).
 #' @export
 #'
-#' @seealso [rankPhenotypeCandidates()], [evaluateTenorExpression()]
+#' @seealso [rankPhenotypeCandidates()], [readAnnColumnMap()],
+#'   [readExpressionSampleMap()]
 collectGeneEvidence <- function(gene_ids,
                                 query,
                                 candidate = NULL,
                                 object = NULL,
                                 pheno = NULL,
                                 sources = phase1DefaultSources(),
+                                ann_column_map = NULL,
                                 expression_matrix = NULL,
+                                expression_sample_map = NULL,
                                 expression_meta = NULL,
                                 ortholog_table = NULL,
                                 ortholog_cols = c(
@@ -69,7 +73,7 @@ collectGeneEvidence <- function(gene_ids,
                                 use_keyword = NULL,
                                 use_semantic = NULL,
                                 use_llm_relevance = NULL,
-                                download_tenor = TRUE,
+                                download_tenor = FALSE,
                                 llm_model = NULL,
                                 llm_base_url = NULL,
                                 llm_timeout = NULL,
@@ -85,24 +89,26 @@ collectGeneEvidence <- function(gene_ids,
   search_text <- .phenotype_query_as_search_text(query)
   flags <- .ai_config_ranking_flags()
   if (is.null(use_keyword)) use_keyword <- flags$use_keyword
-  if (is.null(use_llm_relevance)) use_llm_relevance <- flags$use_llm_relevance
-  # FALSE / fallback path: never run annotation LLM relevance (A1/A2)
-  if (inherits(query, "PhenotypeQuery") &&
-      identical(as.character(query$parsed_by %||% "")[1L], "fallback")) {
-    use_llm_relevance <- FALSE
-  }
   if (isTRUE(use_semantic)) {
     warning(
       "'use_semantic' is ignored; LSA / text2vec annotation scoring was removed.",
       call. = FALSE
     )
   }
+  if (isTRUE(use_llm_relevance)) {
+    warning("'use_llm_relevance' is ignored in this build.", call. = FALSE)
+  }
+  if (isTRUE(download_tenor)) {
+    warning(
+      "'download_tenor' is ignored; provide expression_matrix and expression_sample_map.",
+      call. = FALSE
+    )
+  }
   use_semantic <- FALSE
-  llm_settings <- .ai_config_llm_settings(
-    model = llm_model %||% flags$llm_model,
-    base_url = llm_base_url,
-    timeout = llm_timeout
-  )
+
+  if (is.null(expression_sample_map) && !is.null(expression_meta)) {
+    expression_sample_map <- expression_meta
+  }
 
   if (is.null(candidate) && !is.null(object)) {
     pheno_name <- .determine_phenotype_name(object = object, pheno = pheno)
@@ -110,6 +116,22 @@ collectGeneEvidence <- function(gene_ids,
   }
   if (!is.null(candidate) && !"Gene_ID" %in% names(candidate)) {
     stop("'candidate' must contain a Gene_ID column.", call. = FALSE)
+  }
+
+  if ("annotation" %in% sources) {
+    if (is.null(candidate)) {
+      stop(
+        "'candidate' (with annotation columns) is required for the annotation channel.",
+        call. = FALSE
+      )
+    }
+    ann_column_map <- .validate_ann_column_map(ann_column_map, names(candidate))
+  }
+  if ("expression" %in% sources) {
+    expression_sample_map <- .validate_expression_inputs(
+      expression_matrix,
+      expression_sample_map
+    )
   }
 
   cache_key <- .evidence_cache_hash(list(
@@ -121,8 +143,13 @@ collectGeneEvidence <- function(gene_ids,
     sources = sources,
     use_keyword = use_keyword,
     use_semantic = FALSE,
-    use_llm_relevance = use_llm_relevance,
-    keyword_engine = "phrase_boundary_v1"
+    use_llm_relevance = FALSE,
+    keyword_engine = "phrase_boundary_v1",
+    ann_columns = if ("annotation" %in% sources) {
+      .ann_ranking_columns(ann_column_map)
+    } else {
+      character()
+    }
   ))
 
   ann_batch <- NULL
@@ -133,10 +160,7 @@ collectGeneEvidence <- function(gene_ids,
       search_text = search_text,
       query = query,
       use_keyword = use_keyword,
-      use_llm_relevance = use_llm_relevance,
-      llm_model = llm_settings$model,
-      llm_base_url = llm_settings$base_url,
-      llm_timeout = llm_settings$timeout
+      ann_column_map = ann_column_map
     )
   }
 
@@ -189,9 +213,7 @@ collectGeneEvidence <- function(gene_ids,
         gene_id = gid,
         query = query,
         expression_matrix = expression_matrix,
-        expression_meta = expression_meta,
-        object = object,
-        download_tenor = download_tenor
+        expression_sample_map = expression_sample_map
       )
     }
     if ("literature" %in% sources) {
@@ -302,10 +324,7 @@ collectGeneEvidence <- function(gene_ids,
                                        search_text,
                                        query,
                                        use_keyword = TRUE,
-                                       use_llm_relevance = FALSE,
-                                       llm_model = NULL,
-                                       llm_base_url = NULL,
-                                       llm_timeout = 600) {
+                                       ann_column_map) {
   empty <- function(gid) {
     list(
       source = "annotation",
@@ -318,7 +337,6 @@ collectGeneEvidence <- function(gene_ids,
         matched_related = list(),
         unmatched_keywords = character(),
         matched_context = character(),
-        llm_relevance_score = 0,
         match_method = "none"
       )
     )
@@ -329,15 +347,9 @@ collectGeneEvidence <- function(gene_ids,
     return(out)
   }
 
-  ann_cols <- tryCatch(
-    .resolve_ann_cols(candidate = candidate, ann_cols = NULL),
-    error = function(e) character()
-  )
-  if (!length(ann_cols)) {
-    return(out)
-  }
+  ann_cols <- .ann_ranking_columns(ann_column_map)
+  .validate_ann_column_map(ann_column_map, names(candidate))
 
-  # One annotation text per gene (best row later for snippets)
   texts <- character(length(gene_ids))
   names(texts) <- gene_ids
   snippets <- vector("list", length(gene_ids))
@@ -354,12 +366,6 @@ collectGeneEvidence <- function(gene_ids,
     keep <- nzchar(ann_text)
     texts[[i]] <- if (any(keep)) paste(unique(ann_text[keep]), collapse = " | ") else ""
     snippets[[i]] <- ann_text[keep]
-  }
-
-  # FALSE / fallback path: never run annotation LLM relevance
-  if (inherits(query, "PhenotypeQuery") &&
-      identical(as.character(query$parsed_by %||% "")[1L], "fallback")) {
-    use_llm_relevance <- FALSE
   }
 
   kw_details <- vector("list", length(gene_ids))
@@ -387,37 +393,6 @@ collectGeneEvidence <- function(gene_ids,
     )
   }
 
-  llm_score <- rep(0, length(gene_ids))
-  names(llm_score) <- gene_ids
-  # TRUE path: relevance only for genes with any keyword/related hit (A2 §3.4)
-  hit_genes <- gene_ids[
-    vapply(gene_ids, function(gid) {
-      det <- kw_details[[gid]]
-      as.numeric(det$keyword_score %||% 0) > 0 ||
-        length(det$matched_keywords %||% character()) > 0L ||
-        length(det$matched_synonym %||% list()) > 0L ||
-        length(det$matched_related %||% list()) > 0L ||
-        length(det$matched_context %||% character()) > 0L
-    }, logical(1L))
-  ]
-  if (isTRUE(use_llm_relevance) && length(hit_genes) && any(nzchar(texts[hit_genes]))) {
-    message(
-      "ranking: LLM annotation relevance for ",
-      length(hit_genes), " gene(s)..."
-    )
-    llm_hit <- .llm_annotation_relevance_scores(
-      gene_ids = hit_genes,
-      texts = texts[hit_genes],
-      query = query,
-      search_text = search_text,
-      model = llm_model,
-      base_url = llm_base_url,
-      timeout = llm_timeout
-    )
-    llm_score[names(llm_hit)] <- llm_hit
-    message("ranking: LLM annotation relevance done")
-  }
-
   for (gid in gene_ids) {
     det <- kw_details[[gid]] %||% list(
       keyword_score = 0,
@@ -428,25 +403,10 @@ collectGeneEvidence <- function(gene_ids,
       matched_context = character()
     )
     kw <- as.numeric(det$keyword_score %||% 0)
-    llm <- as.numeric(llm_score[[gid]] %||% 0)
     if (!is.finite(kw)) kw <- 0
-    if (!is.finite(llm)) llm <- 0
-    # No keyword hit => do not use LLM score alone (A2 §3.4)
-    if (kw <= 0 &&
-        !length(det$matched_keywords %||% character()) &&
-        !length(det$matched_synonym %||% list()) &&
-        !length(det$matched_related %||% list()) &&
-        !length(det$matched_context %||% character())) {
-      llm <- 0
-    }
-    score <- max(kw, llm)
-    methods <- c(
-      if (kw > 0) "keyword",
-      if (llm > 0) "llm"
-    )
     out[[gid]] <- list(
       source = "annotation",
-      score = score,
+      score = kw,
       snippets = snippets[[gid]] %||% character(),
       details = list(
         keyword_score = kw,
@@ -455,122 +415,13 @@ collectGeneEvidence <- function(gene_ids,
         matched_related = det$matched_related %||% list(),
         unmatched_keywords = as.character(det$unmatched_keywords %||% character()),
         matched_context = as.character(det$matched_context %||% character()),
-        llm_relevance_score = llm,
-        match_method = if (length(methods)) paste(methods, collapse = "+") else "none"
+        match_method = if (kw > 0) "keyword" else "none"
       )
     )
   }
   out
 }
 
-.llm_annotation_relevance_scores <- function(gene_ids,
-                                             texts,
-                                             query,
-                                             search_text,
-                                             model = NULL,
-                                             base_url = NULL,
-                                             timeout = 600) {
-  scores <- rep(0, length(gene_ids))
-  names(scores) <- gene_ids
-
-  if (!llmHealthCheck(base_url = base_url, timeout = 5)) {
-    warning(
-      "LLM unreachable; llm_relevance_score set to 0 for annotation channel.",
-      call. = FALSE
-    )
-    return(scores)
-  }
-
-  payload <- lapply(seq_along(gene_ids), function(i) {
-    list(
-      gene_id = gene_ids[[i]],
-      annotation = texts[[i]]
-    )
-  })
-  # Cap payload size for long candidate lists
-  if (length(payload) > 80L) {
-    payload <- payload[seq_len(80L)]
-  }
-
-  trait <- if (inherits(query, "PhenotypeQuery")) {
-    query$trait_text
-  } else {
-    search_text
-  }
-
-  system_msg <- paste(
-    "You score how relevant each gene annotation is to a phenotype query.",
-    "Return ONLY JSON: {\"scores\":[{\"gene_id\":\"...\",\"score\":0.0}, ...]}",
-    "score must be a number from 0 to 1.",
-    "Use 1 for clear causal/functional match, 0.5 for plausible, 0 for unrelated."
-  )
-  user_msg <- jsonlite::toJSON(
-    list(phenotype_query = trait, genes = payload),
-    auto_unbox = TRUE,
-    pretty = TRUE
-  )
-
-  raw <- tryCatch(
-    llmChat(
-      messages = list(
-        list(role = "system", content = system_msg),
-        list(role = "user", content = user_msg)
-      ),
-      model = model,
-      base_url = base_url,
-      json_mode = TRUE,
-      timeout = timeout
-    ),
-    error = function(e) {
-      warning("LLM annotation relevance failed: ", conditionMessage(e),
-              call. = FALSE)
-      NULL
-    }
-  )
-  if (is.null(raw)) {
-    return(scores)
-  }
-
-  parse_scores <- function(raw_s) {
-    parsed <- tryCatch(
-      jsonlite::fromJSON(raw_s, simplifyVector = FALSE),
-      error = function(e) NULL
-    )
-    if (is.null(parsed)) {
-      return(NULL)
-    }
-    items <- parsed$scores %||% parsed
-    if (!is.list(items)) {
-      return(NULL)
-    }
-    items
-  }
-  items <- parse_scores(raw)
-  if (is.null(items)) {
-    raw2 <- .llm_scrutiny_pass(
-      llm = list(model = model, base_url = base_url, timeout = timeout),
-      rules = system_msg,
-      prior_output = raw,
-      problems = "JSON parse failed or missing scores array",
-      extra_user = user_msg,
-      timeout = timeout
-    )
-    if (!inherits(raw2, "error")) {
-      items <- parse_scores(raw2)
-    }
-  }
-  if (is.null(items)) {
-    return(scores)
-  }
-  for (item in items) {
-    gid <- as.character(item$gene_id %||% NA_character_)
-    sc <- suppressWarnings(as.numeric(item$score %||% NA_real_))
-    if (!is.na(gid) && gid %in% names(scores) && is.finite(sc)) {
-      scores[[gid]] <- max(0, min(1, sc))
-    }
-  }
-  scores
-}
 
 .evidence_snpeff <- function(gene_id, gene_rows) {
   empty <- list(
@@ -909,21 +760,9 @@ collectGeneEvidence <- function(gene_ids,
 
 .evidence_expression <- function(gene_id,
                                  query,
-                                 expression_matrix = NULL,
-                                 expression_meta = NULL,
-                                 object = NULL,
-                                 download_tenor = TRUE) {
+                                 expression_matrix,
+                                 expression_sample_map) {
   empty <- list(source = "expression", score = 0, snippets = character(), details = list())
-
-  # Prefer explicit matrix when provided; otherwise TENOR (Phase 1)
-  if (is.null(expression_matrix)) {
-    return(evaluateTenorExpression(
-      gene_id = gene_id,
-      query = query,
-      object = object,
-      download_if_missing = isTRUE(download_tenor)
-    ))
-  }
 
   mat <- as.matrix(expression_matrix)
   if (is.null(rownames(mat))) {
@@ -946,26 +785,18 @@ collectGeneEvidence <- function(gene_ids,
   keywords <- keywords[nzchar(keywords)]
 
   matched_samples <- character()
-  if (!is.null(expression_meta) && nrow(expression_meta) > 0L) {
-    meta <- expression_meta
-    if (!is.null(rownames(meta))) {
-      meta$.__sample__ <- rownames(meta)
-    } else if ("sample" %in% names(meta)) {
-      meta$.__sample__ <- meta$sample
-    } else {
-      meta$.__sample__ <- rownames(meta)
-    }
-    text_cols <- intersect(names(meta), c("tissue", "stage", "condition", "organ"))
-    if (length(text_cols)) {
-      meta_text <- apply(meta[, text_cols, drop = FALSE], 1L, function(row) {
-        paste(na.omit(as.character(row)), collapse = " ")
-      })
-      meta_text <- tolower(meta_text)
-      for (kw in keywords) {
-        hit <- grepl(kw, meta_text, fixed = TRUE)
-        if (any(hit)) {
-          matched_samples <- c(matched_samples, meta$.__sample__[hit])
-        }
+  meta <- expression_sample_map
+  meta$.__sample__ <- as.character(meta$sample)
+  text_cols <- intersect(names(meta), c("tissue", "stage", "condition", "organ"))
+  if (length(text_cols)) {
+    meta_text <- apply(meta[, text_cols, drop = FALSE], 1L, function(row) {
+      paste(stats::na.omit(as.character(row)), collapse = " ")
+    })
+    meta_text <- tolower(meta_text)
+    for (kw in keywords) {
+      hit <- grepl(kw, meta_text, fixed = TRUE)
+      if (any(hit)) {
+        matched_samples <- c(matched_samples, meta$.__sample__[hit])
       }
     }
   }

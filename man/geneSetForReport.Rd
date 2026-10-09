@@ -7,7 +7,7 @@
 geneSetForReport(
   x,
   peak_id,
-  mode = c("union_champions", "composite_top_n", "union_all"),
+  mode = c("union_all", "union_champions", "composite_top_n"),
   composite_ids = NULL
 )
 }
@@ -16,8 +16,8 @@ geneSetForReport(
 
 \item{peak_id}{Peak id.}
 
-\item{mode}{One of \code{"union_champions"}, \code{"composite_top_n"},
-\code{"union_all"}.}
+\item{mode}{One of \code{"union_all"} (default), \code{"union_champions"},
+or \code{"composite_top_n"}.}
 
 \item{composite_ids}{Optional Gene_ID vector for composite top_n / union_all.}
 }

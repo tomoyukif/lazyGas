@@ -13,30 +13,25 @@
 }
 
 .resolve_ann_cols <- function(candidate, ann_cols) {
-  if (!is.null(ann_cols) && length(ann_cols)) {
-    if (!is.character(ann_cols)) {
-      stop("'ann_cols' must be a character vector.", call. = FALSE)
-    }
-    miss <- setdiff(ann_cols, names(candidate))
-    if (length(miss)) {
-      stop(
-        "Column(s) not found in candidate: ",
-        paste(miss, collapse = ", "),
-        call. = FALSE
-      )
-    }
-    return(ann_cols)
-  }
-
-  cols <- setdiff(names(candidate), .candidate_non_ann_cols())
-  if (!length(cols)) {
+  if (is.null(ann_cols) || !length(ann_cols)) {
     stop(
-      "No annotation columns found in candidate. ",
-      "Run listCandidate() with ann = ..., or specify ann_cols explicitly.",
+      "'ann_cols' is required. Provide columns from readAnnColumnMap() ",
+      "(use_for_ranking = TRUE); automatic column detection was removed.",
       call. = FALSE
     )
   }
-  cols
+  if (!is.character(ann_cols)) {
+    stop("'ann_cols' must be a character vector.", call. = FALSE)
+  }
+  miss <- setdiff(ann_cols, names(candidate))
+  if (length(miss)) {
+    stop(
+      "Column(s) not found in candidate: ",
+      paste(miss, collapse = ", "),
+      call. = FALSE
+    )
+  }
+  ann_cols
 }
 
 .candidate_annotation_text <- function(candidate, ann_cols) {

@@ -67,50 +67,6 @@ library(lazyGas)
   tags$p(em(paste0("No ", label, " data for this phenotype. Run the pipeline step first.")))
 }
 
-.sidebar_llm_controls <- function() {
-  tagList(
-    checkboxInput("use_llm", "Use local LLM for query parsing", value = FALSE),
-    textInput("llm_model", "LLM model", value = Sys.getenv("LAZYGAS_LLM_MODEL", "gemma4-31b-64k:latest")),
-    textInput("llm_url", "LLM URL", value = Sys.getenv("LAZYGAS_LLM_URL", "http://127.0.0.1:11435")),
-    hr(),
-    h5("Server actions"),
-    actionButton(
-      "start_ollama_btn",
-      "Start Ollama",
-      class = "btn-warning btn-sm btn-block",
-      style = "margin-bottom: 4px;"
-    ),
-    helpText("Start the Ollama API server at the URL above."),
-    actionButton(
-      "pull_ollama_btn",
-      "Pull model",
-      class = "btn-default btn-sm btn-block",
-      style = "margin-bottom: 4px;"
-    ),
-    helpText("Download the selected model if it is not installed yet."),
-    actionButton(
-      "stop_ollama_btn",
-      "Stop Ollama (lazyGas)",
-      class = "btn-default btn-sm btn-block",
-      style = "margin-bottom: 4px;"
-    ),
-    helpText("Stop only Ollama processes started from this R session."),
-    actionButton(
-      "setup_apptainer_btn",
-      "Setup Ollama (Apptainer)",
-      class = "btn-primary btn-sm btn-block",
-      style = "margin-bottom: 4px;"
-    ),
-    helpText("Build or configure the Apptainer image for containerized Ollama."),
-    actionButton(
-      "refresh_ollama_btn",
-      "Refresh status",
-      class = "btn-default btn-sm btn-block",
-      style = "margin-bottom: 4px;"
-    ),
-    helpText("Reload server and model status in the main panel.")
-  )
-}
 
 ui <- fluidPage(
   tags$head(
@@ -182,20 +138,10 @@ ui <- fluidPage(
         )
       ),
       conditionalPanel(
-        condition = "input.main_tabs == 'Local LLM'",
-        h4("Local LLM"),
-        helpText(
-          "Optional. When enabled, the LLM parses phenotype queries during ranking ",
-          "and powers chat explanations."
-        ),
-        .sidebar_llm_controls()
-      ),
-      conditionalPanel(
         condition = "input.main_tabs == 'Ranked genes'",
         h4("Candidate ranking"),
         helpText(
-          "Uses the phenotype selected on the GWAS overview tab. ",
-          "Configure the local LLM on the Local LLM tab if needed."
+          "Uses the phenotype selected on the GWAS overview tab."
         ),
         textAreaInput(
           "trait_text",
@@ -207,6 +153,21 @@ ui <- fluidPage(
         textInput("stage", "Developmental stage", value = "maturation"),
         textInput("conditions", "Conditions (optional)", value = ""),
         numericInput("top_n", "Top N genes", value = 15, min = 1, max = 200),
+        textInput(
+          "ann_column_map_path",
+          "Annotation column map (CSV/YAML)",
+          value = system.file("extdata", "demo_ann_column_map.csv", package = "lazyGas")
+        ),
+        textInput(
+          "expression_matrix_path",
+          "Expression matrix CSV (optional)",
+          value = system.file("extdata", "demo_expression.csv", package = "lazyGas")
+        ),
+        textInput(
+          "expression_sample_map_path",
+          "Expression sample map (CSV/YAML)",
+          value = system.file("extdata", "demo_expression_sample_map.csv", package = "lazyGas")
+        ),
         actionButton("rank_btn", "Rank candidates", class = "btn-success")
       ),
       conditionalPanel(
@@ -238,10 +199,10 @@ ui <- fluidPage(
         )
       ),
       conditionalPanel(
-        condition = "input.main_tabs == 'Chat / explanation'",
+        condition = "input.main_tabs == 'Explanation'",
         h4("Explanation"),
         helpText(
-          "Uses LLM settings from the Local LLM tab when enabled. ",
+          "Template Markdown report from ranked evidence (no LLM). ",
           "Top N genes follows the value set on the Ranked genes tab."
         ),
         selectInput("explain_lang", "Explanation language", choices = c("ja", "en")),
@@ -269,11 +230,6 @@ ui <- fluidPage(
           uiOutput("groups_panel")
         ),
         tabPanel(
-          "Local LLM",
-          br(),
-          uiOutput("llm_status_panel")
-        ),
-        tabPanel(
           "Ranked genes",
           br(),
           uiOutput("rank_status"),
@@ -296,7 +252,7 @@ ui <- fluidPage(
           uiOutput("variant_panel")
         ),
         tabPanel(
-          "Chat / explanation",
+          "Explanation",
           br(),
           uiOutput("chat_status"),
           div(
@@ -326,235 +282,6 @@ server <- function(input, output, session) {
   task_label <- reactiveVal("")
   task_detail <- reactiveVal("")
   task_value <- reactiveVal(0)
-  ollama_status_text <- reactiveVal(
-    describeOllamaStatus(
-      base_url = Sys.getenv("LAZYGAS_LLM_URL", "http://127.0.0.1:11435"),
-      model = Sys.getenv("LAZYGAS_LLM_MODEL", "gemma4-31b-64k:latest")
-    )
-  )
-
-  refresh_ollama_status <- function() {
-    ollama_status_text(
-      describeOllamaStatus(base_url = input$llm_url, model = input$llm_model)
-    )
-  }
-
-  button_ids_to_lock <- c(
-    "load_btn", "start_ollama_btn", "pull_ollama_btn", "stop_ollama_btn",
-    "setup_apptainer_btn", "refresh_ollama_btn", "rank_btn",
-    "explain_btn", "chat_btn"
-  )
-
-  start_task <- function(label) {
-    task_label(label)
-    task_detail("")
-    task_value(0)
-    task_active(TRUE)
-  }
-
-  update_task <- function(value = NULL, detail = NULL) {
-    if (!is.null(value)) {
-      task_value(max(0, min(1, value)))
-    }
-    if (!is.null(detail)) {
-      task_detail(detail)
-    }
-  }
-
-  finish_task <- function() {
-    task_active(FALSE)
-    task_label("")
-    task_detail("")
-    task_value(0)
-  }
-
-  observe({
-    busy <- isTRUE(task_active())
-    session$sendCustomMessage(
-      "setBusyButtons",
-      list(ids = button_ids_to_lock, busy = busy)
-    )
-  })
-
-  observe({
-    session$sendCustomMessage(
-      "armBusyClickLock",
-      list(
-        trigger_ids = c("rank_btn", "explain_btn", "chat_btn"),
-        lock_ids = button_ids_to_lock
-      )
-    )
-  })
-
-  output$global_task_status <- renderUI({
-    if (!isTRUE(task_active())) {
-      return(NULL)
-    }
-    pct <- round(task_value() * 100)
-    tags$div(
-      class = "alert alert-info",
-      style = "margin-bottom: 12px;",
-      role = "status",
-      tags$div(
-        style = "display:flex;justify-content:space-between;align-items:center;gap:8px;",
-        tags$strong(task_label())
-      ),
-      tags$div(
-        class = "progress",
-        style = "margin-top:8px;margin-bottom:8px;",
-        tags$div(
-          class = "progress-bar progress-bar-info progress-bar-striped active",
-          role = "progressbar",
-          style = paste0("width:", pct, "%;min-width:2em;"),
-          paste0(pct, "%")
-        )
-      ),
-      if (nzchar(task_detail())) tags$p(style = "margin:0;", task_detail())
-    )
-  })
-
-  output$llm_status_panel <- renderUI({
-    input$refresh_ollama_btn
-    input$start_ollama_btn
-    input$pull_ollama_btn
-    input$stop_ollama_btn
-    input$setup_apptainer_btn
-    input$main_tabs
-    input$use_llm
-    input$llm_model
-    input$llm_url
-
-    running <- tryCatch(
-      llmHealthCheck(base_url = input$llm_url, timeout = 2),
-      error = function(e) FALSE
-    )
-    models <- if (isTRUE(running)) {
-      tryCatch(
-        listOllamaModels(base_url = input$llm_url),
-        error = function(e) character()
-      )
-    } else {
-      character()
-    }
-    model_avail <- isTRUE(running) &&
-      nzchar(input$llm_model) &&
-      input$llm_model %in% models
-
-    tags$div(
-      tags$h4("Runtime"),
-      tags$table(
-        class = "table table-condensed",
-        style = "max-width: 640px;",
-        tags$tr(tags$td(tags$strong("Base URL")), tags$td(tags$code(input$llm_url))),
-        tags$tr(
-          tags$td(tags$strong("Server")),
-          tags$td(if (isTRUE(running)) "Running" else "Not reachable")
-        ),
-        tags$tr(
-          tags$td(tags$strong("Use LLM")),
-          tags$td(
-            if (isTRUE(input$use_llm)) {
-              "Enabled for ranking and chat"
-            } else {
-              "Disabled (rule-based fallback)"
-            }
-          )
-        ),
-        tags$tr(tags$td(tags$strong("Selected model")), tags$td(tags$code(input$llm_model))),
-        tags$tr(
-          tags$td(tags$strong("Model status")),
-          tags$td(
-            if (!isTRUE(running)) {
-              "Start Ollama to check models"
-            } else if (model_avail) {
-              "Installed"
-            } else {
-              "Not installed — use Pull model"
-            }
-          )
-        )
-      ),
-      tags$h4("Diagnostics"),
-      tags$pre(
-        style = "white-space: pre-wrap; background: #f7f7f7; padding: 10px; border-radius: 4px;",
-        ollama_status_text()
-      ),
-      if (length(models)) {
-        tagList(
-          tags$h4("Installed models"),
-          tags$ul(lapply(models, tags$li))
-        )
-      } else if (isTRUE(running)) {
-        tags$p(em("No models reported by the Ollama API."))
-      }
-    )
-  })
-
-  observeEvent(input$main_tabs, {
-    if (identical(input$main_tabs, "Local LLM")) {
-      refresh_ollama_status()
-    }
-  }, ignoreInit = TRUE)
-
-  observeEvent(input$refresh_ollama_btn, {
-    refresh_ollama_status()
-  })
-
-  observeEvent(input$setup_apptainer_btn, {
-    tryCatch({
-      configureLazyGasOllama(
-        base_url = input$llm_url,
-        model = input$llm_model,
-        build_sif_if_missing = TRUE
-      )
-      refresh_ollama_status()
-      showNotification("Apptainer Ollama configured.", type = "message")
-    }, error = function(e) {
-      showNotification(conditionMessage(e), type = "error", duration = NULL)
-      refresh_ollama_status()
-    })
-  })
-
-  observeEvent(input$start_ollama_btn, {
-    tryCatch({
-      startLocalLLM(
-        model = input$llm_model,
-        base_url = input$llm_url,
-        pull_model = FALSE,
-        start_server = TRUE
-      )
-      refresh_ollama_status()
-      showNotification("Ollama server is ready.", type = "message")
-    }, error = function(e) {
-      showNotification(conditionMessage(e), type = "error", duration = NULL)
-      refresh_ollama_status()
-    })
-  })
-
-  observeEvent(input$pull_ollama_btn, {
-    tryCatch({
-      if (!llmHealthCheck(base_url = input$llm_url, timeout = 2)) {
-        startOllamaServer(base_url = input$llm_url, wait_seconds = 45)
-      }
-      pullOllamaModel(model = input$llm_model, base_url = input$llm_url)
-      refresh_ollama_status()
-      showNotification(paste("Model", input$llm_model, "is ready."), type = "message")
-    }, error = function(e) {
-      showNotification(conditionMessage(e), type = "error", duration = NULL)
-      refresh_ollama_status()
-    })
-  })
-
-  observeEvent(input$stop_ollama_btn, {
-    tryCatch({
-      stopOllamaServer(base_url = input$llm_url, only_started_by_lazygas = TRUE)
-      refresh_ollama_status()
-      showNotification("Stop request sent.", type = "message")
-    }, error = function(e) {
-      showNotification(conditionMessage(e), type = "error")
-      refresh_ollama_status()
-    })
-  })
 
   observeEvent(input$load_btn, {
     gds_raw <- trimws(input$gds_path)
@@ -784,18 +511,23 @@ server <- function(input, output, session) {
         tryCatch({
           update_task(0.05, "Loading reference data")
           shiny::incProgress(0.05, detail = "Loading reference data")
-          expr_fn <- system.file("extdata", "demo_expression.csv", package = "lazyGas")
-          meta_fn <- system.file("extdata", "demo_expression_meta.csv", package = "lazyGas")
+          ann_map_path <- input$ann_column_map_path
+          if (!nzchar(ann_map_path) || !file.exists(ann_map_path)) {
+            stop("Annotation column map is required (CSV/YAML).", call. = FALSE)
+          }
+
+          expr_fn <- input$expression_matrix_path
+          map_fn <- input$expression_sample_map_path
           expr_mat <- NULL
-          expr_meta <- NULL
-          if (nzchar(expr_fn) && file.exists(expr_fn)) {
+          expr_map <- NULL
+          sources <- c("annotation", "gwas", "literature", "ortholog")
+          if (nzchar(expr_fn) && file.exists(expr_fn) &&
+              nzchar(map_fn) && file.exists(map_fn)) {
             expr_df <- read.csv(expr_fn, stringsAsFactors = FALSE, check.names = FALSE)
             rownames(expr_df) <- expr_df$Gene_ID
             expr_mat <- as.matrix(expr_df[, setdiff(names(expr_df), "Gene_ID"), drop = FALSE])
-            if (nzchar(meta_fn) && file.exists(meta_fn)) {
-              expr_meta <- read.csv(meta_fn, stringsAsFactors = FALSE)
-              rownames(expr_meta) <- expr_meta$sample
-            }
+            expr_map <- readExpressionSampleMap(map_fn)
+            sources <- c("annotation", "gwas", "expression", "literature", "ortholog")
           }
 
           ortho_fn <- system.file("extdata", "demo_orthologs.csv", package = "lazyGas")
@@ -812,9 +544,6 @@ server <- function(input, output, session) {
             tissues = input$tissues,
             stage = input$stage,
             conditions = if (nzchar(input$conditions)) input$conditions else NULL,
-            use_llm = isTRUE(input$use_llm),
-            llm_model = input$llm_model,
-            llm_base_url = input$llm_url,
             object = lg,
             save = TRUE
           )
@@ -826,9 +555,10 @@ server <- function(input, output, session) {
             object = lg,
             pheno = input$pheno_name,
             query = q,
-            sources = c("annotation", "gwas", "expression", "literature", "ortholog"),
+            sources = sources,
+            ann_column_map = ann_map_path,
             expression_matrix = expr_mat,
-            expression_meta = expr_meta,
+            expression_sample_map = expr_map,
             ortholog_table = ortho,
             top_n = input$top_n,
             use_cache = TRUE,
@@ -1163,11 +893,9 @@ server <- function(input, output, session) {
             query = q,
             object = lg_obj(),
             top_n = min(input$top_n, nrow(df)),
-            use_llm = isTRUE(input$use_llm),
+            use_llm = FALSE,
             language = input$explain_lang,
-            model = input$llm_model,
-            base_url = input$llm_url
-          )
+                                  )
           update_task(0.85, "Formatting response")
           shiny::incProgress(0.65, detail = "Formatting response")
           msgs <- chat_msgs()
@@ -1175,7 +903,7 @@ server <- function(input, output, session) {
           chat_msgs(msgs)
           update_task(1, "Complete")
           shiny::incProgress(0.15, detail = "Complete")
-          updateTabsetPanel(session, "main_tabs", selected = "Chat / explanation")
+          updateTabsetPanel(session, "main_tabs", selected = "Explanation")
         }, error = function(e) {
           explain_err <<- e
         })
@@ -1209,38 +937,16 @@ server <- function(input, output, session) {
         tryCatch({
           update_task(0.2, "Preparing context")
           shiny::incProgress(0.2, detail = "Preparing context")
-          use_llm <- isTRUE(input$use_llm) &&
-            llmHealthCheck(base_url = input$llm_url, timeout = 3)
-          update_task(0.45, if (use_llm) "Calling local LLM" else "Building rule-based answer")
-          shiny::incProgress(
-            0.25,
-            detail = if (use_llm) "Calling local LLM" else "Building rule-based answer"
-          )
-          reply <- if (!use_llm) {
-            answerPhenotypeQuestion(
+          update_task(0.45, "Building rule-based answer")
+          shiny::incProgress(0.25, detail = "Building rule-based answer")
+          reply <- answerPhenotypeQuestion(
               rank_result = df,
               question = user_q,
               query = q,
               object = lg_obj(),
               top_n = min(input$top_n, nrow(df)),
-              use_llm = FALSE,
-              language = input$explain_lang,
-              chat_history = msgs
+              language = input$explain_lang
             )
-          } else {
-            answerPhenotypeQuestion(
-              rank_result = df,
-              question = user_q,
-              query = q,
-              object = lg_obj(),
-              top_n = min(input$top_n, nrow(df)),
-              use_llm = TRUE,
-              language = input$explain_lang,
-              model = input$llm_model,
-              base_url = input$llm_url,
-              chat_history = msgs
-            )
-          }
           update_task(0.9, "Updating chat")
           shiny::incProgress(0.45, detail = "Updating chat")
           msgs <- chat_msgs()
