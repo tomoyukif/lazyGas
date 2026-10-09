@@ -932,7 +932,10 @@ Wakefield ABF assumptions).
 **HTML navigation:** per peak, Hypothesis cards → Candidate list → Evidence.
 Gene_ID in Hypothesis / Candidate links to `#evidence-gene-<Gene_ID>` when that
 gene has an Evidence block; otherwise plain text. **Genes in candidate region**
-is the CS∩GFF count for the peak (not the Evidence `gene_select` size).
+is the CS∩GFF count from E-path GFF windows overlapping the peak region—not
+the Candidate list row count and not the Evidence `gene_select` size. Ranked
+genes may appear in the table without overlapping the CS; the count uses
+`gff_windows` (not rank `Gene_start` alone).
 
 **Out of scope for Phase 2:** Shiny AI report tab (design track C), and
 Phase 3 work (literature KG, de novo GO/KEGG fetch, ontology DAG/map walks).

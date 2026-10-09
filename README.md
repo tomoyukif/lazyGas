@@ -330,8 +330,15 @@ Per peak, the report order is **Hypothesis cards** → **Candidate list** →
 **Evidence**. Gene_ID cells in Hypothesis cards and the Candidate table link to
 `#evidence-gene-<Gene_ID>` when that gene has an Evidence block on the same
 peak; champions or ranked genes without Evidence stay plain text.
-**Genes in candidate region** under Candidate list is the CS∩GFF gene count for
-the peak—not the Evidence gene-set size (`gene_select`).
+
+**Genes in candidate region** (shown above the Candidate list) is the **CS∩GFF**
+count for that peak: genes whose E-path GFF windows overlap the credible-set /
+report region. It is **not** the Candidate list row count and **not** the
+Evidence gene-set size (`gene_select`). Ranked candidates can sit near the peak
+without overlapping the CS interval, so the list can be non-empty while the
+region count is smaller—or vice versa when GFF windows cover more genes than
+the displayed top_n table. Counting uses `gff_windows` when the E path runs;
+it does not treat rank `Gene_start` alone as a zero-width gene.
 
 #### Out of scope for Phase 2
 

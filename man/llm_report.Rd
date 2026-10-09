@@ -123,16 +123,17 @@ compatibility), \code{path}, \code{meta_path}, \code{rank_csv},
 \description{
 Ranks candidates (with required SnpEff + credible-set / finemap channel),
 then writes an HTML report: basic info, per-peak credible-set comment,
-optional Hypothesis cards, scrollable Candidate list (with CS∩GFF
-\dQuote{Genes in candidate region} count), and Evidence frames. Gene_ID
-cells in Hypothesis cards and the Candidate table link to
-\code{#evidence-gene-<Gene_ID>} when that gene has an Evidence block on
-the same peak. Report chrome (headings, tables, CS comments) is always
-English. \code{language = "ja"} only translates LLM-generated per-gene
-prose (keywords / expression / validity) when \code{use_llm = TRUE};
-technical terms and input strings stay unchanged. Ranking scores appear
-only in the table. PIP / distance / -log10P / SnpEff counts are written
-by code.
+optional Hypothesis cards, scrollable Candidate list, and Evidence frames.
+\dQuote{Genes in candidate region} is the CS∩GFF count from E-path
+\code{gff_windows} overlapping the peak region (not Candidate list rows
+and not Evidence \code{gene_select} size). Gene_ID cells in Hypothesis
+cards and the Candidate table link to \code{#evidence-gene-<Gene_ID>}
+when that gene has an Evidence block on the same peak. Report chrome
+(headings, tables, CS comments) is always English. \code{language = "ja"}
+only translates LLM-generated per-gene prose (keywords / expression /
+validity) when \code{use_llm = TRUE}; technical terms and input strings
+stay unchanged. Ranking scores appear only in the table. PIP / distance /
+-log10P / SnpEff counts are written by code.
 }
 \seealso{
 \code{\link[=rankPhenotypeCandidates]{rankPhenotypeCandidates()}}, \code{\link[=reinterpretPeakCandidates]{reinterpretPeakCandidates()}},

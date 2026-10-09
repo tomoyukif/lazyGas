@@ -8,10 +8,13 @@ the release or documentation update for that version.
 ## Changes in version 0.9.2 (2026-10-09)
 
 ### AI HTML report: fix Genes in candidate region = 0
-+ **Genes in candidate region** now counts CS∩GFF from E-path `gff_windows`
-  when available (not rank `Gene_start` alone). Missing `Gene_end` no longer
-  treats a gene as a zero-width point, which falsely reported 0 while the
-  Candidate list still listed genes (e.g. Amylose / Wx).
++ **Genes in candidate region** counts **CS∩GFF** from E-path `gff_windows`
+  when available (genes whose GFF windows overlap the peak CS / report
+  region). It is distinct from Candidate list rows and from Evidence
+  `gene_select` size.
++ Missing rank `Gene_end` no longer treats `Gene_start` as a zero-width
+  gene (that falsely reported 0 while the Candidate list still listed
+  genes, e.g. Amylose / Wx). README and vignette document the distinction.
 
 ---
 
@@ -21,8 +24,9 @@ the release or documentation update for that version.
 + Hypothesis cards and Candidate list Gene_ID cells link to
   `#evidence-gene-<Gene_ID>` when that gene has an Evidence block on the same
   peak; otherwise they stay plain text.
-+ Candidate list shows **Genes in candidate region** (CS∩GFF count per peak),
-  distinct from Evidence gene-set size (`gene_select`).
++ Candidate list shows **Genes in candidate region** (CS∩GFF via E-path
+  `gff_windows`; see 2026-10-09 fix), distinct from Candidate rows and from
+  Evidence gene-set size (`gene_select`).
 + `formatPeakReinterpretation(..., evidence_gene_ids=)` enables the Hypothesis
   card links; Evidence gene headings carry matching HTML `id` anchors.
 
