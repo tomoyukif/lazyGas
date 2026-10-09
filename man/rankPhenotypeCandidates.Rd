@@ -16,12 +16,12 @@ rankPhenotypeCandidates(
   expression_matrix = NULL,
   expression_sample_map = NULL,
   expression_meta = NULL,
+  literature_graph = NULL,
+  ortholog_graph = NULL,
   ortholog_table = NULL,
   ortholog_cols = c(gene_id = "gene_id", ortholog_id = "ortholog_id", score = "score"),
   use_cache = TRUE,
   save = TRUE,
-  use_keyword = NULL,
-  use_semantic = NULL,
   use_llm_relevance = NULL,
   download_tenor = FALSE,
   query_use_llm = FALSE,
@@ -61,16 +61,17 @@ present, ranking runs separately for each peak.}
 
 \item{expression_meta}{Deprecated alias for \code{expression_sample_map}.}
 
-\item{ortholog_table, ortholog_cols}{Ortholog data for ortholog evidence.}
+\item{literature_graph, ortholog_graph}{Edge tables (\code{from}, \code{to})
+required when the matching source is active (see \code{\link[=collectGeneEvidence]{collectGeneEvidence()}}).}
+
+\item{ortholog_table, ortholog_cols}{Deprecated; use \code{ortholog_graph}.}
 
 \item{use_cache}{Use the companion-store evidence cache.}
 
 \item{save}{Save ranked results to the companion store (\code{phenotype_rank}
 section).}
 
-\item{use_keyword}{Passed through to evidence helpers.}
-
-\item{use_semantic, use_llm_relevance, download_tenor, query_use_llm, llm_model, llm_base_url, llm_timeout}{Ignored; retained for call compatibility.}
+\item{use_llm_relevance, download_tenor, query_use_llm, llm_model, llm_base_url, llm_timeout}{Ignored; retained for call compatibility.}
 
 \item{gff, gff_windows}{Passed to \code{\link[=collectGeneEvidence]{collectGeneEvidence()}} for finemap
 GFF-window fallback when SnpEff is absent.}
@@ -85,14 +86,16 @@ Attributes include \code{phenotypeRank} metadata.
 \description{
 Integrates annotation, SnpEff, GWAS, and expression (and optionally
 literature / ortholog) evidence into a composite score for each candidate
-gene \strong{within each GWAS peak}. Channel scores are normalized per peak;
-the same gene on two peaks keeps two rows with peak-local scores.
-There is no cross-peak \code{Gene_ID} deduplication.
+gene \strong{within each GWAS peak}. Channel scores are already on \code{[0, 1]}
+and are \strong{not} re-normalized within the peak. Inactive channels are stored
+as 0.
+The same gene on two peaks keeps two rows. There is no cross-peak
+\code{Gene_ID} deduplication.
 }
 \details{
-Phase 1 defaults: sources
-\code{c("annotation","snpeff","gwas","expression")} with weights
-annotation 0.30 / snpeff 0.35 / gwas 0.25 / expression 0.10.
+Defaults: sources \code{c("snpeff","gwas_dist","gwas_peak")}. Default channel
+weights come from \code{inst/config/ai-lazygas-models.yaml} (via
+\code{\link[=phase1DefaultWeights]{phase1DefaultWeights()}}) and are renormalized over active sources.
 }
 \examples{
 \dontrun{

@@ -119,18 +119,18 @@ test_that("rankPhenotypeCandidates ranks demo candidates", {
     stringsAsFactors = FALSE
   )
   rownames(expr_meta) <- expr_meta$sample
-  ortho <- read.csv(file.path(extdata, "demo_orthologs.csv"), stringsAsFactors = FALSE)
+  ortho_graph <- file.path(extdata, "demo_ortholog_graph.csv")
 
   cand <- lazyData(res$lg, dataset = "candidate", pheno = res$pheno_name)
   ranked <- rankPhenotypeCandidates(
     object = res$lg,
     pheno = res$pheno_name,
     query = q,
-    sources = c("annotation", "gwas", "expression", "ortholog"),
+    sources = c("annotation", "gwas_dist", "gwas_peak", "expression", "ortholog"),
     ann_column_map = .test_ann_column_map(cand),
     expression_matrix = expr_mat,
     expression_sample_map = expr_meta,
-    ortholog_table = ortho,
+    ortholog_graph = ortho_graph,
     top_n = 10L,
     save = TRUE
   )
@@ -157,11 +157,11 @@ test_that("rankPhenotypeCandidates ranks demo candidates", {
     object = res$lg,
     pheno = res$pheno_name,
     query = q,
-    sources = c("annotation", "gwas", "expression", "ortholog"),
+    sources = c("annotation", "gwas_dist", "gwas_peak", "expression", "ortholog"),
     ann_column_map = .test_ann_column_map(cand),
     expression_matrix = expr_mat,
     expression_sample_map = expr_meta,
-    ortholog_table = ortho,
+    ortholog_graph = ortho_graph,
     top_n = NULL,
     save = FALSE
   )
@@ -170,56 +170,88 @@ test_that("rankPhenotypeCandidates ranks demo candidates", {
   expect_true(nrow(ranked_all) >= length(unique(ranked_all$Gene_ID)))
 })
 
-test_that("explainPhenotypeCandidates returns template without LLM", {
-  skip_if_not_installed("lazyGas")
-  cand <- make_test_candidate()
-  q <- phenotypeQuery("fruit weight at maturity", tissues = "fruit", use_llm = FALSE)
-  ranked <- cand
-  ranked$composite_score <- c(0.9, 0.4, 0.2, 0.1)
-  ranked$score_annotation <- ranked$composite_score
-  ranked$score_gwas <- 0
-  ranked$score_expression <- 0
-  ranked$score_literature <- 0
-  ranked$score_ortholog <- 0
-  ranked$evidence_json <- vapply(seq_len(nrow(ranked)), function(i) {
-    jsonlite::toJSON(
-      list(
-        annotation = list(
-          source = "annotation",
-          score = ranked$composite_score[i],
-          snippets = ranked$Description[i]
-        )
-      ),
-      auto_unbox = TRUE
-    )
-  }, character(1))
-  ranked$query_id <- q$query_id
-  attr(ranked, "phenotypeRank") <- list(query_id = q$query_id, pheno = "test")
-
-  txt <- explainPhenotypeCandidates(
-    rank_result = ranked,
-    query = q,
-    use_llm = FALSE,
-    language = "en"
-  )
-  expect_true(grepl("Phenotype exploration", txt))
-  expect_true(grepl("g1", txt))
-})
-
 test_that("collectGeneEvidence returns annotation scores", {
   skip_if_not_installed("lazyGas")
   cand <- make_test_candidate()
-  q <- phenotypeQuery("fruit weight", tissues = "fruit", use_llm = FALSE)
+  q <- phenotypeQuery(
+    "fruit weight",
+    tissues = "fruit",
+    use_llm = FALSE,
+    noun_phrases = "fruit weight",
+    words = c("fruit", "weight")
+  )
   ev <- collectGeneEvidence(
     gene_ids = cand$Gene_ID,
     query = q,
     candidate = cand,
-    sources = c("annotation", "gwas"),
+    sources = c("annotation", "gwas_dist", "gwas_peak"),
     ann_column_map = .test_ann_column_map(cand),
     use_cache = FALSE
   )
   expect_length(ev, nrow(cand))
+  expect_equal(ev[["g1"]]$annotation$score, 0.5)
   expect_true(ev[["g1"]]$annotation$score >= ev[["g2"]]$annotation$score)
+})
+
+test_that("annotation tier prefers action over noun over word", {
+  skip_if_not_installed("lazyGas")
+  cand <- data.frame(
+    Gene_ID = c("a", "n", "w", "z"),
+    Description = c(
+      "protein that regulates flowering time in rice",
+      "involved in flowering time control",
+      "flowering related gene",
+      "photosystem subunit"
+    ),
+    stringsAsFactors = FALSE
+  )
+  q <- phenotypeQuery(
+    "flowering",
+    action_phrases = "regulates flowering",
+    noun_phrases = "flowering time",
+    words = "flowering"
+  )
+  ev <- collectGeneEvidence(
+    gene_ids = cand$Gene_ID,
+    query = q,
+    candidate = cand,
+    sources = "annotation",
+    ann_column_map = .test_ann_column_map(cand),
+    use_cache = FALSE
+  )
+  expect_equal(ev[["a"]]$annotation$score, 1)
+  expect_equal(ev[["n"]]$annotation$score, 0.5)
+  expect_equal(ev[["w"]]$annotation$score, 0.25)
+  expect_equal(ev[["z"]]$annotation$score, 0)
+})
+
+test_that("network literature/ortholog scores are 1 or 0", {
+  skip_if_not_installed("lazyGas")
+  cand <- data.frame(
+    Gene_ID = c("g1", "g2"),
+    Name = c("GENE1", "GENE2"),
+    Description = c("x", "y"),
+    stringsAsFactors = FALSE
+  )
+  edges <- data.frame(
+    from = c("g1", "fruit"),
+    to = c("fruit", "weight"),
+    stringsAsFactors = FALSE
+  )
+  q <- phenotypeQuery("fruit weight", tissues = "fruit", words = "fruit")
+  ev <- collectGeneEvidence(
+    gene_ids = cand$Gene_ID,
+    query = q,
+    candidate = cand,
+    sources = c("literature", "ortholog"),
+    literature_graph = edges,
+    ortholog_graph = edges,
+    use_cache = FALSE
+  )
+  expect_equal(ev[["g1"]]$literature$score, 1)
+  expect_equal(ev[["g2"]]$literature$score, 0)
+  expect_equal(ev[["g1"]]$ortholog$score, 1)
+  expect_equal(ev[["g2"]]$ortholog$score, 0)
 })
 
 
@@ -254,47 +286,6 @@ test_that("restorePhenoFromStore recovers phenotypes from companion store", {
 
   lg2 <- lazyGas::restorePhenoFromStore(res$lg, warn_stub = FALSE)
   expect_equal(getPheno(lg2)$pheno_names, "restore_trait")
-})
-
-test_that("answerPhenotypeQuestion compares genes in Japanese without LLM", {
-  skip_if_not_installed("lazyGas")
-  cand <- make_test_candidate()
-  q <- phenotypeQuery("fruit weight at maturity", tissues = "fruit", use_llm = FALSE)
-  ranked <- cand[1:2, , drop = FALSE]
-  ranked$composite_score <- c(1, 0.15)
-  ranked$score_annotation <- c(1, 0)
-  ranked$score_gwas <- c(1, 0.5)
-  ranked$score_expression <- c(0.6, 0.6)
-  ranked$score_literature <- c(1, 1)
-  ranked$score_ortholog <- c(0.94, 0.88)
-  ranked$evidence_json <- vapply(seq_len(2L), function(i) {
-    jsonlite::toJSON(
-      list(
-        annotation = list(
-          source = "annotation",
-          score = ranked$score_annotation[i],
-          snippets = if (i == 1L) "fruit weight development" else "root development"
-        ),
-        ortholog = list(
-          source = "ortholog",
-          score = ranked$score_ortholog[i],
-          snippets = if (i == 1L) "Os02g01010" else "Os02g01020"
-        )
-      ),
-      auto_unbox = TRUE
-    )
-  }, character(1))
-
-  ans <- answerPhenotypeQuestion(
-    rank_result = ranked,
-    question = "どちらの遺伝子がより候補として信頼できる？",
-    query = q,
-    use_llm = FALSE,
-    language = "ja"
-  )
-  expect_true(grepl("g1", ans))
-  expect_true(grepl("信頼", ans))
-  expect_false(grepl("### 1\\.", ans))
 })
 
 test_that("resolveLazyGasPaths finds companion store", {

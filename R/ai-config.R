@@ -13,16 +13,19 @@ NULL
 .PHASE1_DEFAULT_WEIGHTS <- c(
   annotation = 0.30,
   snpeff = 0.35,
-  gwas = 0.25,
+  gwas_dist = 0.125,
+  gwas_peak = 0.125,
   expression = 0.10,
-  finemap = 0.50
+  finemap = 0.50,
+  literature = 0.50,
+  ortholog = 0.50
 )
 
-.PHASE1_DEFAULT_SOURCES <- c("annotation", "snpeff", "gwas", "expression")
+.PHASE1_DEFAULT_SOURCES <- c("snpeff", "gwas_dist", "gwas_peak")
 
 .EVIDENCE_SOURCE_CHOICES <- c(
-  "annotation", "snpeff", "gwas", "expression", "literature", "ortholog",
-  "finemap"
+  "annotation", "snpeff", "gwas_dist", "gwas_peak", "expression",
+  "literature", "ortholog", "finemap"
 )
 
 #' Load AI-lazyGas YAML config
@@ -123,8 +126,8 @@ phase1DefaultWeights <- function() {
     out <- as.numeric(out)
     names(out) <- names(w)
     keep <- intersect(
-      c("annotation", "snpeff", "gwas", "expression", "finemap",
-        "literature", "ortholog"),
+      c("annotation", "snpeff", "gwas_dist", "gwas_peak", "expression",
+        "finemap", "literature", "ortholog"),
       names(out)
     )
     if (length(keep)) {
@@ -258,11 +261,3 @@ phase1DefaultSources <- function() {
   cfg$phase1
 }
 
-.ai_config_ranking_flags <- function() {
-  cfg <- .ai_config_models()
-  ranking <- cfg$agents$ranking %||% list()
-  list(
-    use_keyword = isTRUE(ranking$use_keyword %||% TRUE),
-    use_semantic = FALSE
-  )
-}

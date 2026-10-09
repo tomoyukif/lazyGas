@@ -778,7 +778,8 @@ Bundled MVP inputs in `inst/extdata/`:
 | `demo_annotation.gff` | Gene models for candidate listing |
 | `demo_snpeff.vcf` | SnpEff annotations (converted to GDS on first run) |
 | `demo_ann.csv` | Gene names and descriptions |
-| `demo_orthologs.csv` | Ortholog IDs/scores for evidence ranking (`collectGeneEvidence()`, `rankPhenotypeCandidates()`) |
+| `demo_ortholog_graph.csv`, `demo_literature_graph.csv` | Edge tables (`from`,`to`) for ortholog/literature network evidence |
+| `demo_orthologs.csv` | Legacy ortholog list (prefer `*_graph.csv`) |
 | `demo_expression.csv`, `demo_expression_meta.csv` | Expression evidence for `runExplorerDemo()` |
 | `pheno.csv` | Single-trait demo phenotype for this vignette |
 
@@ -916,8 +917,6 @@ This vignette matches the **master** non-LLM core. After candidates exist:
 ```{r eval=FALSE}
 q <- phenotypeQuery(text = "trait keywords...", tissues = "leaf")
 ranked <- rankPhenotypeCandidates(object = lg, pheno = "Trait1", query = q)
-md <- explainPhenotypeCandidates(ranked, query = q, object = lg)
-# save = TRUE writes under {stem}.lazygas/reports/
 
 makeInteractiveDashboard(
   object = lg, pheno = "Trait1", gff = gff,
@@ -927,6 +926,7 @@ makeInteractiveDashboard(
 ```
 
 `listCandidate()` always writes wide + simple candidate tables.
+Narrative explainers are omitted in this non-LLM build.
 LLM HTML (`llm_report()`, explore `work_dir`, B5) is on the **agentic** line.
 
 When you change GFF/annotation inputs, delete the affected companion sections

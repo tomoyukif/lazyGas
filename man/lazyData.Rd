@@ -9,8 +9,7 @@ lazyData(
   object,
   dataset = c("scan", "peakcall", "recalc", "groups", "candidate", "snpeff",
     "simple_candidate", "gene_protein_map", "qc", "multitrait", "conditional",
-    "credible_set", "fine_mapping", "pipeline", "phenotype_rank", "phenotype_query",
-    "phenotype_reinterpret"),
+    "credible_set", "fine_mapping", "pipeline", "phenotype_rank", "phenotype_query"),
   pheno,
   kind = NULL,
   ...
@@ -25,13 +24,12 @@ lazyData(
 \code{"recalc"}, \code{"groups"}, \code{"candidate"}, \code{"snpeff"}, \code{"simple_candidate"},
 \code{"gene_protein_map"}, \code{"qc"}, \code{"multitrait"}, \code{"conditional"},
 \code{"credible_set"}, \code{"fine_mapping"}, \code{"pipeline"}, \code{"phenotype_rank"},
-\code{"phenotype_query"}, or \code{"phenotype_reinterpret"}.}
+or \code{"phenotype_query"}.}
 
 \item{pheno}{The phenotype to retrieve.}
 
 \item{kind}{Table kind for section datasets (e.g. \code{"summary"}, \code{"peak_1"},
-or a phenotype-rank query id such as \code{"rank_pq_..."}). For
-\code{phenotype_reinterpret}, optional query id (defaults to latest).}
+or a phenotype-rank query id such as \code{"rank_pq_..."}).}
 
 \item{...}{Additional arguments.}
 }

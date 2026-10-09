@@ -15,12 +15,12 @@ collectGeneEvidence(
   expression_matrix = NULL,
   expression_sample_map = NULL,
   expression_meta = NULL,
+  literature_graph = NULL,
+  ortholog_graph = NULL,
   ortholog_table = NULL,
   ortholog_cols = c(gene_id = "gene_id", ortholog_id = "ortholog_id", score = "score"),
   use_cache = TRUE,
   literature_max = 5L,
-  use_keyword = NULL,
-  use_semantic = NULL,
   use_llm_relevance = NULL,
   download_tenor = FALSE,
   llm_model = NULL,
@@ -43,8 +43,8 @@ and \code{pheno} are given).}
 \item{pheno}{Phenotype name or index when reading candidates from \code{object}.}
 
 \item{sources}{Evidence sources to collect. Any of \code{"annotation"},
-\code{"snpeff"}, \code{"gwas"}, \code{"expression"}, \code{"literature"},
-\code{"ortholog"}, \code{"finemap"}.}
+\code{"snpeff"}, \code{"gwas_dist"}, \code{"gwas_peak"}, \code{"expression"},
+\code{"literature"}, \code{"ortholog"}, \code{"finemap"}.}
 
 \item{ann_column_map}{Path or \code{\link[=readAnnColumnMap]{readAnnColumnMap()}} result. Required when
 \code{annotation} is in \code{sources}.}
@@ -59,20 +59,18 @@ when \code{expression} is in \code{sources}.}
 
 \item{expression_meta}{Deprecated alias for \code{expression_sample_map}.}
 
-\item{ortholog_table}{Optional ortholog table with gene/ortholog IDs (and
-optionally scores) used as one evidence channel in ranking.}
+\item{literature_graph}{Path or edge \code{data.frame} (\code{from}, \code{to})
+for the literature network channel. Required when \code{literature} is in
+\code{sources}.}
 
-\item{ortholog_cols}{Named character vector mapping column names
-(\code{gene_id}, \code{ortholog_id}, \code{score}).}
+\item{ortholog_graph}{Path or edge \code{data.frame} (\code{from}, \code{to})
+for the ortholog network channel. Required when \code{ortholog} is in
+\code{sources}.}
+
+\item{ortholog_table, ortholog_cols, literature_max}{Deprecated; ignored.
+Use \code{ortholog_graph} / \code{literature_graph}.}
 
 \item{use_cache}{Read/write evidence cache in the companion store.}
-
-\item{literature_max}{Maximum PubMed hits per gene (when \pkg{rentrez} is
-available).}
-
-\item{use_keyword}{Annotation keyword matching flag (default from config).}
-
-\item{use_semantic}{Ignored; retained for call compatibility.}
 
 \item{use_llm_relevance, download_tenor, llm_model, llm_base_url, llm_timeout}{Ignored; retained for call compatibility.}
 
@@ -92,12 +90,17 @@ and ortholog evidence for each gene in \code{gene_ids}, optionally using
 cached results in the companion store.
 }
 \details{
-Default sources are \code{annotation}, \code{snpeff}, \code{gwas}, and
-\code{expression}. Annotation scoring uses phrase-aware keyword matching
-only. When \code{annotation} is among \code{sources},
+Default sources are \code{snpeff}, \code{gwas_dist}, and \code{gwas_peak}.
+Other channels (\code{annotation}, \code{expression}, \ldots) remain available
+when listed in \code{sources}. When \code{annotation} is among \code{sources},
+scoring uses tiered phrase hits (action / noun / word → 1 / 0.5 / 0.25) and
 \code{\link[=readAnnColumnMap]{readAnnColumnMap()}} input is required. When \code{expression} is among
 \code{sources}, both \code{expression_matrix} and
-\code{\link[=readExpressionSampleMap]{readExpressionSampleMap()}} input are required.
+\code{\link[=readExpressionSampleMap]{readExpressionSampleMap()}} input are required. When \code{literature} or
+\code{ortholog} is among \code{sources}, the matching edge table
+(\code{literature_graph} / \code{ortholog_graph} with columns \code{from},
+\code{to}) is required; score is 1 if a gene node reaches a phenotype node
+on the undirected graph, else 0.
 }
 \seealso{
 \code{\link[=rankPhenotypeCandidates]{rankPhenotypeCandidates()}}, \code{\link[=readAnnColumnMap]{readAnnColumnMap()}},

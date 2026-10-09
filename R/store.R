@@ -1384,19 +1384,3 @@ NULL
   file.path(reports, paste0(safe, "_", kind, ".html"))
 }
 
-.default_explain_path <- function(object, query_id = NULL, pheno = NULL) {
-  root <- .store_path(object)
-  if (is.null(root) || !nzchar(root) || !dir.exists(root)) {
-    stop("Cannot save explanation: companion store path is missing.", call. = FALSE)
-  }
-  reports <- file.path(root, "reports")
-  dir.create(reports, recursive = TRUE, showWarnings = FALSE)
-  base <- if (!is.null(query_id) && nzchar(as.character(query_id)[1L])) {
-    .store_safe_name(query_id)
-  } else if (!is.null(pheno) && nzchar(as.character(pheno)[1L])) {
-    .store_safe_name(pheno)
-  } else {
-    "explain"
-  }
-  file.path(reports, paste0(base, "_explain.md"))
-}

@@ -1,10 +1,9 @@
 ################################################################################
 #' Run phenotype explorer demo
 #'
-#' Executes a minimal GWAS-to-candidate workflow on bundled demo data, ranks
-#' genes by phenotype-relevant evidence, and optionally writes a template
-#' explanation report. Does not start the Shiny app; use [runLazyGasExplorer()]
-#' for the UI.
+#' Executes a minimal GWAS-to-candidate workflow on bundled demo data and ranks
+#' genes by phenotype-relevant evidence. Does not start the Shiny app; use
+#' [runLazyGasExplorer()] for the UI.
 #'
 #' @param out_dir Output directory (default \code{demo_output/explorer}).
 #' @param overwrite Rebuild companion-store results.
@@ -12,11 +11,9 @@
 #' @param tissues Tissue / organ hint.
 #' @param stage Developmental stage hint.
 #' @param use_llm Ignored (kept for call compatibility).
-#' @param write_report If \code{TRUE}, save a Markdown explanation to
-#'   \code{out_dir/phenotype_explorer_report.md}.
 #'
 #' @return Invisibly, a list with \code{lg}, \code{query}, \code{ranked},
-#'   \code{explanation}, and \code{pheno_name}.
+#'   and \code{pheno_name}.
 #' @export
 #'
 #' @seealso [runLazyGasExplorer()], [rankPhenotypeCandidates()]
@@ -25,8 +22,7 @@ runExplorerDemo <- function(out_dir = file.path(getwd(), "demo_output", "explore
                             trait_text = "fruit weight at maturity",
                             tissues = "fruit",
                             stage = "maturation",
-                            use_llm = FALSE,
-                            write_report = TRUE) {
+                            use_llm = FALSE) {
   if (!requireNamespace("GBScleanR", quietly = TRUE)) {
     stop("Package 'GBScleanR' is required.", call. = FALSE)
   }
@@ -42,7 +38,7 @@ runExplorerDemo <- function(out_dir = file.path(getwd(), "demo_output", "explore
 
   gff <- rtracklayer::import.gff(file.path(extdata, "demo_annotation.gff"))
   ann <- read.csv(file.path(extdata, "demo_ann.csv"), stringsAsFactors = FALSE)
-  ortho <- read.csv(file.path(extdata, "demo_orthologs.csv"), stringsAsFactors = FALSE)
+  ortho_graph <- file.path(extdata, "demo_ortholog_graph.csv")
   ann_map <- readAnnColumnMap(file.path(extdata, "demo_ann_column_map.csv"))
   expr_map <- readExpressionSampleMap(
     file.path(extdata, "demo_expression_sample_map.csv")
@@ -112,30 +108,20 @@ runExplorerDemo <- function(out_dir = file.path(getwd(), "demo_output", "explore
     ann_column_map = ann_map,
     expression_matrix = expr_mat,
     expression_sample_map = expr_map,
-    ortholog_table = ortho,
-    sources = c("annotation", "gwas", "expression", "ortholog"),
+    ortholog_graph = ortho_graph,
+    sources = c("annotation", "gwas_dist", "gwas_peak", "expression", "ortholog"),
     top_n = 20L,
     save = TRUE
   )
 
-  explanation <- explainPhenotypeCandidates(
-    rank_result = ranked,
-    query = q,
-    object = lg,
-    top_n = 10L,
-    language = "en"
-  )
-
-  if (write_report) {
-    report_fn <- file.path(out_dir, "phenotype_explorer_report.md")
-    writeLines(explanation, report_fn)
-    message("Wrote ", report_fn)
-  }
 
   message("\n--- Top phenotype-ranked candidates (", pheno_name, ") ---")
   show_cols <- intersect(
     names(ranked),
-    c("Gene_ID", "Name", "composite_score", "score_annotation", "score_gwas", "score_expression")
+    c(
+      "Gene_ID", "Name", "composite_score", "score_annotation",
+      "score_gwas_dist", "score_gwas_peak", "score_expression"
+    )
   )
   print(ranked[, show_cols, drop = FALSE])
   message("Launch UI: runLazyGasExplorer()")
@@ -144,7 +130,6 @@ runExplorerDemo <- function(out_dir = file.path(getwd(), "demo_output", "explore
     lg = lg,
     query = q,
     ranked = ranked,
-    explanation = explanation,
     pheno_name = pheno_name,
     out_dir = normalizePath(out_dir, mustWork = FALSE)
   ))

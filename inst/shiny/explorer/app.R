@@ -520,19 +520,21 @@ server <- function(input, output, session) {
           map_fn <- input$expression_sample_map_path
           expr_mat <- NULL
           expr_map <- NULL
-          sources <- c("annotation", "gwas", "literature", "ortholog")
+          sources <- c("annotation", "gwas_dist", "gwas_peak", "ortholog")
           if (nzchar(expr_fn) && file.exists(expr_fn) &&
               nzchar(map_fn) && file.exists(map_fn)) {
             expr_df <- read.csv(expr_fn, stringsAsFactors = FALSE, check.names = FALSE)
             rownames(expr_df) <- expr_df$Gene_ID
             expr_mat <- as.matrix(expr_df[, setdiff(names(expr_df), "Gene_ID"), drop = FALSE])
             expr_map <- readExpressionSampleMap(map_fn)
-            sources <- c("annotation", "gwas", "expression", "literature", "ortholog")
+            sources <- c(
+              "annotation", "gwas_dist", "gwas_peak", "expression", "ortholog"
+            )
           }
 
-          ortho_fn <- system.file("extdata", "demo_orthologs.csv", package = "lazyGas")
-          ortho <- if (nzchar(ortho_fn) && file.exists(ortho_fn)) {
-            read.csv(ortho_fn, stringsAsFactors = FALSE)
+          ortho_fn <- system.file("extdata", "demo_ortholog_graph.csv", package = "lazyGas")
+          ortho_graph <- if (nzchar(ortho_fn) && file.exists(ortho_fn)) {
+            ortho_fn
           } else {
             NULL
           }
@@ -559,7 +561,7 @@ server <- function(input, output, session) {
             ann_column_map = ann_map_path,
             expression_matrix = expr_mat,
             expression_sample_map = expr_map,
-            ortholog_table = ortho,
+            ortholog_graph = ortho_graph,
             top_n = input$top_n,
             use_cache = TRUE,
             save = TRUE
@@ -606,7 +608,7 @@ server <- function(input, output, session) {
       names(df),
       c(
         "Gene_ID", "Name", "peak_ID", "rank_within_peak", "composite_score",
-        "score_annotation", "score_gwas", "score_expression",
+        "score_annotation", "score_gwas_dist", "score_gwas_peak", "score_expression",
         "score_literature", "score_ortholog", "negLog10P"
       )
     )

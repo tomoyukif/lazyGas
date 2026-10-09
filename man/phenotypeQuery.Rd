@@ -13,6 +13,9 @@ phenotypeQuery(
   use_llm = FALSE,
   synonym_phrases = NULL,
   related_phrases = NULL,
+  action_phrases = NULL,
+  noun_phrases = NULL,
+  words = NULL,
   llm_model = NULL,
   llm_base_url = NULL,
   llm_timeout = 600,
@@ -37,6 +40,17 @@ conditions (optional).}
 \item{synonym_phrases, related_phrases}{Ignored in this build (always empty
 unless you assign them on the returned object).}
 
+\item{action_phrases}{Character vector of verb+noun (or similar) phrases for
+the annotation channel tier score \code{1} (e.g. \code{"regulates flowering"}).}
+
+\item{noun_phrases}{Character vector of noun phrases for tier score \code{0.5}
+(e.g. \code{"fruit weight"}, \code{"leaf development"}).}
+
+\item{words}{Character vector of single-token terms for tier score \code{0.25}.
+When \code{action_phrases}, \code{noun_phrases}, and \code{words} are all
+empty, multi-word \code{trait_keywords} become noun phrases and single-token
+keywords become words (backward-compatible fallback).}
+
 \item{llm_model, llm_base_url, llm_timeout}{Ignored.}
 
 \item{object}{Optional \code{LazyGas} object; when \code{save = TRUE} the
@@ -58,10 +72,13 @@ Parses free text (and optional tissue/stage/condition fields) into a
 q <- phenotypeQuery(
   "fruit weight at maturity",
   tissues = "fruit",
-  stage = "maturation"
+  stage = "maturation",
+  action_phrases = "regulates fruit weight",
+  noun_phrases = c("fruit weight", "fruit development"),
+  words = c("fruit", "weight")
 )
 q$trait_keywords
 }
 \seealso{
-\code{\link[=rankPhenotypeCandidates]{rankPhenotypeCandidates()}}, \code{\link[=explainPhenotypeCandidates]{explainPhenotypeCandidates()}}
+\code{\link[=rankPhenotypeCandidates]{rankPhenotypeCandidates()}}
 }

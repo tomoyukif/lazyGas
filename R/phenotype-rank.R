@@ -3,13 +3,15 @@
 #'
 #' Integrates annotation, SnpEff, GWAS, and expression (and optionally
 #' literature / ortholog) evidence into a composite score for each candidate
-#' gene **within each GWAS peak**. Channel scores are normalized per peak;
-#' the same gene on two peaks keeps two rows with peak-local scores.
-#' There is no cross-peak \code{Gene_ID} deduplication.
+#' gene **within each GWAS peak**. Channel scores are already on \code{[0, 1]}
+#' and are **not** re-normalized within the peak. Inactive channels are stored
+#' as 0.
+#' The same gene on two peaks keeps two rows. There is no cross-peak
+#' \code{Gene_ID} deduplication.
 #'
-#' Phase 1 defaults: sources
-#' \code{c("annotation","snpeff","gwas","expression")} with weights
-#' annotation 0.30 / snpeff 0.35 / gwas 0.25 / expression 0.10.
+#' Defaults: sources \code{c("snpeff","gwas_dist","gwas_peak")}. Default channel
+#' weights come from \code{inst/config/ai-lazygas-models.yaml} (via
+#' [phase1DefaultWeights()]) and are renormalized over active sources.
 #'
 #' @param object A \code{LazyGas} object with candidate genes in the companion
 #'   store.
@@ -29,12 +31,13 @@
 #' @param expression_matrix,expression_sample_map Required when
 #'   \code{expression} is in \code{sources} (see [readExpressionSampleMap()]).
 #' @param expression_meta Deprecated alias for \code{expression_sample_map}.
-#' @param ortholog_table,ortholog_cols Ortholog data for ortholog evidence.
+#' @param literature_graph,ortholog_graph Edge tables (\code{from}, \code{to})
+#'   required when the matching source is active (see [collectGeneEvidence()]).
+#' @param ortholog_table,ortholog_cols Deprecated; use \code{ortholog_graph}.
 #' @param use_cache Use the companion-store evidence cache.
 #' @param save Save ranked results to the companion store (\code{phenotype_rank}
 #'   section).
-#' @param use_keyword Passed through to evidence helpers.
-#' @param use_semantic,use_llm_relevance,download_tenor,query_use_llm,llm_model,llm_base_url,llm_timeout
+#' @param use_llm_relevance,download_tenor,query_use_llm,llm_model,llm_base_url,llm_timeout
 #'   Ignored; retained for call compatibility.
 #' @param gff,gff_windows Passed to [collectGeneEvidence()] for finemap
 #'   GFF-window fallback when SnpEff is absent.
@@ -69,6 +72,8 @@ rankPhenotypeCandidates <- function(object,
                                     expression_matrix = NULL,
                                     expression_sample_map = NULL,
                                     expression_meta = NULL,
+                                    literature_graph = NULL,
+                                    ortholog_graph = NULL,
                                     ortholog_table = NULL,
                                     ortholog_cols = c(
                                       gene_id = "gene_id",
@@ -77,8 +82,6 @@ rankPhenotypeCandidates <- function(object,
                                     ),
                                     use_cache = TRUE,
                                     save = TRUE,
-                                    use_keyword = NULL,
-                                    use_semantic = NULL,
                                     use_llm_relevance = NULL,
                                     download_tenor = FALSE,
                                     query_use_llm = FALSE,
@@ -181,11 +184,11 @@ rankPhenotypeCandidates <- function(object,
       ann_column_map = ann_column_map,
       expression_matrix = expression_matrix,
       expression_sample_map = expression_sample_map,
+      literature_graph = literature_graph,
+      ortholog_graph = ortholog_graph,
       ortholog_table = ortholog_table,
       ortholog_cols = ortholog_cols,
       use_cache = use_cache,
-      use_keyword = use_keyword,
-      use_semantic = use_semantic,
       gff = gff,
       gff_windows = gff_windows
     )
@@ -272,11 +275,11 @@ rankPhenotypeCandidates <- function(object,
                                              ann_column_map = NULL,
                                              expression_matrix = NULL,
                                              expression_sample_map = NULL,
+                                             literature_graph = NULL,
+                                             ortholog_graph = NULL,
                                              ortholog_table = NULL,
                                              ortholog_cols = NULL,
                                              use_cache = TRUE,
-                                             use_keyword = NULL,
-                                             use_semantic = NULL,
                                              gff = NULL,
                                              gff_windows = NULL,
                                              collect_extra = list()) {
@@ -297,11 +300,11 @@ rankPhenotypeCandidates <- function(object,
       ann_column_map = ann_column_map,
       expression_matrix = expression_matrix,
       expression_sample_map = expression_sample_map,
+      literature_graph = literature_graph,
+      ortholog_graph = ortholog_graph,
       ortholog_table = ortholog_table,
       ortholog_cols = ortholog_cols,
       use_cache = use_cache,
-      use_keyword = use_keyword,
-      use_semantic = use_semantic,
       gff = gff,
       gff_windows = gff_windows
     ),
@@ -309,58 +312,39 @@ rankPhenotypeCandidates <- function(object,
   )
   evidence <- do.call(collectGeneEvidence, evidence_args)
 
-  score_raw <- list()
+  # Raw channel scores are already on [0, 1]. No per-peak min–max.
+  # Inactive sources are forced to 0 in the output table (not collected/normalized).
+  score_out <- list()
   for (src in .EVIDENCE_SOURCE_CHOICES) {
-    score_raw[[src]] <- vapply(
-      gene_ids,
-      function(g) .evidence_source_score(evidence[[g]], src),
-      numeric(1)
-    )
-  }
-
-  raw_gwas <- vapply(gene_ids, function(g) {
-    if (is.null(evidence[[g]]$gwas)) {
-      return(0)
-    }
-    as.numeric(evidence[[g]]$gwas$score)
-  }, numeric(1))
-  gwas_norm <- .normalize_score_vec(raw_gwas)
-  names(gwas_norm) <- gene_ids
-
-  score_norm <- list()
-  for (src in .EVIDENCE_SOURCE_CHOICES) {
-    if (src == "gwas") {
-      score_norm[[src]] <- gwas_norm
-    } else {
-      sc <- .normalize_score_vec(score_raw[[src]])
+    if (src %in% sources) {
+      sc <- vapply(
+        gene_ids,
+        function(g) .evidence_source_score(evidence[[g]], src),
+        numeric(1)
+      )
       names(sc) <- gene_ids
-      score_norm[[src]] <- sc
+      score_out[[src]] <- sc
+    } else {
+      score_out[[src]] <- setNames(rep(0, length(gene_ids)), gene_ids)
     }
   }
-  for (src in names(score_norm)) {
-    score_norm[[src]] <- .floor_score_vec(score_norm[[src]], floor = 0.1)
-  }
-  gwas_norm <- score_norm$gwas
 
   composite <- rep(0, length(gene_ids))
   names(composite) <- gene_ids
   for (src in sources) {
-    composite <- composite + active_weights[src] * score_norm[[src]]
+    composite <- composite + active_weights[src] * score_out[[src]]
   }
 
   score_df <- data.frame(
     Gene_ID = gene_ids,
-    score_annotation = score_norm$annotation,
-    score_snpeff = score_norm$snpeff,
-    score_gwas = gwas_norm,
-    score_expression = score_norm$expression,
-    score_literature = score_norm$literature,
-    score_ortholog = score_norm$ortholog,
-    score_finemap = if (!is.null(score_norm$finemap)) {
-      score_norm$finemap
-    } else {
-      rep(0.1, length(gene_ids))
-    },
+    score_annotation = score_out$annotation,
+    score_snpeff = score_out$snpeff,
+    score_gwas_dist = score_out$gwas_dist,
+    score_gwas_peak = score_out$gwas_peak,
+    score_expression = score_out$expression,
+    score_literature = score_out$literature,
+    score_ortholog = score_out$ortholog,
+    score_finemap = score_out$finemap,
     composite_score = as.numeric(composite),
     evidence_json = vapply(gene_ids, function(g) .evidence_to_json(evidence[[g]]), character(1L)),
     query_id = query$query_id,

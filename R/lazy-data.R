@@ -5,11 +5,10 @@
 #'   `"recalc"`, `"groups"`, `"candidate"`, `"snpeff"`, `"simple_candidate"`,
 #'   `"gene_protein_map"`, `"qc"`, `"multitrait"`, `"conditional"`,
 #'   `"credible_set"`, `"fine_mapping"`, `"pipeline"`, `"phenotype_rank"`,
-#'   `"phenotype_query"`, or `"phenotype_reinterpret"`.
+#'   or `"phenotype_query"`.
 #' @param pheno The phenotype to retrieve.
 #' @param kind Table kind for section datasets (e.g. `"summary"`, `"peak_1"`,
-#'   or a phenotype-rank query id such as `"rank_pq_..."`). For
-#'   \code{phenotype_reinterpret}, optional query id (defaults to latest).
+#'   or a phenotype-rank query id such as `"rank_pq_..."`).
 #' @param ... Additional arguments.
 #'
 #' @return The requested data from the LazyGas object.
@@ -19,8 +18,7 @@ setGeneric("lazyData", function(object,
                                 dataset = c("scan", "peakcall", "recalc", "groups", "candidate", "snpeff",
                                             "simple_candidate", "gene_protein_map",
                                             "qc", "multitrait", "conditional", "credible_set", "fine_mapping",
-                                            "pipeline", "phenotype_rank", "phenotype_query",
-                                            "phenotype_reinterpret"),
+                                            "pipeline", "phenotype_rank", "phenotype_query"),
                                 pheno,
                                 kind = NULL,
                                 ...)
@@ -39,8 +37,7 @@ setMethod("lazyData",
               choices = c("scan", "peakcall", "recalc", "groups", "candidate", "snpeff",
                           "simple_candidate", "gene_protein_map",
                           "qc", "multitrait", "conditional", "credible_set", "fine_mapping",
-                          "pipeline", "phenotype_rank", "phenotype_query",
-                          "phenotype_reinterpret")
+                          "pipeline", "phenotype_rank", "phenotype_query")
             )
             if (identical(dataset, "gene_protein_map")) {
               return(.store_read_gene_protein_map(object))
@@ -51,14 +48,6 @@ setMethod("lazyData",
               }
               q <- .store_read_phenotype_query(object, kind)
               return(q)
-            }
-            if (dataset == "phenotype_reinterpret") {
-              pheno_name <- .determine_phenotype_name(object = object, pheno = pheno)
-              return(.store_read_phenotype_reinterpret(
-                object = object,
-                pheno_name = pheno_name,
-                query_id = kind
-              ))
             }
             if (dataset == "phenotype_rank") {
               pheno_name <- .determine_phenotype_name(object = object, pheno = pheno)

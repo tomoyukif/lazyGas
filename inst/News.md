@@ -5,7 +5,7 @@ the release or documentation update for that version.
 
 ---
 
-## Changes in version 0.10.0 (2026-10-09) — I/O hardening (master)
+## Changes in version 0.10.0 (2026-10-09) — I/O + scoring hardening (master)
 
 ### Multi-trait CS overlap (optional)
 + Add **`compareCrossTraitCredibleSets()`**: after
@@ -26,13 +26,41 @@ the release or documentation update for that version.
   delete the relevant companion section or use `resume = FALSE`.
 + Default HTML from `runLazyGas` summary/dashboard steps goes to
   `{companion}/reports/{pheno}_*.html`.
-+ `explainPhenotypeCandidates(..., save = TRUE)` can write Markdown under
-  `reports/` (default still in-memory only).
 + `assignPheno()` accepts `sample_id` as well as `id`/`ID`.
++ Removed narrative / interpretation helpers from this non-LLM build:
+  `explainPhenotypeCandidates()`, `answerPhenotypeQuestion()`,
+  `reinterpretPeakCandidates()`, `geneSetForReport()`, related report
+  helpers, and the explorer Explanation tab. Ranking returns score
+  tables; users interpret. HTML dashboards remain available.
+
+### Scoring / ranking (without LLM)
++ `phase1DefaultSources()` is **`snpeff` + `gwas_dist` + `gwas_peak`**.
+  The old combined `gwas` channel is split:
+  - **gwas_dist**: \((D_{\max}-|d|)/D_{\max}\) per attributed marker; gene =
+    max (lead distance proximity within the peak).
+  - **gwas_peak**: \(\mathrm{negLog10P}/\mathrm{negLog10P}_{lead}\) per
+    attributed marker; gene = max.
++ Annotation, expression, and other channels remain available when passed in
+  `sources`.
++ Removed `use_keyword` / `use_semantic` arguments and YAML
+  `agents.ranking` flags.
++ Channel raw scores stay on `[0, 1]`; **no** per-peak min–max.
+  Inactive `score_*` columns are **0**. YAML default weights include
+  finemap / literature / ortholog at **0.50**.
++ Annotation (opt-in): tiered hits via `phenotypeQuery(action_phrases=...,
+  noun_phrases=..., words=...)` → scores **1 / 0.5 / 0.25 / 0**.
++ Literature / ortholog (opt-in): undirected path reachability on
+  `literature_graph` / `ortholog_graph` (`from`,`to`) → **1 / 0**.
+  PubMed count and ortholog “presence floor 0.5” removed. Demo:
+  `demo_ortholog_graph.csv`, `demo_literature_graph.csv`.
++ Expression channel: missing tissue/stage query terms score **0**
+  (previously a flat 0.25 baseline).
++ Removed the post-normalization **floor 0.1** on channel scores.
 
 ### Docs
-+ README documents the non-LLM ranking/report path. `llm_report()` belongs to
-  the agentic / LLM-enabled line, not this build.
++ README documents default sources/weights, annotation tiers, and network
+  graphs. `llm_report()` belongs to the agentic / LLM-enabled line, not
+  this build.
 
 ---
 

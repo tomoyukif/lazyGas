@@ -282,12 +282,46 @@ lazyData(lg, dataset = "multitrait", kind = "cs_overlap")
 
 This build is the **non-LLM** core. Prefer:
 
-- `phenotypeQuery()` + `rankPhenotypeCandidates()` for ranking
-- `explainPhenotypeCandidates()` for a Markdown template summary
-  (`save = TRUE` writes under `{stem}.lazygas/reports/`)
+- `phenotypeQuery()` + `rankPhenotypeCandidates()` for ranking (returns a
+  score table; interpretation is left to the user)
 - `makeInteractiveDashboard()` / `makeInteractiveSummary()`, or
   `runLazyGas(..., steps = c(..., "dashboard"|"summary"))` for HTML
   (default under `{stem}.lazygas/reports/{pheno}_dashboard.html`)
+
+**Default sources:** `snpeff`, `gwas_dist`, `gwas_peak`. Channel raw scores
+are already on `[0, 1]`; there is **no** per-peak min–max. Inactive
+`score_*` columns are `0`. Composite score is a weighted sum over active
+sources only (weights renormalized on the active set).
+
+**Default weights** (from `inst/config/ai-lazygas-models.yaml`, also used
+when an opt-in channel is activated):
+
+| source | weight |
+|--------|--------|
+| snpeff | 0.35 |
+| gwas_dist | 0.125 |
+| gwas_peak | 0.125 |
+| annotation | 0.30 |
+| expression | 0.10 |
+| finemap | 0.50 |
+| literature | 0.50 |
+| ortholog | 0.50 |
+
+**Annotation (opt-in):** pass `action_phrases` / `noun_phrases` / `words` to
+`phenotypeQuery()` for tiered hits (`1` / `0.5` / `0.25` / `0`). Without
+those fields, multi-word `trait_keywords` act as noun phrases and single
+tokens as words.
+
+**Literature / ortholog (opt-in):** supply an edge table
+(`literature_graph` / `ortholog_graph` with columns `from`, `to`). Score is
+`1` if a gene node reaches a phenotype node on the undirected graph, else
+`0`. Demo edges: `inst/extdata/demo_ortholog_graph.csv`,
+`demo_literature_graph.csv`.
+
+Narrative explainers and hypothesis-card helpers
+(`explainPhenotypeCandidates`, `answerPhenotypeQuestion`,
+`reinterpretPeakCandidates`, `geneSetForReport`) are **not** in this
+non-LLM build.
 
 `listCandidate()` always writes both the wide candidate table and the thin
 simple-candidate sidecar. The old `output_list` argument is removed.
