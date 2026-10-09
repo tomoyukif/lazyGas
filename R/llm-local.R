@@ -1430,7 +1430,19 @@ answerPhenotypeQuestion <- function(rank_result,
       scores = list(
         annotation = if ("score_annotation" %in% names(row)) row$score_annotation[1L] else NA_real_,
         snpeff = if ("score_snpeff" %in% names(row)) row$score_snpeff[1L] else NA_real_,
-        gwas = if ("score_gwas" %in% names(row)) row$score_gwas[1L] else NA_real_,
+        gwas = {
+          if ("score_gwas_dist" %in% names(row) || "score_gwas_peak" %in% names(row)) {
+            max(
+              suppressWarnings(as.numeric(row$score_gwas_dist %||% 0)[1L]),
+              suppressWarnings(as.numeric(row$score_gwas_peak %||% 0)[1L]),
+              na.rm = TRUE
+            )
+          } else if ("score_gwas" %in% names(row)) {
+            row$score_gwas[1L]
+          } else {
+            NA_real_
+          }
+        },
         expression = if ("score_expression" %in% names(row)) row$score_expression[1L] else NA_real_,
         literature = if ("score_literature" %in% names(row)) row$score_literature[1L] else NA_real_,
         ortholog = if ("score_ortholog" %in% names(row)) row$score_ortholog[1L] else NA_real_

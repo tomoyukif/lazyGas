@@ -21,6 +21,14 @@
 #'   \code{list(phrase, from_user, source)} used when \code{use_llm = TRUE}
 #'   instead of calling the expander LLMs (\code{NULL} = call LLM;
 #'   \code{list()} = skip that expand). Ignored when \code{use_llm = FALSE}.
+#' @param action_phrases Character vector of verb+noun phrases for annotation
+#'   tier score \code{1}. With LLM, prefer generating these; without LLM,
+#'   pass them explicitly.
+#' @param noun_phrases Character vector of noun phrases for tier \code{0.5}.
+#' @param words Character vector of single-token terms for tier \code{0.25}.
+#'   When all three tier fields are empty, multi-word \code{trait_keywords}
+#'   (and synonym/related phrases) become noun phrases and single tokens
+#'   become words.
 #' @param llm_model Model name passed to Ollama (default from
 #'   \code{LAZYGAS_LLM_MODEL} or \code{"gemma4-31b-64k:latest"}).
 #' @param llm_base_url Ollama base URL (default from \code{LAZYGAS_LLM_URL}).
@@ -35,14 +43,17 @@
 #' @return A \code{PhenotypeQuery} object (list with class attribute).
 #' @export
 #'
-#' @seealso [rankPhenotypeCandidates()], [explainPhenotypeCandidates()]
+#' @seealso [rankPhenotypeCandidates()]
 #'
 #' @examples
 #' q <- phenotypeQuery(
 #'   "fruit weight at maturity",
 #'   tissues = "fruit",
 #'   stage = "maturation",
-#'   use_llm = FALSE
+#'   use_llm = FALSE,
+#'   action_phrases = "regulates fruit weight",
+#'   noun_phrases = c("fruit weight", "fruit development"),
+#'   words = c("fruit", "weight")
 #' )
 #' q$trait_keywords
 phenotypeQuery <- function(text,
@@ -53,6 +64,9 @@ phenotypeQuery <- function(text,
                            use_llm = FALSE,
                            synonym_phrases = NULL,
                            related_phrases = NULL,
+                           action_phrases = NULL,
+                           noun_phrases = NULL,
+                           words = NULL,
                            llm_model = NULL,
                            llm_base_url = NULL,
                            llm_timeout = 600,
@@ -159,11 +173,15 @@ phenotypeQuery <- function(text,
       species = .phenotype_query_normalize_scalar(parsed$species),
       synonym_phrases = syn,
       related_phrases = rel,
+      action_phrases = .phenotype_query_normalize_phrase_vec(action_phrases),
+      noun_phrases = .phenotype_query_normalize_phrase_vec(noun_phrases),
+      words = .phenotype_query_normalize_phrase_vec(words),
       query_id = query_id,
       parsed_by = parsed$parsed_by
     ),
     class = c("PhenotypeQuery", "list")
   )
+  out <- .phenotype_query_fill_annotation_tiers(out)
 
   if (save && !is.null(object)) {
     if (!inherits(object, "LazyGas")) {
@@ -210,6 +228,23 @@ print.PhenotypeQuery <- function(x, ...) {
   if (.phenotype_query_has_value(x$species)) {
     cat("  species:", as.character(unlist(x$species))[1L], "\n")
   }
+  if (.phenotype_query_has_value(x$action_phrases)) {
+    cat(
+      "  action_phrases:",
+      paste(as.character(unlist(x$action_phrases)), collapse = "; "),
+      "\n"
+    )
+  }
+  if (.phenotype_query_has_value(x$noun_phrases)) {
+    cat(
+      "  noun_phrases:",
+      paste(as.character(unlist(x$noun_phrases)), collapse = "; "),
+      "\n"
+    )
+  }
+  if (.phenotype_query_has_value(x$words)) {
+    cat("  words:", paste(as.character(unlist(x$words)), collapse = ", "), "\n")
+  }
   n_syn <- length(x$synonym_phrases %||% list())
   n_rel <- length(x$related_phrases %||% list())
   if (n_syn || n_rel) {
@@ -217,6 +252,113 @@ print.PhenotypeQuery <- function(x, ...) {
   }
   cat("  parsed_by:", x$parsed_by, "\n")
   invisible(x)
+}
+
+#' Normalize phrase vectors without splitting on spaces
+#' @keywords internal
+.phenotype_query_normalize_phrase_vec <- function(x) {
+  if (is.null(x)) {
+    return(character())
+  }
+  if (length(x) == 1L && is.na(x)) {
+    return(character())
+  }
+  x <- as.character(x)
+  x <- trimws(x)
+  x <- x[nzchar(x)]
+  unique(x)
+}
+
+#' Linked-phrase strings from synonym/related lists
+#' @keywords internal
+.phenotype_query_linked_phrase_strings <- function(items) {
+  if (is.null(items) || !length(items)) {
+    return(character())
+  }
+  if (is.data.frame(items)) {
+    items <- lapply(seq_len(nrow(items)), function(i) as.list(items[i, , drop = FALSE]))
+  }
+  out <- vapply(items, function(item) {
+    as.character(item$phrase %||% "")[1L]
+  }, character(1L))
+  trimws(out[nzchar(trimws(out))])
+}
+
+#' Fill annotation tier fields from trait_keywords / synonym / related
+#' @keywords internal
+.phenotype_query_fill_annotation_tiers <- function(query) {
+  has_explicit <- length(query$action_phrases %||% character()) ||
+    length(query$noun_phrases %||% character()) ||
+    length(query$words %||% character())
+  if (isTRUE(has_explicit)) {
+    return(query)
+  }
+
+  kws <- c(
+    as.character(query$trait_keywords %||% character()),
+    .phenotype_query_linked_phrase_strings(query$synonym_phrases),
+    .phenotype_query_linked_phrase_strings(query$related_phrases)
+  )
+  kws <- trimws(kws)
+  kws <- kws[nzchar(kws)]
+  noun <- character()
+  word <- character()
+  for (kw in unique(kws)) {
+    parts <- strsplit(kw, "\\s+", perl = TRUE)[[1L]]
+    parts <- parts[nzchar(parts)]
+    if (length(parts) >= 2L) {
+      noun <- c(noun, kw)
+    } else if (length(parts) == 1L) {
+      word <- c(word, kw)
+    }
+  }
+  query$noun_phrases <- unique(noun)
+  query$words <- unique(word)
+  query$action_phrases <- character()
+  query
+}
+
+#' Annotation tier term lists from a PhenotypeQuery (or character)
+#' @keywords internal
+.annotation_tier_terms_from_query <- function(query) {
+  if (is.character(query)) {
+    toks <- .phenotype_query_tokenize(query)
+    multi <- character()
+    single <- character()
+    raw <- trimws(as.character(query)[1L])
+    if (nzchar(raw)) {
+      chunks <- unlist(strsplit(raw, "[/|;]+", perl = TRUE), use.names = FALSE)
+      chunks <- trimws(chunks)
+      for (ch in chunks) {
+        if (!nzchar(ch)) next
+        parts <- strsplit(ch, "\\s+", perl = TRUE)[[1L]]
+        parts <- parts[nzchar(parts)]
+        if (length(parts) >= 2L) {
+          multi <- c(multi, paste(parts, collapse = " "))
+        } else if (length(parts) == 1L) {
+          single <- c(single, parts)
+        }
+      }
+    }
+    if (!length(multi) && !length(single)) {
+      single <- toks
+    }
+    return(list(
+      action = character(),
+      noun = unique(.filter_keyword_terms(multi)),
+      word = unique(.filter_keyword_terms(single))
+    ))
+  }
+  if (!inherits(query, "PhenotypeQuery")) {
+    stop("'query' must be a PhenotypeQuery object or character string.",
+         call. = FALSE)
+  }
+  q <- .phenotype_query_fill_annotation_tiers(query)
+  list(
+    action = unique(.filter_keyword_terms(q$action_phrases %||% character())),
+    noun = unique(.filter_keyword_terms(q$noun_phrases %||% character())),
+    word = unique(.filter_keyword_terms(q$words %||% character()))
+  )
 }
 
 #' Convert a PhenotypeQuery to a single search string

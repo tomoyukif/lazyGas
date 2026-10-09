@@ -5,6 +5,29 @@ the release or documentation update for that version.
 
 ---
 
+## Changes in version 0.9.2 (2026-10-09) — agentic sync of without-LLM 01/02
+
+### I/O + scoring contracts (from master)
++ Companion store **parquet only**; `output_list` removed (wide candidate always).
++ `inputs_manifest.json` + mismatch **warning**; HTML defaults under companion
+  `reports/`; `assignPheno()` accepts `sample_id`.
++ Default ranking sources: **`snpeff` + `gwas_dist` + `gwas_peak`**. No per-peak
+  min–max; inactive `score_*` = 0. YAML weights include literature/ortholog
+  **0.50**.
++ Annotation tiers via `phenotypeQuery(action_phrases / noun_phrases / words)`
+  (LLM path still expands synonym/related; tiers fill from keywords/phrases
+  when unset).
++ Literature / ortholog: `*_graph` path reachability **1/0**.
++ Optional `compareCrossTraitCredibleSets()`; `readAnnColumnMap()` /
+  `readExpressionSampleMap()`.
+
+### Agentic-retained surfaces
++ Keep `llm_report()` / Ollama / TENOR / explorer LLM query path.
++ Keep `reinterpretPeakCandidates()` hypothesis cards; **function gate** is
+  now **`score_annotation`** (default ≥ 0.5). `ann_specificity` removed.
+
+---
+
 ## Changes in version 0.9.2 (2026-10-09)
 
 ### AI HTML report: fix Genes in candidate region = 0

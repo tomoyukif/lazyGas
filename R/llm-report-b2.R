@@ -349,7 +349,9 @@
   ui <- .report_i18n(language)
   sources <- intersect(as.character(sources), .EVIDENCE_SOURCE_CHOICES)
   if (!length(sources)) {
-    sources <- c("annotation", "snpeff", "gwas", "expression", "finemap")
+    sources <- c(
+      "annotation", "snpeff", "gwas_dist", "gwas_peak", "expression", "finemap"
+    )
   }
   score_cols <- paste0("score_", sources)
   missing <- setdiff(score_cols, names(rank_sub))

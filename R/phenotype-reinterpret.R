@@ -12,24 +12,24 @@ reinterpretDefaultViews <- function() {
 
 #' Default rules for [reinterpretPeakCandidates()]
 #'
-#' Function-view eligibility follows plan alpha: strong terms from the query
-#' trait keywords plus synonym phrases only (no manual dictionary); weak-only
-#' hits are ineligible; empty function seat is \code{NA}.
+#' Function-view eligibility uses \code{score_annotation} only (tiered
+#' annotation hits from ranking). Empty function seat is \code{NA}.
 #' Distance gating defaults to \code{"off"} (credible-set / peak membership
 #' is the spatial filter).
 #'
-#' @param strong_terms Optional character vector overriding query-derived
-#'   strong terms. \code{NULL} = trait keywords + synonym phrases.
-#' @param weak_terms Generic terms that never qualify as strong alone.
-#' @param min_specificity Minimum \code{ann_specificity} for function view.
-#' @param require_strong_hit If \code{TRUE}, function champions need a strong hit.
+#' @param strong_terms,weak_terms Deprecated; ignored (kept for call compatibility).
+#' @param min_annotation_score Minimum \code{score_annotation} for function view
+#'   (default \code{0.5} = noun-phrase tier or stronger).
+#' @param min_specificity Deprecated alias for \code{min_annotation_score}.
+#' @param require_strong_hit Deprecated; ignored (threshold is
+#'   \code{min_annotation_score} alone).
 #' @param dist_gate_mode \code{"off"} (default), \code{"absolute"}, or
 #'   \code{"relative"}.
 #' @param dist_abs_max Absolute distance cap when gating is on.
 #' @param dist_iqr_mult Relative multiplier when \code{dist_gate_mode = "relative"}.
 #' @param conflict_if_champions_differ Record conflicts when champions differ.
 #' @param soft_flag_composite_only_weak_ann Soft-flag composite winners with
-#'   weak-only annotation (stored on support rows; does not change champions).
+#'   word-only annotation (\code{0 < score_annotation < 0.5}).
 #'
 #' @return A named list of rules.
 #' @export
@@ -39,7 +39,8 @@ reinterpretDefaultRules <- function(
     "leaf", "shoot", "plant", "development", "growth",
     "protein", "domain", "family", "putative", "similar"
   ),
-  min_specificity = 0.34,
+  min_annotation_score = 0.5,
+  min_specificity = NULL,
   require_strong_hit = TRUE,
   dist_gate_mode = c("off", "absolute", "relative"),
   dist_abs_max = 5e5,
@@ -48,10 +49,17 @@ reinterpretDefaultRules <- function(
   soft_flag_composite_only_weak_ann = TRUE
 ) {
   dist_gate_mode <- match.arg(dist_gate_mode)
+  thr <- if (!is.null(min_specificity)) {
+    as.numeric(min_specificity)[1L]
+  } else {
+    as.numeric(min_annotation_score)[1L]
+  }
+  if (!is.finite(thr)) thr <- 0.5
   list(
     strong_terms = strong_terms,
     weak_terms = as.character(weak_terms %||% character()),
-    min_specificity = as.numeric(min_specificity)[1L],
+    min_annotation_score = thr,
+    min_specificity = thr,
     require_strong_hit = isTRUE(require_strong_hit),
     dist_gate_mode = dist_gate_mode,
     dist_abs_max = as.numeric(dist_abs_max)[1L],
@@ -150,30 +158,31 @@ reinterpretPeakCandidates <- function(
   }
   df$score_annotation <- suppressWarnings(as.numeric(df$score_annotation %||% 0))
   df$score_snpeff <- suppressWarnings(as.numeric(df$score_snpeff %||% 0))
-  df$score_gwas <- suppressWarnings(as.numeric(df$score_gwas %||% 0))
+  if ("score_gwas_dist" %in% names(df) || "score_gwas_peak" %in% names(df)) {
+    df$score_gwas_dist <- suppressWarnings(as.numeric(df$score_gwas_dist %||% 0))
+    df$score_gwas_peak <- suppressWarnings(as.numeric(df$score_gwas_peak %||% 0))
+    df$score_gwas <- pmax(df$score_gwas_dist, df$score_gwas_peak, na.rm = TRUE)
+  } else {
+    df$score_gwas <- suppressWarnings(as.numeric(df$score_gwas %||% 0))
+    df$score_gwas_dist <- df$score_gwas
+    df$score_gwas_peak <- df$score_gwas
+  }
   df$score_expression <- suppressWarnings(as.numeric(df$score_expression %||% 0))
   df$composite_score <- suppressWarnings(as.numeric(df$composite_score %||% 0))
   df$HIGH[is.na(df$HIGH)] <- 0
   df$MODERATE[is.na(df$MODERATE)] <- 0
   for (cn in c(
-    "score_annotation", "score_snpeff", "score_gwas", "score_expression",
-    "composite_score"
+    "score_annotation", "score_snpeff", "score_gwas", "score_gwas_dist",
+    "score_gwas_peak", "score_expression", "composite_score"
   )) {
     df[[cn]][is.na(df[[cn]])] <- 0
   }
 
   df$ann_text <- .reinterpret_ann_text(df)
-  strong <- .reinterpret_strong_terms(query, rules)
-  weak <- unique(tolower(trimws(as.character(rules$weak_terms %||% character()))))
-  # Exact weak tokens never count as strong (phrases like "leaf width" stay strong)
-  strong <- strong[!tolower(strong) %in% weak]
-  spec <- vapply(
-    df$ann_text,
-    function(txt) .ann_specificity(txt, strong = strong, weak = weak),
-    numeric(1L)
-  )
-  df$ann_specificity <- spec
-  df$has_strong_hit <- spec >= 0.67
+  # Function gate uses score_annotation only (ann_specificity removed).
+  thr_ann <- as.numeric(rules$min_annotation_score %||% rules$min_specificity %||% 0.5)[1L]
+  if (!is.finite(thr_ann)) thr_ann <- 0.5
+  df$has_strong_hit <- df$score_annotation >= thr_ann
 
   peak_ids <- unique(df$peak_ID)
   if (!is.null(peak_id)) {
@@ -188,7 +197,7 @@ reinterpretPeakCandidates <- function(
     sub <- df[as.character(df$peak_ID) == as.character(pid), , drop = FALSE]
     sub$dist_gate_pass <- .dist_gate(sub$dist2peak, rules = rules)
     if (isTRUE(rules$soft_flag_composite_only_weak_ann)) {
-      sub$soft_flag_weak_ann <- sub$ann_specificity > 0 & sub$ann_specificity < 0.67
+      sub$soft_flag_weak_ann <- sub$score_annotation > 0 & sub$score_annotation < thr_ann
     } else {
       sub$soft_flag_weak_ann <- FALSE
     }
@@ -602,10 +611,10 @@ print.PeakReinterpretation <- function(x, ...) {
     "peak_ID", "Gene_ID", "Gene_chr", "Gene_start", "dist2peak", "negLog10P",
     "HIGH", "MODERATE", "LOW", "MODIFIER",
     "HIGH_at_var", "MODERATE_at_var", "LOW_at_var", "MODIFIER_at_var",
-    "score_annotation", "score_snpeff", "score_gwas", "score_expression",
-    "score_literature", "score_ortholog", "score_finemap", "composite_score",
-    "evidence_json", "query_id", "ann_text", "ann_specificity", "has_strong_hit",
-    "dist_gate_pass", "soft_flag_weak_ann"
+    "score_annotation", "score_snpeff", "score_gwas", "score_gwas_dist",
+    "score_gwas_peak", "score_expression", "score_literature", "score_ortholog",
+    "score_finemap", "composite_score", "evidence_json", "query_id", "ann_text",
+    "has_strong_hit", "dist_gate_pass", "soft_flag_weak_ann"
   )
   cols <- setdiff(names(df), skip)
   # Prefer known annotation-ish columns first
@@ -629,51 +638,6 @@ print.PeakReinterpretation <- function(x, ...) {
     }
     paste(x, collapse = " ")
   })
-}
-
-#' Annotation specificity for function-view gating (plan alpha)
-#' @keywords internal
-.ann_specificity <- function(text, strong, weak) {
-  text <- as.character(text)[1L]
-  if (!nzchar(trimws(text %||% ""))) {
-    return(0)
-  }
-  strong <- as.character(strong %||% character())
-  weak <- as.character(weak %||% character())
-  hit_strong_phrase <- FALSE
-  hit_strong <- FALSE
-  for (term in strong) {
-    if (!nzchar(term)) {
-      next
-    }
-    if (isTRUE(.keyword_term_matches(text, term, ignore.case = TRUE))) {
-      hit_strong <- TRUE
-      parts <- strsplit(trimws(term), "\\s+", perl = TRUE)[[1L]]
-      if (length(parts) >= 2L) {
-        hit_strong_phrase <- TRUE
-      }
-    }
-  }
-  if (hit_strong_phrase) {
-    return(1.0)
-  }
-  if (hit_strong) {
-    return(0.67)
-  }
-  hit_weak <- FALSE
-  for (term in weak) {
-    if (!nzchar(term)) {
-      next
-    }
-    if (isTRUE(.keyword_term_matches(text, term, ignore.case = TRUE))) {
-      hit_weak <- TRUE
-      break
-    }
-  }
-  if (hit_weak) {
-    return(0.2)
-  }
-  0
 }
 
 #' Distance gate vector
@@ -713,14 +677,15 @@ print.PeakReinterpretation <- function(x, ...) {
   }
 
   if (identical(view, "function")) {
-    thr <- max(
-      as.numeric(rules$min_specificity)[1L],
-      if (isTRUE(rules$require_strong_hit)) 0.67 else 0
-    )
-    ok <- df$ann_specificity >= thr
+    thr <- as.numeric(rules$min_annotation_score %||% rules$min_specificity %||% 0.5)[1L]
+    if (!is.finite(thr)) thr <- 0.5
+    ok <- df$score_annotation >= thr
     cand <- df[ok, , drop = FALSE]
     if (!nrow(cand)) {
-      empty$reason_detail <- "no function hypothesis (no strong annotation hit)"
+      empty$reason_detail <- sprintf(
+        "no function hypothesis (score_annotation < %.2f)",
+        thr
+      )
       return(empty)
     }
     o <- order(
@@ -734,12 +699,8 @@ print.PeakReinterpretation <- function(x, ...) {
     return(data.frame(
       view = view,
       Gene_ID = as.character(win$Gene_ID[1L]),
-      reason_code = "max_ann_among_strong",
-      reason_detail = sprintf(
-        "ann_specificity=%.2f; score_annotation=%.3f",
-        win$ann_specificity[1L],
-        win$score_annotation[1L]
-      ),
+      reason_code = "max_score_annotation",
+      reason_detail = sprintf("score_annotation=%.3f", win$score_annotation[1L]),
       stringsAsFactors = FALSE
     ))
   }
@@ -826,7 +787,7 @@ print.PeakReinterpretation <- function(x, ...) {
 
 .reinterpret_empty_detail <- function(view) {
   if (identical(view, "function")) {
-    return("no function hypothesis (no strong annotation hit)")
+    return("no function hypothesis (score_annotation below threshold)")
   }
   paste0("no eligible gene for view ", view)
 }
@@ -842,8 +803,9 @@ print.PeakReinterpretation <- function(x, ...) {
   out$rank_in_view <- seq_len(n)
   keep <- c(
     "view", "rank_in_view", "Gene_ID", "dist2peak", "HIGH", "MODERATE",
-    "score_annotation", "score_snpeff", "score_gwas", "score_expression",
-    "composite_score", "ann_specificity", "dist_gate_pass", "soft_flag_weak_ann"
+    "score_annotation", "score_snpeff", "score_gwas", "score_gwas_dist",
+    "score_gwas_peak", "score_expression", "composite_score",
+    "dist_gate_pass", "soft_flag_weak_ann"
   )
   keep <- intersect(keep, names(out))
   out[, keep, drop = FALSE]
@@ -851,11 +813,9 @@ print.PeakReinterpretation <- function(x, ...) {
 
 .reinterpret_order_for_view <- function(df, view, rules) {
   if (identical(view, "function")) {
-    thr <- max(
-      as.numeric(rules$min_specificity)[1L],
-      if (isTRUE(rules$require_strong_hit)) 0.67 else 0
-    )
-    ok <- df$ann_specificity >= thr
+    thr <- as.numeric(rules$min_annotation_score %||% rules$min_specificity %||% 0.5)[1L]
+    if (!is.finite(thr)) thr <- 0.5
+    ok <- df$score_annotation >= thr
     cand <- df[ok, , drop = FALSE]
     if (!nrow(cand)) {
       return(cand)

@@ -29,26 +29,15 @@ NULL
 
 .store_init <- function(object, gds_fn, store = "parquet", overwrite = FALSE,
                         companion_path = NULL) {
-  store <- match.arg(store, c("parquet", "sqlite", "gds", "auto"))
-  gds_fn <- normalizePath(gds_fn, winslash = "/", mustWork = FALSE)
-
-  if (store == "auto") {
-    if (exist.gdsn(node = object$root, path = "lazygas")) {
-      store <- "gds"
-    } else {
-      store <- "parquet"
-    }
-  }
-
-  if (store == "gds") {
-    object@store <- list(
-      mode = "gds",
-      gds_fn = gds_fn,
-      path = NULL,
-      peak_buffer = new.env(parent = emptyenv())
+  if (!identical(as.character(store)[1L], "parquet")) {
+    stop(
+      "Companion store mode must be \"parquet\". ",
+      "Modes \"sqlite\", \"gds\", and \"auto\" are no longer supported.",
+      call. = FALSE
     )
-    return(object)
   }
+  store <- "parquet"
+  gds_fn <- normalizePath(gds_fn, winslash = "/", mustWork = FALSE)
 
   path <- if (!is.null(companion_path) && length(companion_path) == 1L &&
               nzchar(companion_path)) {
@@ -56,27 +45,23 @@ NULL
   } else {
     .store_companion_path(gds_fn = gds_fn, store_mode = store)
   }
-  if (overwrite && store == "parquet" && dir.exists(path)) {
+  if (overwrite && dir.exists(path)) {
     unlink(path, recursive = TRUE)
   }
-  if (overwrite && store == "sqlite" && file.exists(path)) {
-    unlink(path)
-  }
 
-  if (store == "parquet") {
-    dir.create(path, recursive = TRUE, showWarnings = FALSE)
-    dir.create(file.path(path, "scan"), recursive = TRUE, showWarnings = FALSE)
-    dir.create(file.path(path, "peakcall"), recursive = TRUE, showWarnings = FALSE)
-    dir.create(file.path(path, "recalc"), recursive = TRUE, showWarnings = FALSE)
-    dir.create(file.path(path, "candidate"), recursive = TRUE, showWarnings = FALSE)
-    dir.create(file.path(path, "snpeff"), recursive = TRUE, showWarnings = FALSE)
-    dir.create(file.path(path, "qc"), recursive = TRUE, showWarnings = FALSE)
-    dir.create(file.path(path, "multitrait"), recursive = TRUE, showWarnings = FALSE)
-    dir.create(file.path(path, "conditional"), recursive = TRUE, showWarnings = FALSE)
-    dir.create(file.path(path, "credible_set"), recursive = TRUE, showWarnings = FALSE)
-    dir.create(file.path(path, "fine_mapping"), recursive = TRUE, showWarnings = FALSE)
-    dir.create(file.path(path, "pipeline"), recursive = TRUE, showWarnings = FALSE)
-  }
+  dir.create(path, recursive = TRUE, showWarnings = FALSE)
+  dir.create(file.path(path, "scan"), recursive = TRUE, showWarnings = FALSE)
+  dir.create(file.path(path, "peakcall"), recursive = TRUE, showWarnings = FALSE)
+  dir.create(file.path(path, "recalc"), recursive = TRUE, showWarnings = FALSE)
+  dir.create(file.path(path, "candidate"), recursive = TRUE, showWarnings = FALSE)
+  dir.create(file.path(path, "snpeff"), recursive = TRUE, showWarnings = FALSE)
+  dir.create(file.path(path, "qc"), recursive = TRUE, showWarnings = FALSE)
+  dir.create(file.path(path, "multitrait"), recursive = TRUE, showWarnings = FALSE)
+  dir.create(file.path(path, "conditional"), recursive = TRUE, showWarnings = FALSE)
+  dir.create(file.path(path, "credible_set"), recursive = TRUE, showWarnings = FALSE)
+  dir.create(file.path(path, "fine_mapping"), recursive = TRUE, showWarnings = FALSE)
+  dir.create(file.path(path, "pipeline"), recursive = TRUE, showWarnings = FALSE)
+  dir.create(file.path(path, "reports"), recursive = TRUE, showWarnings = FALSE)
 
   object@store <- list(
     mode = store,
@@ -1257,3 +1242,145 @@ NULL
   }
   .store_read_section_df(object, "pheno", "snapshot", pheno_name = NULL)
 }
+
+################################################################################
+# Inputs manifest (companion inputs_manifest.json) — hardening 01 D1/D6
+
+.store_inputs_manifest_path <- function(object) {
+  file.path(.store_path(object), "inputs_manifest.json")
+}
+
+.store_read_inputs_manifest <- function(object) {
+  if (.store_is_gds(object) || is.null(.store_path(object))) {
+    return(list())
+  }
+  path <- .store_inputs_manifest_path(object)
+  if (!file.exists(path)) {
+    return(list())
+  }
+  tryCatch(
+    jsonlite::fromJSON(path, simplifyVector = FALSE),
+    error = function(e) list()
+  )
+}
+
+.store_write_inputs_manifest <- function(object, section, inputs) {
+  if (.store_is_gds(object) || is.null(.store_path(object))) {
+    return(invisible(NULL))
+  }
+  path <- .store_inputs_manifest_path(object)
+  man <- .store_read_inputs_manifest(object)
+  if (!is.list(man)) {
+    man <- list()
+  }
+  man[[as.character(section)[1L]]] <- list(
+    updated_at = format(Sys.time(), "%Y-%m-%dT%H:%M:%S%z"),
+    inputs = inputs
+  )
+  jsonlite::write_json(man, path, auto_unbox = TRUE, pretty = TRUE, null = "null")
+  invisible(path)
+}
+
+.fingerprint_file <- function(path) {
+  if (is.null(path) || !nzchar(as.character(path)[1L])) {
+    return(list(path = NA_character_, mtime = NA_character_, size = NA_real_))
+  }
+  path <- path.expand(as.character(path)[1L])
+  if (!file.exists(path)) {
+    return(list(path = path, mtime = NA_character_, size = NA_real_))
+  }
+  info <- file.info(path)
+  list(
+    path = normalizePath(path, winslash = "/", mustWork = FALSE),
+    mtime = format(info$mtime, "%Y-%m-%dT%H:%M:%S%z"),
+    size = as.numeric(info$size)
+  )
+}
+
+.fingerprint_df <- function(df, path = NULL) {
+  out <- .fingerprint_file(path)
+  if (is.null(df) || !is.data.frame(df)) {
+    out$nrow <- NA_integer_
+    out$colnames <- list()
+    return(out)
+  }
+  out$nrow <- nrow(df)
+  out$colnames <- as.list(names(df))
+  out
+}
+
+.fingerprint_gff <- function(gff, gff_fn = NULL) {
+  out <- .fingerprint_file(gff_fn)
+  if (is.null(gff) || !inherits(gff, "GRanges")) {
+    out$n_ranges <- NA_integer_
+    return(out)
+  }
+  out$n_ranges <- length(gff)
+  out
+}
+
+.inputs_fingerprint_candidate <- function(gff,
+                                          snpeff = NULL,
+                                          ann = NULL,
+                                          recalc = FALSE,
+                                          gff_fn = NULL,
+                                          snpeff_fn = NULL,
+                                          ann_fn = NULL) {
+  list(
+    recalc = isTRUE(recalc),
+    gff = .fingerprint_gff(gff, gff_fn),
+    ann = .fingerprint_df(ann, ann_fn),
+    snpeff = .fingerprint_file(snpeff_fn),
+    has_snpeff = !is.null(snpeff),
+    has_ann = !is.null(ann)
+  )
+}
+
+.inputs_fingerprint_rank <- function(ann_column_map = NULL,
+                                     ann_column_map_fn = NULL,
+                                     expression_matrix = NULL,
+                                     expression_sample_map = NULL) {
+  list(
+    ann_column_map = .fingerprint_df(ann_column_map, ann_column_map_fn),
+    has_expression = !is.null(expression_matrix),
+    has_expression_sample_map = !is.null(expression_sample_map)
+  )
+}
+
+.warn_inputs_manifest_mismatch <- function(object, section, inputs) {
+  man <- .store_read_inputs_manifest(object)
+  prev <- man[[as.character(section)[1L]]]
+  if (is.null(prev) || is.null(prev$inputs)) {
+    return(invisible(FALSE))
+  }
+  same <- identical(
+    jsonlite::toJSON(prev$inputs, auto_unbox = TRUE, null = "null"),
+    jsonlite::toJSON(inputs, auto_unbox = TRUE, null = "null")
+  )
+  if (same) {
+    return(invisible(FALSE))
+  }
+  warning(
+    "Stored inputs_manifest for '", section, "' differs from current inputs. ",
+    "Results may be stale. Delete the relevant companion section (or set ",
+    "resume = FALSE) and re-run. See hardening_nollm_01_io_plan.md (U6).",
+    call. = FALSE
+  )
+  invisible(TRUE)
+}
+
+.default_report_path <- function(object, pheno, kind = c("dashboard", "summary")) {
+  kind <- match.arg(kind)
+  safe <- .store_safe_name(pheno)
+  root <- .store_path(object)
+  if (is.null(root) || !nzchar(root) || !dir.exists(root)) {
+    return(file.path(
+      dirname(.store_gds_fn(object)),
+      paste0("lazygas_", kind, ".html")
+    ))
+  }
+  reports <- file.path(root, "reports")
+  dir.create(reports, recursive = TRUE, showWarnings = FALSE)
+  file.path(reports, paste0(safe, "_", kind, ".html"))
+}
+

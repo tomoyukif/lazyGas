@@ -10,7 +10,9 @@ listCandidate(
   snpeff = NULL,
   ann = NULL,
   recalc = FALSE,
-  output_list = TRUE,
+  gff_fn = NULL,
+  snpeff_fn = NULL,
+  ann_fn = NULL,
   ...
 )
 }
@@ -25,8 +27,11 @@ listCandidate(
 
 \item{recalc}{If \code{TRUE}, use recalculated peaks.}
 
-\item{output_list}{If \code{TRUE}, also write the legacy wide candidate and
-SnpEff tables. If \code{FALSE}, only simple candidate + ID map are stored.}
+\item{gff_fn}{Optional path to the GFF file (recorded in inputs manifest).}
+
+\item{snpeff_fn}{Optional path to the SnpEff GDS (recorded in inputs manifest).}
+
+\item{ann_fn}{Optional path to the annotation table (recorded in inputs manifest).}
 
 \item{...}{Unused; for S4 compatibility.}
 }
@@ -34,8 +39,7 @@ SnpEff tables. If \code{FALSE}, only simple candidate + ID map are stored.}
 The \code{LazyGas} object (invisibly), updated in its store.
 }
 \description{
-Always writes the thin \strong{simple candidate} table (Gene_ID + position) and
-the Gene↔transcript/protein map. When \code{output_list = TRUE} (default),
-also stores the legacy wide joined candidate / SnpEff tables used by
-interactive HTML reports.
+Always writes the thin \strong{simple candidate} table (Gene_ID + position),
+the Gene↔transcript/protein map, and the wide joined candidate / SnpEff
+tables used by ranking and interactive HTML reports.
 }

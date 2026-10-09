@@ -10,8 +10,7 @@ runExplorerDemo(
   trait_text = "fruit weight at maturity",
   tissues = "fruit",
   stage = "maturation",
-  use_llm = FALSE,
-  write_report = TRUE
+  use_llm = FALSE
 )
 }
 \arguments{
@@ -25,19 +24,16 @@ runExplorerDemo(
 
 \item{stage}{Developmental stage hint.}
 
-\item{use_llm}{Use local LLM for query parsing and explanation.}
-
-\item{write_report}{If \code{TRUE}, save a Markdown explanation to
-\code{out_dir/phenotype_explorer_report.md}.}
+\item{use_llm}{Ignored (kept for call compatibility).}
 }
 \value{
 Invisibly, a list with \code{lg}, \code{query}, \code{ranked},
-\code{explanation}, and \code{pheno_name}.
+and \code{pheno_name}.
 }
 \description{
-Executes a minimal GWAS-to-candidate workflow on bundled demo data, ranks
-genes by phenotype-relevant evidence, and optionally writes an explanation
-report. Does not start the Shiny app; use \code{\link[=runLazyGasExplorer]{runLazyGasExplorer()}} for the UI.
+Executes a minimal GWAS-to-candidate workflow on bundled demo data and ranks
+genes by phenotype-relevant evidence. Does not start the Shiny app; use
+\code{\link[=runLazyGasExplorer]{runLazyGasExplorer()}} for the UI.
 }
 \seealso{
 \code{\link[=runLazyGasExplorer]{runLazyGasExplorer()}}, \code{\link[=rankPhenotypeCandidates]{rankPhenotypeCandidates()}}

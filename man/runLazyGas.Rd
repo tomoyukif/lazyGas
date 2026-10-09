@@ -14,7 +14,6 @@ runLazyGas(
   ann = NULL,
   out_fn = NULL,
   recalc = TRUE,
-  output_list = TRUE,
   seed = NULL,
   ...
 )
@@ -27,7 +26,8 @@ runLazyGas(
 \code{"summary"}, or \code{"fine_mapping"}.}
 
 \item{resume}{If \code{TRUE}, skip steps whose outputs already exist in the
-companion store.}
+companion store. When inputs for \code{candidate} differ from
+\code{inputs_manifest.json}, a warning is issued (sections are not deleted).}
 
 \item{gff, gff_fn}{\code{GRanges} or path to GFF for \code{listCandidate()} and
 dashboard steps.}
@@ -36,14 +36,11 @@ dashboard steps.}
 
 \item{ann}{Optional annotation \code{data.frame}.}
 
-\item{out_fn}{Output HTML path for dashboard/summary steps.}
+\item{out_fn}{Output HTML path for dashboard/summary steps. When \code{NULL},
+writes under \code{{companion}/reports/{pheno}_dashboard.html} (or
+\code{_summary.html}).}
 
 \item{recalc}{Use recalculated peaks for candidate listing and reports.}
-
-\item{output_list}{If \code{TRUE} (default), \code{listCandidate()} also
-stores the legacy wide candidate table, and \code{summary}/\code{dashboard}
-steps may run. If \code{FALSE}, only the thin simple-candidate list is
-written and interactive HTML steps are skipped.}
 
 \item{seed}{Optional random seed recorded in pipeline metadata.}
 

@@ -9,17 +9,16 @@
 #'   \code{"peakcall"}, \code{"recalc"}, \code{"candidate"}, \code{"dashboard"},
 #'   \code{"summary"}, or \code{"fine_mapping"}.
 #' @param resume If \code{TRUE}, skip steps whose outputs already exist in the
-#'   companion store.
+#'   companion store. When inputs for \code{candidate} differ from
+#'   \code{inputs_manifest.json}, a warning is issued (sections are not deleted).
 #' @param gff,gff_fn \code{GRanges} or path to GFF for \code{listCandidate()} and
 #'   dashboard steps.
 #' @param snpeff Optional \code{snpeff_gds} object.
 #' @param ann Optional annotation \code{data.frame}.
-#' @param out_fn Output HTML path for dashboard/summary steps.
+#' @param out_fn Output HTML path for dashboard/summary steps. When \code{NULL},
+#'   writes under \code{{companion}/reports/{pheno}_dashboard.html} (or
+#'   \code{_summary.html}).
 #' @param recalc Use recalculated peaks for candidate listing and reports.
-#' @param output_list If \code{TRUE} (default), \code{listCandidate()} also
-#'   stores the legacy wide candidate table, and \code{summary}/\code{dashboard}
-#'   steps may run. If \code{FALSE}, only the thin simple-candidate list is
-#'   written and interactive HTML steps are skipped.
 #' @param seed Optional random seed recorded in pipeline metadata.
 #' @param ... Arguments passed to \code{scanAssoc()}, \code{callPeakBlock()},
 #'   \code{recalcAssoc()}, \code{listCandidate()}, or reporting functions.
@@ -35,7 +34,6 @@ runLazyGas <- function(object,
                        ann = NULL,
                        out_fn = NULL,
                        recalc = TRUE,
-                       output_list = TRUE,
                        seed = NULL,
                        ...) {
   if (!inherits(object, "LazyGas")) {
@@ -58,10 +56,12 @@ runLazyGas <- function(object,
 
   dots <- list(...)
   if (!is.null(dots$output_list)) {
-    output_list <- isTRUE(dots$output_list)
+    warning(
+      "'output_list' is no longer supported and was ignored. ",
+      "Wide candidate tables are always written.",
+      call. = FALSE
+    )
     dots$output_list <- NULL
-  } else {
-    output_list <- isTRUE(output_list)
   }
   scan_args <- dots[names(dots) %in% c(
     "formula", "null_formula", "conv_fun", "fixed_effect", "geno_format",
@@ -123,16 +123,26 @@ runLazyGas <- function(object,
     resume_ok <- all(vapply(
       pheno_names,
       function(pn) {
-        if (output_list) {
-          .store_dataset_exists(object, "candidate", pn) &&
-            .store_dataset_exists(object, "simple_candidate", pn)
-        } else {
+        .store_dataset_exists(object, "candidate", pn) &&
           .store_dataset_exists(object, "simple_candidate", pn)
-        }
       },
       logical(1L)
     ))
+    cand_inputs <- .inputs_fingerprint_candidate(
+      gff = gff,
+      snpeff = snpeff,
+      ann = ann,
+      recalc = recalc,
+      gff_fn = gff_fn,
+      snpeff_fn = NULL,
+      ann_fn = NULL
+    )
     if (resume && resume_ok) {
+      .warn_inputs_manifest_mismatch(
+        object,
+        section = "candidate",
+        inputs = cand_inputs
+      )
       skipped <- c(skipped, "candidate")
     } else {
       if (recalc && !.store_section_exists(object, "recalc")) {
@@ -142,18 +152,14 @@ runLazyGas <- function(object,
       if (!recalc && !.store_section_exists(object, "peakcall")) {
         stop("No peakcall data. Run step 'peakcall' first.", call. = FALSE)
       }
-      message(
-        "runLazyGas: listCandidate(output_list = ",
-        output_list,
-        ")"
-      )
+      message("runLazyGas: listCandidate()")
       listCandidate(
         object = object,
         gff = gff,
         snpeff = snpeff,
         ann = ann,
         recalc = recalc,
-        output_list = output_list
+        gff_fn = gff_fn
       )
       ran <- c(ran, "candidate")
     }
@@ -184,59 +190,53 @@ runLazyGas <- function(object,
   }
 
   if ("summary" %in% steps || "dashboard" %in% steps) {
-    if (!output_list) {
-      message(
-        "runLazyGas: skipping summary/dashboard because output_list = FALSE"
+    pheno <- getPheno(object)$pheno_names[1]
+    if (is.null(out_fn)) {
+      out_fn <- .default_report_path(
+        object,
+        pheno = pheno,
+        kind = if ("dashboard" %in% steps) "dashboard" else "summary"
       )
-      skipped <- c(skipped, intersect(steps, c("dashboard", "summary")))
-    } else {
-      if (is.null(out_fn)) {
-        out_fn <- file.path(
-          dirname(.store_gds_fn(object)),
-          "lazygas_report.html"
-        )
-      }
-      pheno <- getPheno(object)$pheno_names[1]
-      what <- if (!is.null(report_args$what)) {
-        report_args$what
-      } else if ("dashboard" %in% steps) {
-        c("scan_png", "peakcall", "recalc", "candidate", "fine_mapping")
-      } else {
-        c("scan_png", "peakcall", "recalc", "candidate", "fine_mapping")
-      }
-      if ("dashboard" %in% steps) {
-        if (is.null(gff)) {
-          stop("gff or gff_fn is required for step 'dashboard'.", call. = FALSE)
-        }
-        message("runLazyGas: makeInteractiveDashboard() -> ", out_fn)
-        do.call(
-          makeInteractiveDashboard,
-          c(
-            list(
-              object = object,
-              pheno = pheno,
-              gff = gff,
-              out_fn = out_fn,
-              snpeff = snpeff,
-              ann = ann,
-              recalc = recalc,
-              what = what
-            ),
-            report_args[setdiff(names(report_args), "what")]
-          )
-        )
-      } else {
-        message("runLazyGas: makeInteractiveSummary() -> ", out_fn)
-        do.call(
-          makeInteractiveSummary,
-          c(
-            list(object = object, pheno = pheno, out_fn = out_fn, what = what),
-            report_args[setdiff(names(report_args), "what")]
-          )
-        )
-      }
-      ran <- c(ran, intersect(steps, c("dashboard", "summary")))
     }
+    what <- if (!is.null(report_args$what)) {
+      report_args$what
+    } else if ("dashboard" %in% steps) {
+      c("scan_png", "peakcall", "recalc", "candidate", "fine_mapping")
+    } else {
+      c("scan_png", "peakcall", "recalc", "candidate", "fine_mapping")
+    }
+    if ("dashboard" %in% steps) {
+      if (is.null(gff)) {
+        stop("gff or gff_fn is required for step 'dashboard'.", call. = FALSE)
+      }
+      message("runLazyGas: makeInteractiveDashboard() -> ", out_fn)
+      do.call(
+        makeInteractiveDashboard,
+        c(
+          list(
+            object = object,
+            pheno = pheno,
+            gff = gff,
+            out_fn = out_fn,
+            snpeff = snpeff,
+            ann = ann,
+            recalc = recalc,
+            what = what
+          ),
+          report_args[setdiff(names(report_args), "what")]
+        )
+      )
+    } else {
+      message("runLazyGas: makeInteractiveSummary() -> ", out_fn)
+      do.call(
+        makeInteractiveSummary,
+        c(
+          list(object = object, pheno = pheno, out_fn = out_fn, what = what),
+          report_args[setdiff(names(report_args), "what")]
+        )
+      )
+    }
+    ran <- c(ran, intersect(steps, c("dashboard", "summary")))
   }
 
   hist <- data.frame(
@@ -248,6 +248,5 @@ runLazyGas <- function(object,
     stringsAsFactors = FALSE
   )
   .store_append_pipeline_history(object, hist)
-
   invisible(object)
 }

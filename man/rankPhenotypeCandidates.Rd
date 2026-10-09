@@ -12,16 +12,18 @@ rankPhenotypeCandidates(
   weights = phase1DefaultWeights(),
   top_n = 30L,
   candidate = NULL,
+  ann_column_map = NULL,
   expression_matrix = NULL,
+  expression_sample_map = NULL,
   expression_meta = NULL,
+  literature_graph = NULL,
+  ortholog_graph = NULL,
   ortholog_table = NULL,
   ortholog_cols = c(gene_id = "gene_id", ortholog_id = "ortholog_id", score = "score"),
   use_cache = TRUE,
   save = TRUE,
-  use_keyword = NULL,
-  use_semantic = NULL,
   use_llm_relevance = NULL,
-  download_tenor = TRUE,
+  download_tenor = FALSE,
   query_use_llm = FALSE,
   llm_model = NULL,
   llm_base_url = NULL,
@@ -37,8 +39,7 @@ store.}
 \item{pheno}{Phenotype name or index.}
 
 \item{query}{A \link{PhenotypeQuery} object or character string. Character input
-is parsed via \code{\link[=phenotypeQuery]{phenotypeQuery()}} with \code{use_llm = FALSE} unless
-\code{query_use_llm = TRUE}.}
+is parsed via \code{\link[=phenotypeQuery]{phenotypeQuery()}}.}
 
 \item{sources}{Evidence sources to use (see \code{\link[=collectGeneEvidence]{collectGeneEvidence()}}).}
 
@@ -52,21 +53,25 @@ active sources). Default: \code{\link[=phase1DefaultWeights]{phase1DefaultWeight
 candidates are loaded from the companion store. When \code{peak_ID} is
 present, ranking runs separately for each peak.}
 
-\item{expression_matrix, expression_meta}{Passed to \code{\link[=collectGeneEvidence]{collectGeneEvidence()}}.}
+\item{ann_column_map}{Required when \code{annotation} is in \code{sources}
+(see \code{\link[=readAnnColumnMap]{readAnnColumnMap()}}).}
 
-\item{ortholog_table, ortholog_cols}{Ortholog data for ortholog evidence.}
+\item{expression_matrix, expression_sample_map}{Required when
+\code{expression} is in \code{sources} (see \code{\link[=readExpressionSampleMap]{readExpressionSampleMap()}}).}
+
+\item{expression_meta}{Deprecated alias for \code{expression_sample_map}.}
+
+\item{literature_graph, ortholog_graph}{Edge tables (\code{from}, \code{to})
+required when the matching source is active (see \code{\link[=collectGeneEvidence]{collectGeneEvidence()}}).}
+
+\item{ortholog_table, ortholog_cols}{Deprecated; use \code{ortholog_graph}.}
 
 \item{use_cache}{Use the companion-store evidence cache.}
 
 \item{save}{Save ranked results to the companion store (\code{phenotype_rank}
 section).}
 
-\item{use_keyword, use_llm_relevance, download_tenor, query_use_llm}{Passed through to evidence / query helpers.}
-
-\item{use_semantic}{Ignored; LSA annotation scoring was removed.}
-
-\item{llm_model, llm_base_url, llm_timeout}{LLM settings for annotation
-relevance (when enabled).}
+\item{use_llm_relevance, download_tenor, query_use_llm, llm_model, llm_base_url, llm_timeout}{Ignored; retained for call compatibility.}
 
 \item{gff, gff_windows}{Passed to \code{\link[=collectGeneEvidence]{collectGeneEvidence()}} for finemap
 GFF-window fallback when SnpEff is absent.}
@@ -81,22 +86,28 @@ Attributes include \code{phenotypeRank} metadata.
 \description{
 Integrates annotation, SnpEff, GWAS, and expression (and optionally
 literature / ortholog) evidence into a composite score for each candidate
-gene \strong{within each GWAS peak}. Channel scores are normalized per peak;
-the same gene on two peaks keeps two rows with peak-local scores.
-There is no cross-peak \code{Gene_ID} deduplication.
+gene \strong{within each GWAS peak}. Channel scores are already on \code{[0, 1]}
+and are \strong{not} re-normalized within the peak. Inactive channels are stored
+as 0.
+The same gene on two peaks keeps two rows. There is no cross-peak
+\code{Gene_ID} deduplication.
 }
 \details{
-Phase 1 defaults: sources
-\code{c("annotation","snpeff","gwas","expression")} with weights
-annotation 0.30 / snpeff 0.35 / gwas 0.25 / expression 0.10.
+Defaults: sources \code{c("snpeff","gwas_dist","gwas_peak")}. Default channel
+weights come from \code{inst/config/ai-lazygas-models.yaml} (via
+\code{\link[=phase1DefaultWeights]{phase1DefaultWeights()}}) and are renormalized over active sources.
 }
 \examples{
 \dontrun{
-q <- phenotypeQuery("heading date", tissues = "leaf", use_llm = FALSE)
-ranked <- rankPhenotypeCandidates(lg, pheno = "Heading date", query = q)
+q <- phenotypeQuery("heading date", tissues = "leaf")
+ranked <- rankPhenotypeCandidates(
+  lg, pheno = "Heading date", query = q,
+  ann_column_map = "ann_column_map.csv"
+)
 head(ranked[, c("peak_ID", "Gene_ID", "rank_within_peak", "composite_score")])
 }
 }
 \seealso{
-\code{\link[=phenotypeQuery]{phenotypeQuery()}}, \code{\link[=collectGeneEvidence]{collectGeneEvidence()}}, \code{\link[=llm_report]{llm_report()}}
+\code{\link[=phenotypeQuery]{phenotypeQuery()}}, \code{\link[=collectGeneEvidence]{collectGeneEvidence()}}, \code{\link[=readAnnColumnMap]{readAnnColumnMap()}},
+\code{\link[=readExpressionSampleMap]{readExpressionSampleMap()}}
 }

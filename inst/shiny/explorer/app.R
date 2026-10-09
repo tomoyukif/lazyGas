@@ -785,24 +785,39 @@ server <- function(input, output, session) {
           update_task(0.05, "Loading reference data")
           shiny::incProgress(0.05, detail = "Loading reference data")
           expr_fn <- system.file("extdata", "demo_expression.csv", package = "lazyGas")
-          meta_fn <- system.file("extdata", "demo_expression_meta.csv", package = "lazyGas")
+          map_fn <- system.file(
+            "extdata", "demo_expression_sample_map.csv", package = "lazyGas"
+          )
+          if (!nzchar(map_fn) || !file.exists(map_fn)) {
+            map_fn <- system.file(
+              "extdata", "demo_expression_meta.csv", package = "lazyGas"
+            )
+          }
+          ann_map <- system.file(
+            "extdata", "demo_ann_column_map.csv", package = "lazyGas"
+          )
           expr_mat <- NULL
-          expr_meta <- NULL
-          if (nzchar(expr_fn) && file.exists(expr_fn)) {
+          expr_map <- NULL
+          sources <- c("annotation", "gwas_dist", "gwas_peak", "ortholog")
+          if (nzchar(expr_fn) && file.exists(expr_fn) &&
+              nzchar(map_fn) && file.exists(map_fn)) {
             expr_df <- read.csv(expr_fn, stringsAsFactors = FALSE, check.names = FALSE)
             rownames(expr_df) <- expr_df$Gene_ID
             expr_mat <- as.matrix(expr_df[, setdiff(names(expr_df), "Gene_ID"), drop = FALSE])
-            if (nzchar(meta_fn) && file.exists(meta_fn)) {
-              expr_meta <- read.csv(meta_fn, stringsAsFactors = FALSE)
-              rownames(expr_meta) <- expr_meta$sample
-            }
+            expr_map <- readExpressionSampleMap(map_fn)
+            sources <- c(
+              "annotation", "gwas_dist", "gwas_peak", "expression", "ortholog"
+            )
           }
 
-          ortho_fn <- system.file("extdata", "demo_orthologs.csv", package = "lazyGas")
-          ortho <- if (nzchar(ortho_fn) && file.exists(ortho_fn)) {
-            read.csv(ortho_fn, stringsAsFactors = FALSE)
+          ortho_fn <- system.file("extdata", "demo_ortholog_graph.csv", package = "lazyGas")
+          ortho_graph <- if (nzchar(ortho_fn) && file.exists(ortho_fn)) {
+            ortho_fn
           } else {
             NULL
+          }
+          if (is.null(ortho_graph)) {
+            sources <- setdiff(sources, "ortholog")
           }
 
           update_task(0.25, "Parsing phenotype query")
@@ -826,10 +841,11 @@ server <- function(input, output, session) {
             object = lg,
             pheno = input$pheno_name,
             query = q,
-            sources = c("annotation", "gwas", "expression", "literature", "ortholog"),
+            sources = sources,
+            ann_column_map = if (nzchar(ann_map) && file.exists(ann_map)) ann_map else NULL,
             expression_matrix = expr_mat,
-            expression_meta = expr_meta,
-            ortholog_table = ortho,
+            expression_sample_map = expr_map,
+            ortholog_graph = ortho_graph,
             top_n = input$top_n,
             use_cache = TRUE,
             save = TRUE
@@ -876,8 +892,8 @@ server <- function(input, output, session) {
       names(df),
       c(
         "Gene_ID", "Name", "peak_ID", "rank_within_peak", "composite_score",
-        "score_annotation", "score_gwas", "score_expression",
-        "score_literature", "score_ortholog", "negLog10P"
+        "score_annotation", "score_gwas_dist", "score_gwas_peak",
+        "score_expression", "score_literature", "score_ortholog", "negLog10P"
       )
     )
     reactable::reactable(

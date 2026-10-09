@@ -9,7 +9,7 @@ buildLazyGas(
   load_filter = TRUE,
   overwrite = FALSE,
   create_gds = NULL,
-  lazygas_store = c("parquet", "sqlite", "gds", "auto"),
+  lazygas_store = "parquet",
   companion_path = NULL
 )
 }
@@ -18,11 +18,13 @@ buildLazyGas(
 
 \item{load_filter}{A logical value to indicate whether apply filrering stored in the input GDS file to samples and markers.}
 
-\item{overwrite}{If \code{TRUE}, replace existing lazyGas results in the companion store (or GDS \verb{lazygas/} folder when \code{lazygas_store = "gds"}).}
+\item{overwrite}{If \code{TRUE}, replace existing lazyGas results in the companion
+Parquet store (\verb{\{stem\}.lazygas/}).}
 
 \item{create_gds}{A named list to create a new GDS file with specified genotype and marker information. See the Details section.}
 
-\item{lazygas_store}{Where to store association results: \code{"parquet"} (default companion folder \verb{\{stem\}.lazygas/}), \code{"sqlite"}, \code{"gds"} (legacy GDS subtree), or \code{"auto"}.}
+\item{lazygas_store}{Companion store mode. Only \code{"parquet"} is supported
+(default folder \code{{stem}.lazygas/}).}
 
 \item{companion_path}{Optional path to an existing companion store when it
 does not sit next to \code{gds_fn} (e.g. Shiny file uploads). See

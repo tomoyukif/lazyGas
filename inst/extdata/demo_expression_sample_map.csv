@@ -1,0 +1,6 @@
+sample,tissue,stage,condition
+fruit_mature_1,fruit,maturation,field
+fruit_mature_2,fruit,maturation,field
+fruit_ripening_1,fruit,ripening,field
+root_stress_1,root,vegetative,salt_stress
+leaf_control_1,leaf,vegetative,control

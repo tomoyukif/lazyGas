@@ -13,30 +13,25 @@
 }
 
 .resolve_ann_cols <- function(candidate, ann_cols) {
-  if (!is.null(ann_cols) && length(ann_cols)) {
-    if (!is.character(ann_cols)) {
-      stop("'ann_cols' must be a character vector.", call. = FALSE)
-    }
-    miss <- setdiff(ann_cols, names(candidate))
-    if (length(miss)) {
-      stop(
-        "Column(s) not found in candidate: ",
-        paste(miss, collapse = ", "),
-        call. = FALSE
-      )
-    }
-    return(ann_cols)
-  }
-
-  cols <- setdiff(names(candidate), .candidate_non_ann_cols())
-  if (!length(cols)) {
+  if (is.null(ann_cols) || !length(ann_cols)) {
     stop(
-      "No annotation columns found in candidate. ",
-      "Run listCandidate() with ann = ..., or specify ann_cols explicitly.",
+      "'ann_cols' is required. Provide columns from readAnnColumnMap() ",
+      "(use_for_ranking = TRUE); automatic column detection was removed.",
       call. = FALSE
     )
   }
-  cols
+  if (!is.character(ann_cols)) {
+    stop("'ann_cols' must be a character vector.", call. = FALSE)
+  }
+  miss <- setdiff(ann_cols, names(candidate))
+  if (length(miss)) {
+    stop(
+      "Column(s) not found in candidate: ",
+      paste(miss, collapse = ", "),
+      call. = FALSE
+    )
+  }
+  ann_cols
 }
 
 .candidate_annotation_text <- function(candidate, ann_cols) {
@@ -147,6 +142,71 @@
     return(character())
   }
   .filter_keyword_terms(.annotation_tokenize(q))
+}
+
+#' Tiered annotation hit score (action=1, noun=0.5, word=0.25, none=0)
+#' @keywords internal
+.annotation_tier_score_details <- function(text, query, ignore.case = TRUE) {
+  text <- as.character(text)
+  n <- length(text)
+  empty <- list(
+    keyword_score = 0,
+    annotation_tier = "none",
+    matched_action_phrases = character(),
+    matched_noun_phrases = character(),
+    matched_words = character(),
+    matched_keywords = character(),
+    matched_synonym = list(),
+    matched_related = list(),
+    unmatched_keywords = character(),
+    matched_context = character()
+  )
+  tiers <- .annotation_tier_terms_from_query(query)
+  if (!length(tiers$action) && !length(tiers$noun) && !length(tiers$word)) {
+    return(lapply(seq_len(n), function(i) empty))
+  }
+
+  lapply(seq_len(n), function(i) {
+    txt <- text[[i]]
+    hit_term <- function(term) {
+      isTRUE(.keyword_term_matches(txt, term, ignore.case = ignore.case)[1L])
+    }
+    matched_action <- tiers$action[vapply(tiers$action, hit_term, logical(1L))]
+    matched_noun <- tiers$noun[vapply(tiers$noun, hit_term, logical(1L))]
+    matched_word <- tiers$word[vapply(tiers$word, hit_term, logical(1L))]
+
+    if (length(matched_action)) {
+      score <- 1
+      tier <- "action"
+    } else if (length(matched_noun)) {
+      score <- 0.5
+      tier <- "noun"
+    } else if (length(matched_word)) {
+      score <- 0.25
+      tier <- "word"
+    } else {
+      score <- 0
+      tier <- "none"
+    }
+
+    unmatched <- character()
+    if (!length(matched_action) && !length(matched_noun) && !length(matched_word)) {
+      unmatched <- unique(c(tiers$action, tiers$noun, tiers$word))
+    }
+
+    list(
+      keyword_score = score,
+      annotation_tier = tier,
+      matched_action_phrases = matched_action,
+      matched_noun_phrases = matched_noun,
+      matched_words = matched_word,
+      matched_keywords = unique(c(matched_action, matched_noun, matched_word)),
+      matched_synonym = list(),
+      matched_related = list(),
+      unmatched_keywords = unmatched,
+      matched_context = character()
+    )
+  })
 }
 
 #' Family-level annotation keyword details for ranking / A4 reports

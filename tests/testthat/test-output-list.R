@@ -1,4 +1,4 @@
-test_that("listCandidate output_list=FALSE writes simple only", {
+test_that("listCandidate always writes wide and simple candidates", {
   skip_if_not_installed("rtracklayer")
   skip_if_not_installed("GBScleanR")
   skip_if_not_installed("arrow")
@@ -45,7 +45,8 @@ test_that("listCandidate output_list=FALSE writes simple only", {
       gff = gff,
       ann = ann,
       recalc = TRUE,
-      output_list = FALSE
+      gff_fn = demo$gff_fn,
+      ann_fn = demo$ann_fn
     )
   )
 
@@ -55,71 +56,42 @@ test_that("listCandidate output_list=FALSE writes simple only", {
   expect_true(all(c("Gene_ID", "Gene_chr", "Gene_start") %in% names(simple)))
 
   wide <- lazyGas::lazyData(lg, dataset = "candidate", pheno = pheno_name)
-  expect_null(wide)
+  expect_true(is.data.frame(wide))
+  expect_gt(nrow(wide), 0L)
 
-  # Default TRUE restores legacy wide table
-  suppressMessages(
-    lazyGas::listCandidate(
-      object = lg,
-      gff = gff,
-      ann = ann,
-      recalc = TRUE,
-      output_list = TRUE
-    )
-  )
-  wide2 <- lazyGas::lazyData(lg, dataset = "candidate", pheno = pheno_name)
-  expect_true(is.data.frame(wide2))
-  expect_gt(nrow(wide2), 0L)
-  simple2 <- lazyGas::lazyData(lg, dataset = "simple_candidate", pheno = pheno_name)
-  expect_true(is.data.frame(simple2))
-  expect_gt(nrow(simple2), 0L)
+  stem <- sub("\\.gds$", "", gds_fn, ignore.case = TRUE)
+  man_path <- file.path(paste0(stem, ".lazygas"), "inputs_manifest.json")
+  expect_true(file.exists(man_path))
 })
 
-test_that("runLazyGas skips summary/dashboard when output_list=FALSE", {
+test_that("buildLazyGas rejects non-parquet store modes", {
+  skip_if_not_installed("GBScleanR")
+  gds_fn <- .copy_sample_gds(.skip_without_sample_gds())
+  on.exit(unlink(gds_fn), add = TRUE)
+  expect_error(
+    lazyGas::buildLazyGas(gds_fn = gds_fn, lazygas_store = "sqlite"),
+    "parquet"
+  )
+})
+
+test_that("assignPheno accepts sample_id", {
   skip_if_not_installed("GBScleanR")
   skip_if_not_installed("arrow")
-  skip_if_not_installed("rtracklayer")
 
   gds_fn <- .copy_sample_gds(.skip_without_sample_gds())
   on.exit(unlink(gds_fn), add = TRUE)
-
   lg <- lazyGas::buildLazyGas(
     gds_fn = gds_fn,
     load_filter = TRUE,
-    overwrite = TRUE,
-    lazygas_store = "parquet"
+    overwrite = TRUE
   )
   on.exit(.close_lg(lg), add = TRUE)
 
   demo <- .skip_without_demo_extdata()
-  pheno <- read.csv(demo$pheno_fn)
-  lg <- lazyGas::assignPheno(object = lg, pheno = pheno, rename = "pipe_outlist")
-  conv_fun <- lazyGas::makeConvFun(geno_format = "dosage", n_levels = 3L)
-  gff <- rtracklayer::import.gff(demo$gff_fn)
-
-  msgs <- capture.output(
-    suppressMessages(
-      lazyGas::runLazyGas(
-        object = lg,
-        steps = c("scan", "peakcall", "recalc", "candidate", "summary"),
-        resume = FALSE,
-        formula = "add + dom",
-        conv_fun = conv_fun,
-        geno_format = "dosage",
-        limit_peakcall = 2L,
-        n_threads = 1L,
-        gff = gff,
-        output_list = FALSE
-      )
-    ),
-    type = "message"
+  pheno <- read.csv(demo$pheno_fn, stringsAsFactors = FALSE)
+  names(pheno)[names(pheno) == "id"] <- "sample_id"
+  expect_silent(
+    lg2 <- lazyGas::assignPheno(object = lg, pheno = pheno, rename = "sid_trait")
   )
-  hist <- lazyGas::lazyData(lg, dataset = "pipeline")
-  expect_true(is.data.frame(hist))
-  expect_true(grepl("summary", hist$steps_skipped[nrow(hist)], fixed = TRUE) ||
-                grepl("summary", paste(msgs, collapse = "\n"), fixed = TRUE))
-
-  simple <- lazyGas::lazyData(lg, "simple_candidate", "pipe_outlist")
-  expect_true(is.data.frame(simple))
-  expect_null(lazyGas::lazyData(lg, "candidate", "pipe_outlist"))
+  expect_true("sid_trait" %in% lazyGas::getPheno(lg2)$pheno_names)
 })
