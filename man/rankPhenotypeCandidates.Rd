@@ -45,11 +45,12 @@ is parsed via \code{\link[=phenotypeQuery]{phenotypeQuery()}} with \code{use_llm
 \item{weights}{Named numeric vector of source weights (renormalized over
 active sources). Default: \code{\link[=phase1DefaultWeights]{phase1DefaultWeights()}}.}
 
-\item{top_n}{Return at most this many rows after ranking. \code{NULL}
-keeps every scored gene (scoring always covers the full candidate set).}
+\item{top_n}{Return at most this many rows \strong{per peak} after ranking.
+\code{NULL} keeps every scored gene in each peak.}
 
 \item{candidate}{Optional candidate \code{data.frame}; when \code{NULL},
-candidates are loaded from the companion store.}
+candidates are loaded from the companion store. When \code{peak_ID} is
+present, ranking runs separately for each peak.}
 
 \item{expression_matrix, expression_meta}{Passed to \code{\link[=collectGeneEvidence]{collectGeneEvidence()}}.}
 
@@ -71,14 +72,18 @@ relevance (when enabled).}
 GFF-window fallback when SnpEff is absent.}
 }
 \value{
-A \code{data.frame} sorted by \code{composite_score} with per-source
-score columns and \code{evidence_json}. Attributes include
-\code{phenotypeRank} metadata.
+A \code{data.frame} with one row per \code{(peak_ID, Gene_ID)}
+(when \code{peak_ID} exists), columns including \code{rank_within_peak},
+\code{composite_score}, per-source scores, and \code{evidence_json}.
+Rows are ordered by \code{peak_ID}, then \code{rank_within_peak}.
+Attributes include \code{phenotypeRank} metadata.
 }
 \description{
 Integrates annotation, SnpEff, GWAS, and expression (and optionally
 literature / ortholog) evidence into a composite score for each candidate
-gene near GWAS peaks.
+gene \strong{within each GWAS peak}. Channel scores are normalized per peak;
+the same gene on two peaks keeps two rows with peak-local scores.
+There is no cross-peak \code{Gene_ID} deduplication.
 }
 \details{
 Phase 1 defaults: sources
@@ -89,7 +94,7 @@ annotation 0.30 / snpeff 0.35 / gwas 0.25 / expression 0.10.
 \dontrun{
 q <- phenotypeQuery("heading date", tissues = "leaf", use_llm = FALSE)
 ranked <- rankPhenotypeCandidates(lg, pheno = "Heading date", query = q)
-head(ranked[, c("Gene_ID", "composite_score", "score_annotation", "score_snpeff")])
+head(ranked[, c("peak_ID", "Gene_ID", "rank_within_peak", "composite_score")])
 }
 }
 \seealso{

@@ -270,7 +270,8 @@ explainPhenotypeCandidates <- function(rank_result,
 #'   when provided (still requires GFF + credible sets for reported peaks;
 #'   SnpEff is optional).
 #' @param peak_id Optional peak ID(s) to report. When \code{rank_result} is
-#'   \code{NULL}, candidates are ranked within each peak; default \code{NULL}
+#'   \code{NULL}, candidates for the requested peaks are ranked with
+#'   peak-local scores via [rankPhenotypeCandidates()]; default \code{NULL}
 #'   uses the top five peaks by lead \code{negLog10P}.
 #' @param use_llm_relevance Annotation LLM relevance during ranking.
 #' @param download_tenor Download missing TENOR expression CSVs.
@@ -455,67 +456,45 @@ llm_report <- function(object,
       gff = gff
     )
     rank_args <- c(rank_args, extra_rank)
-    rank_parts <- list()
-    for (i in seq_len(nrow(peaks_plan))) {
-      pid <- peaks_plan$peak_ID[i]
-      message(
-        "llm_report: rankPhenotypeCandidates peak ", pid,
-        " (", i, "/", nrow(peaks_plan), ")..."
-      )
-      cand_peak <- candidate_all[
-        candidate_all$peak_ID == pid,
-        ,
-        drop = FALSE
-      ]
-      if (nrow(cand_peak) == 0L) {
-        message("llm_report: peak ", pid, " has no candidates; skip")
-        next
-      }
-      if ("Gene_ID" %in% names(cand_peak)) {
-        gid_ok <- !is.na(cand_peak$Gene_ID) & nzchar(as.character(cand_peak$Gene_ID))
-        if (!any(gid_ok)) {
-          message("llm_report: peak ", pid, " has no Gene_ID rows; skip")
-          next
-        }
-        cand_peak <- cand_peak[gid_ok, , drop = FALSE]
-      }
-      rank_peak <- tryCatch(
-        do.call(
-          rankPhenotypeCandidates,
-          c(
-            rank_args,
-            list(
-              candidate = cand_peak,
-              top_n = NULL
-            )
-          )
-        ),
-        error = function(e) {
-          warning(
-            "Ranking failed for peak ", pid, ": ", conditionMessage(e),
-            " — skipping this peak.",
-            call. = FALSE
-          )
-          NULL
-        }
-      )
-      if (!is.null(rank_peak)) {
-        message(
-          "llm_report: ranked peak ", pid, " — ",
-          nrow(rank_peak), " gene(s)"
-        )
-        rank_parts[[length(rank_parts) + 1L]] <- rank_peak
-      }
-    }
-    if (!length(rank_parts)) {
+    peak_keep <- as.character(peaks_plan$peak_ID)
+    cand_rank <- candidate_all[
+      as.character(candidate_all$peak_ID) %in% peak_keep,
+      ,
+      drop = FALSE
+    ]
+    if (nrow(cand_rank) == 0L) {
       stop(
-        "Ranking failed for all requested peaks; no report written.",
+        "No candidates for requested peak(s): ",
+        paste(peak_keep, collapse = ", "),
         call. = FALSE
       )
     }
-    rank_result <- .bind_rank_results(rank_parts)
+    message(
+      "llm_report: rankPhenotypeCandidates for ",
+      length(unique(as.character(cand_rank$peak_ID))),
+      " peak(s)..."
+    )
+    rank_result <- tryCatch(
+      do.call(
+        rankPhenotypeCandidates,
+        c(
+          rank_args,
+          list(
+            candidate = cand_rank,
+            top_n = NULL
+          )
+        )
+      ),
+      error = function(e) {
+        stop("Ranking failed: ", conditionMessage(e), call. = FALSE)
+      }
+    )
     ranked_in_this_call <- TRUE
-    message("llm_report: ranking done")
+    message(
+      "llm_report: ranking done — ",
+      nrow(rank_result),
+      " row(s) across peak(s)"
+    )
   } else {
     peaks_plan <- .resolve_report_peaks(
       object = object,

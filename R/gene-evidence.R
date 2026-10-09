@@ -122,7 +122,13 @@ collectGeneEvidence <- function(gene_ids,
     use_keyword = use_keyword,
     use_semantic = FALSE,
     use_llm_relevance = use_llm_relevance,
-    keyword_engine = "phrase_boundary_v1"
+    keyword_engine = "phrase_boundary_v1",
+    # Peak-local scoring: same Gene_ID can have different GWAS/SnpEff rows
+    peak_ids = if (!is.null(candidate) && "peak_ID" %in% names(candidate)) {
+      sort(unique(as.character(candidate$peak_ID)))
+    } else {
+      character()
+    }
   ))
 
   ann_batch <- NULL

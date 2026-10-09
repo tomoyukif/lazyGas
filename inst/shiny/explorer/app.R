@@ -875,7 +875,7 @@ server <- function(input, output, session) {
     show_cols <- intersect(
       names(df),
       c(
-        "Gene_ID", "Name", "peak_ID", "composite_score",
+        "Gene_ID", "Name", "peak_ID", "rank_within_peak", "composite_score",
         "score_annotation", "score_gwas", "score_expression",
         "score_literature", "score_ortholog", "negLog10P"
       )
@@ -896,35 +896,38 @@ server <- function(input, output, session) {
     print(q)
   })
 
-  selected_gene <- reactive({
+  selected_rank_row <- reactive({
     df <- ranked()
     req(df)
     sel <- reactable::getReactableState("rank_table", "selected")
     if (length(sel)) {
-      return(as.character(df$Gene_ID[sel]))
+      return(df[sel[1L], , drop = FALSE])
     }
     if (nrow(df)) {
-      return(as.character(df$Gene_ID[1L]))
+      return(df[1L, , drop = FALSE])
     }
     NULL
   })
 
+  selected_gene <- reactive({
+    row <- selected_rank_row()
+    req(row)
+    as.character(row$Gene_ID[1L])
+  })
+
   selected_peak_id <- reactive({
-    df <- ranked()
-    gid <- selected_gene()
-    req(df, gid)
-    row <- df[df$Gene_ID == gid, , drop = FALSE]
-    if (!nrow(row) || !"peak_ID" %in% names(row)) {
+    row <- selected_rank_row()
+    req(row)
+    if (!"peak_ID" %in% names(row)) {
       return(NULL)
     }
     row$peak_ID[1L]
   })
 
   output$evidence_panel <- renderUI({
-    df <- ranked()
-    gid <- selected_gene()
-    req(df, gid)
-    row <- df[df$Gene_ID == gid, , drop = FALSE][1L, , drop = FALSE]
+    row <- selected_rank_row()
+    req(row)
+    gid <- as.character(row$Gene_ID[1L])
     ev <- tryCatch(
       jsonlite::fromJSON(row$evidence_json[1L], simplifyVector = FALSE),
       error = function(e) list()

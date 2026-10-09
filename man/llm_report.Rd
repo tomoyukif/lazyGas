@@ -32,7 +32,7 @@ llm_report(
   reinterpret = TRUE,
   reinterpret_rules = reinterpretDefaultRules(),
   reinterpret_views = reinterpretDefaultViews(),
-  gene_select = c("union_champions", "composite_top_n", "union_all"),
+  gene_select = c("union_all", "union_champions", "composite_top_n"),
   ...
 )
 }
@@ -69,7 +69,8 @@ when provided (still requires GFF + credible sets for reported peaks;
 SnpEff is optional).}
 
 \item{peak_id}{Optional peak ID(s) to report. When \code{rank_result} is
-\code{NULL}, candidates are ranked within each peak; default \code{NULL}
+\code{NULL}, candidates for the requested peaks are ranked with
+peak-local scores via \code{\link[=rankPhenotypeCandidates]{rankPhenotypeCandidates()}}; default \code{NULL}
 uses the top five peaks by lead \code{negLog10P}.}
 
 \item{use_llm_relevance}{Annotation LLM relevance during ranking.}
@@ -108,8 +109,8 @@ cards and select evidence genes via \code{gene_select}.}
 \code{\link[=reinterpretPeakCandidates]{reinterpretPeakCandidates()}}.}
 
 \item{gene_select}{Evidence gene set when \code{reinterpret = TRUE}:
-\code{"union_champions"} (default), \code{"composite_top_n"}, or
-\code{"union_all"}.}
+\code{"union_all"} (default; composite top N ∪ card champion/support),
+\code{"union_champions"}, or \code{"composite_top_n"}.}
 
 \item{...}{Passed to \code{\link[=rankPhenotypeCandidates]{rankPhenotypeCandidates()}} when ranking.
 \code{top_n} and \code{save} in \code{...} are ignored.}
