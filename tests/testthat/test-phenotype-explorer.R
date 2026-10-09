@@ -137,8 +137,17 @@ test_that("rankPhenotypeCandidates ranks demo candidates", {
 
   expect_true(nrow(ranked) > 0L)
   expect_true("composite_score" %in% names(ranked))
+  expect_true("rank_within_peak" %in% names(ranked))
   expect_true(all(ranked$composite_score >= 0 & ranked$composite_score <= 1))
-  expect_true(ranked$composite_score[1L] >= ranked$composite_score[nrow(ranked)])
+  if ("peak_ID" %in% names(ranked)) {
+    for (pid in unique(ranked$peak_ID)) {
+      sub <- ranked[ranked$peak_ID == pid | (is.na(pid) & is.na(ranked$peak_ID)), , drop = FALSE]
+      expect_true(sub$composite_score[1L] >= sub$composite_score[nrow(sub)])
+      expect_equal(sub$rank_within_peak, seq_len(nrow(sub)))
+    }
+  } else {
+    expect_true(ranked$composite_score[1L] >= ranked$composite_score[nrow(ranked)])
+  }
 
   stored <- lazyData(res$lg, dataset = "phenotype_rank", pheno = res$pheno_name)
   expect_false(is.null(stored))
@@ -157,6 +166,8 @@ test_that("rankPhenotypeCandidates ranks demo candidates", {
     save = FALSE
   )
   expect_true(nrow(ranked_all) >= nrow(ranked))
+  # No global Gene_ID collapse: multi-peak genes may appear more than once
+  expect_true(nrow(ranked_all) >= length(unique(ranked_all$Gene_ID)))
 })
 
 test_that("explainPhenotypeCandidates returns template without LLM", {

@@ -3,7 +3,9 @@
 #'
 #' Integrates annotation, SnpEff, GWAS, and expression (and optionally
 #' literature / ortholog) evidence into a composite score for each candidate
-#' gene near GWAS peaks.
+#' gene **within each GWAS peak**. Channel scores are normalized per peak;
+#' the same gene on two peaks keeps two rows with peak-local scores.
+#' There is no cross-peak \code{Gene_ID} deduplication.
 #'
 #' Phase 1 defaults: sources
 #' \code{c("annotation","snpeff","gwas","expression")} with weights
@@ -17,10 +19,11 @@
 #' @param sources Evidence sources to use (see [collectGeneEvidence()]).
 #' @param weights Named numeric vector of source weights (renormalized over
 #'   active sources). Default: [phase1DefaultWeights()].
-#' @param top_n Return at most this many rows after ranking. \code{NULL}
-#'   keeps every scored gene (scoring always covers the full candidate set).
+#' @param top_n Return at most this many rows **per peak** after ranking.
+#'   \code{NULL} keeps every scored gene in each peak.
 #' @param candidate Optional candidate \code{data.frame}; when \code{NULL},
-#'   candidates are loaded from the companion store.
+#'   candidates are loaded from the companion store. When \code{peak_ID} is
+#'   present, ranking runs separately for each peak.
 #' @param ann_column_map Required when \code{annotation} is in \code{sources}
 #'   (see [readAnnColumnMap()]).
 #' @param expression_matrix,expression_sample_map Required when
@@ -36,9 +39,11 @@
 #' @param gff,gff_windows Passed to [collectGeneEvidence()] for finemap
 #'   GFF-window fallback when SnpEff is absent.
 #'
-#' @return A \code{data.frame} sorted by \code{composite_score} with per-source
-#'   score columns and \code{evidence_json}. Attributes include
-#'   \code{phenotypeRank} metadata.
+#' @return A \code{data.frame} with one row per \code{(peak_ID, Gene_ID)}
+#'   (when \code{peak_ID} exists), columns including \code{rank_within_peak},
+#'   \code{composite_score}, per-source scores, and \code{evidence_json}.
+#'   Rows are ordered by \code{peak_ID}, then \code{rank_within_peak}.
+#'   Attributes include \code{phenotypeRank} metadata.
 #' @export
 #'
 #' @seealso [phenotypeQuery()], [collectGeneEvidence()], [readAnnColumnMap()],
@@ -51,7 +56,7 @@
 #'   lg, pheno = "Heading date", query = q,
 #'   ann_column_map = "ann_column_map.csv"
 #' )
-#' head(ranked[, c("Gene_ID", "composite_score", "score_annotation", "score_snpeff")])
+#' head(ranked[, c("peak_ID", "Gene_ID", "rank_within_peak", "composite_score")])
 #' }
 rankPhenotypeCandidates <- function(object,
                                     pheno,
@@ -140,39 +145,160 @@ rankPhenotypeCandidates <- function(object,
   }
   active_weights <- active_weights / w_sum
 
-  gene_ids <- unique(as.character(candidate$Gene_ID))
-  gene_ids <- gene_ids[!is.na(gene_ids) & nzchar(gene_ids)]
-  if (!length(gene_ids)) {
+  candidate <- candidate[
+    !is.na(candidate$Gene_ID) & nzchar(as.character(candidate$Gene_ID)),
+    ,
+    drop = FALSE
+  ]
+  if (!nrow(candidate)) {
     stop(
       "No usable Gene_ID values in candidate table for phenotype '",
       pheno_name, "'.",
       call. = FALSE
     )
   }
-  # Drop rows without Gene_ID before scoring / merge
-  candidate <- candidate[
-    !is.na(candidate$Gene_ID) & nzchar(as.character(candidate$Gene_ID)),
-    ,
-    drop = FALSE
-  ]
-  evidence <- collectGeneEvidence(
-    gene_ids = gene_ids,
-    query = query,
-    candidate = candidate,
-    object = object,
+
+  peak_groups <- .rank_peak_group_ids(candidate)
+  parts <- vector("list", length(peak_groups$keys))
+  for (i in seq_along(peak_groups$keys)) {
+    cand_peak <- candidate[peak_groups$index[[i]], , drop = FALSE]
+    part <- .rank_phenotype_candidates_block(
+      object = object,
+      pheno_name = pheno_name,
+      query = query,
+      candidate = cand_peak,
+      sources = sources,
+      active_weights = active_weights,
+      ann_column_map = ann_column_map,
+      expression_matrix = expression_matrix,
+      expression_sample_map = expression_sample_map,
+      ortholog_table = ortholog_table,
+      ortholog_cols = ortholog_cols,
+      use_cache = use_cache,
+      use_keyword = use_keyword,
+      use_semantic = use_semantic,
+      gff = gff,
+      gff_windows = gff_windows
+    )
+    part$rank_within_peak <- seq_len(nrow(part))
+    if (!is.null(top_n)) {
+      tn <- as.integer(top_n)[1L]
+      if (is.finite(tn) && tn > 0L && nrow(part) > tn) {
+        part <- part[seq_len(tn), , drop = FALSE]
+      }
+    }
+    parts[[i]] <- part
+  }
+
+  out <- .bind_rank_peak_parts(parts)
+  rownames(out) <- NULL
+
+  attr(out, "phenotypeRank") <- list(
+    query_id = query$query_id,
     pheno = pheno_name,
     sources = sources,
-    ann_column_map = ann_column_map,
-    expression_matrix = expression_matrix,
-    expression_sample_map = expression_sample_map,
-    ortholog_table = ortholog_table,
-    ortholog_cols = ortholog_cols,
-    use_cache = use_cache,
-    use_keyword = use_keyword,
-    use_semantic = use_semantic,
-    gff = gff,
-    gff_windows = gff_windows
+    weights = active_weights,
+    n_rows = nrow(out),
+    n_genes = length(unique(as.character(out$Gene_ID))),
+    n_peaks = length(peak_groups$keys),
+    ranking_unit = "peak"
   )
+
+  if (save) {
+    .store_write_phenotype_rank(
+      object = object,
+      rank_result = out,
+      pheno_name = pheno_name,
+      query_id = query$query_id
+    )
+  }
+
+  out
+}
+
+#' Split candidate rows into peak groups (order of first appearance)
+#' @noRd
+.rank_peak_group_ids <- function(candidate) {
+  if (!"peak_ID" %in% names(candidate)) {
+    return(list(
+      keys = list(NA),
+      index = list(seq_len(nrow(candidate)))
+    ))
+  }
+  keys <- unique(candidate$peak_ID)
+  index <- lapply(keys, function(pid) {
+    if (is.na(pid)) {
+      which(is.na(candidate$peak_ID))
+    } else {
+      which(!is.na(candidate$peak_ID) & candidate$peak_ID == pid)
+    }
+  })
+  list(keys = as.list(keys), index = index)
+}
+
+#' Bind per-peak rank tables; order by peak_ID then rank_within_peak
+#' @noRd
+.bind_rank_peak_parts <- function(parts) {
+  parts <- Filter(function(x) !is.null(x) && nrow(x) > 0L, parts)
+  if (!length(parts)) {
+    stop("Ranking produced no rows for any peak.", call. = FALSE)
+  }
+  out <- do.call(rbind, parts)
+  if ("peak_ID" %in% names(out) && "rank_within_peak" %in% names(out)) {
+    out <- out[order(out$peak_ID, out$rank_within_peak, out$Gene_ID), , drop = FALSE]
+  } else if ("rank_within_peak" %in% names(out)) {
+    out <- out[order(out$rank_within_peak, out$Gene_ID), , drop = FALSE]
+  }
+  out
+}
+
+#' Score and rank one peak's candidate rows (no Gene_ID dedup)
+#' @noRd
+.rank_phenotype_candidates_block <- function(object,
+                                             pheno_name,
+                                             query,
+                                             candidate,
+                                             sources,
+                                             active_weights,
+                                             ann_column_map = NULL,
+                                             expression_matrix = NULL,
+                                             expression_sample_map = NULL,
+                                             ortholog_table = NULL,
+                                             ortholog_cols = NULL,
+                                             use_cache = TRUE,
+                                             use_keyword = NULL,
+                                             use_semantic = NULL,
+                                             gff = NULL,
+                                             gff_windows = NULL,
+                                             collect_extra = list()) {
+  gene_ids <- unique(as.character(candidate$Gene_ID))
+  gene_ids <- gene_ids[!is.na(gene_ids) & nzchar(gene_ids)]
+  if (!length(gene_ids)) {
+    return(candidate[FALSE, , drop = FALSE])
+  }
+
+  evidence_args <- c(
+    list(
+      gene_ids = gene_ids,
+      query = query,
+      candidate = candidate,
+      object = object,
+      pheno = pheno_name,
+      sources = sources,
+      ann_column_map = ann_column_map,
+      expression_matrix = expression_matrix,
+      expression_sample_map = expression_sample_map,
+      ortholog_table = ortholog_table,
+      ortholog_cols = ortholog_cols,
+      use_cache = use_cache,
+      use_keyword = use_keyword,
+      use_semantic = use_semantic,
+      gff = gff,
+      gff_windows = gff_windows
+    ),
+    collect_extra
+  )
+  evidence <- do.call(collectGeneEvidence, evidence_args)
 
   score_raw <- list()
   for (src in .EVIDENCE_SOURCE_CHOICES) {
@@ -202,7 +328,6 @@ rankPhenotypeCandidates <- function(object,
       score_norm[[src]] <- sc
     }
   }
-  # Floor each channel at 0.1 so "no evidence" is not a hard zero in composite.
   for (src in names(score_norm)) {
     score_norm[[src]] <- .floor_score_vec(score_norm[[src]], floor = 0.1)
   }
@@ -236,37 +361,6 @@ rankPhenotypeCandidates <- function(object,
   out <- merge(candidate, score_df, by = "Gene_ID", all.x = FALSE, sort = FALSE)
   out <- out[order(-out$composite_score, out$Gene_ID), , drop = FALSE]
   rownames(out) <- NULL
-
-  if ("Gene_ID" %in% names(out)) {
-    ord <- order(-out$composite_score, out$Gene_ID)
-    out <- out[ord, , drop = FALSE]
-    out <- out[!duplicated(out$Gene_ID), , drop = FALSE]
-  }
-
-  if (!is.null(top_n)) {
-    top_n <- as.integer(top_n)[1L]
-    if (is.finite(top_n) && top_n > 0L && nrow(out) > top_n) {
-      out <- out[seq_len(top_n), , drop = FALSE]
-    }
-  }
-
-  attr(out, "phenotypeRank") <- list(
-    query_id = query$query_id,
-    pheno = pheno_name,
-    sources = sources,
-    weights = active_weights,
-    n_genes = nrow(out)
-  )
-
-  if (save) {
-    .store_write_phenotype_rank(
-      object = object,
-      rank_result = out,
-      pheno_name = pheno_name,
-      query_id = query$query_id
-    )
-  }
-
   out
 }
 

@@ -5,6 +5,7 @@
 
 # Cursor local notes (reviews, agent context)
 .cursor/
+codereview/
 
 # Local plans and demo / Phase 1 run outputs
 plan/

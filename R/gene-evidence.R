@@ -149,6 +149,12 @@ collectGeneEvidence <- function(gene_ids,
       .ann_ranking_columns(ann_column_map)
     } else {
       character()
+    },
+    # Peak-local scoring: same Gene_ID can have different GWAS/SnpEff rows
+    peak_ids = if (!is.null(candidate) && "peak_ID" %in% names(candidate)) {
+      sort(unique(as.character(candidate$peak_ID)))
+    } else {
+      character()
     }
   ))
 
