@@ -897,61 +897,12 @@ collectGeneEvidence <- function(gene_ids,
 
 #' Max PIP per gene: SnpEff assignment first, else GFF window (Phase 2 H1)
 #'
-#' Ensure credible-set rows have Chr/Pos for finemap PIP→gene mapping
-#' @keywords internal
-.e_enrich_cs_coords <- function(cred, object, pheno_name, peak_id) {
-  if (is.null(cred) || !nrow(cred)) {
-    return(cred)
-  }
-  if ("chr" %in% names(cred) && !"Chr" %in% names(cred)) {
-    cred$Chr <- cred$chr
-  }
-  if ("pos" %in% names(cred) && !"Pos" %in% names(cred)) {
-    cred$Pos <- cred$pos
-  }
-  have_chr <- "Chr" %in% names(cred) &&
-    any(nzchar(as.character(cred$Chr)), na.rm = TRUE)
-  have_pos <- "Pos" %in% names(cred) &&
-    any(is.finite(as.numeric(cred$Pos)), na.rm = TRUE)
-  if (have_chr && have_pos) {
-    return(cred)
-  }
-  # Fall back: merge coordinates from peakcall / recalc blocks
-  blk <- NULL
-  for (ds in c("recalc", "peakcall")) {
-    blk <- tryCatch(
-      lazyData(object = object, dataset = ds, pheno = pheno_name),
-      error = function(e) NULL
-    )
-    if (!is.null(blk) && nrow(blk)) {
-      break
-    }
-  }
-  if (is.null(blk) || !nrow(blk) || !"variant_ID" %in% names(blk)) {
-    return(cred)
-  }
-  if (!is.null(peak_id) && "peak_ID" %in% names(blk)) {
-    blk <- blk[as.character(blk$peak_ID) == as.character(peak_id), , drop = FALSE]
-  }
-  coord_cols <- intersect(c("variant_ID", "Chr", "chr", "Pos", "pos"), names(blk))
-  if (!"variant_ID" %in% coord_cols) {
-    return(cred)
-  }
-  coords <- unique(blk[, coord_cols, drop = FALSE])
-  if ("chr" %in% names(coords) && !"Chr" %in% names(coords)) {
-    coords$Chr <- coords$chr
-  }
-  if ("pos" %in% names(coords) && !"Pos" %in% names(coords)) {
-    coords$Pos <- coords$pos
-  }
-  keep <- intersect(c("variant_ID", "Chr", "Pos"), names(coords))
-  coords <- coords[, keep, drop = FALSE]
-  merge(cred, coords, by = "variant_ID", all.x = TRUE, sort = FALSE)
-}
-
 #' For each peak's 95% CS: (1) CS ∩ SnpEff \code{Gene_ID} → \code{max(PIP)};
 #' (2) genes still unassigned (no SnpEff or no hit) get
 #' \code{max(PIP)} of CS variants whose position falls in the gene's GFF window.
+#'
+#' Credible-set rows are assumed to already carry \code{Chr}/\code{Pos} from
+#' \code{calcCredibleSet()} (current store contract).
 #' @keywords internal
 .finemap_pip_lookup <- function(object,
                                 pheno_name,
@@ -1030,24 +981,22 @@ collectGeneEvidence <- function(gene_ids,
     if (!nrow(cred)) {
       next
     }
-    # Newer calcCredibleSet() stores Chr/Pos on the CS table. Merging those
-    # rows again with the peak block yields Pos.x/Pos.y and a false "no Pos"
-    # failure — enrich only when coordinates are missing (same as E path).
-    cred2 <- .e_enrich_cs_coords(
-      cred,
-      object = object,
-      pheno_name = pheno_name,
-      peak_id = pid
-    )
+    # calcCredibleSet() always attaches Chr/Pos; do not re-merge from peak blocks.
+    cred2 <- cred
+    if ("chr" %in% names(cred2) && !"Chr" %in% names(cred2)) {
+      cred2$Chr <- cred2$chr
+    }
+    if ("pos" %in% names(cred2) && !"Pos" %in% names(cred2)) {
+      cred2$Pos <- cred2$pos
+    }
     if (!"Pos" %in% names(cred2) ||
-        !any(is.finite(as.numeric(cred2$Pos)), na.rm = TRUE)) {
+        !any(is.finite(as.numeric(cred2$Pos)), na.rm = TRUE) ||
+        !"Chr" %in% names(cred2)) {
       stop(
-        "Could not map credible-set variants to positions for peak ", pid, ".",
+        "Credible set for peak ", pid,
+        " lacks Chr/Pos (expected from calcCredibleSet()).",
         call. = FALSE
       )
-    }
-    if (!"Chr" %in% names(cred2) && "chr" %in% names(cred2)) {
-      cred2$Chr <- cred2$chr
     }
     cred2$Chr <- as.character(cred2$Chr)
     cred2$Pos <- as.numeric(cred2$Pos)
