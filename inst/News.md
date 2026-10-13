@@ -15,8 +15,9 @@ the release or documentation update for that version.
 + Inactive `score_*` channels are forced to **0** when ranking and when
   reading `lazyData(..., dataset = "phenotype_rank")` (active sources from
   `phenotypeRank` metadata).
-+ Finemap PIP mapping assumes credible-set rows already have `Chr`/`Pos`
-  from `calcCredibleSet()` (no coordinate backfill helper).
++ Finemap PIP mapping: remove `.e_enrich_cs_coords()`. Credible-set rows are
+  required to already carry `Chr`/`Pos` from `calcCredibleSet()`; missing
+  coordinates stop with an error (current-store contract only).
 
 ### Hardening track note
 + without-LLM I/O + scoring hardening on `master` is complete for this pass.
