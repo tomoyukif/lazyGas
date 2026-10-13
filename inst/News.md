@@ -5,6 +5,26 @@ the release or documentation update for that version.
 
 ---
 
+## Changes in version 0.10.0 (2026-10-13) — interactive scores + finemap CS coords
+
+### Interactive summary: phenotype rank scores
++ `makeInteractiveSummary(what = "score")` shows the phenotype-rank table.
+  With `what = c("candidate", "score")`, score columns are joined onto the
+  candidate list (by `Gene_ID` + `peak_ID` when present). `evidence_json` /
+  `query_id` stay out of the HTML display.
++ Inactive `score_*` channels are forced to **0** when ranking and when
+  reading `lazyData(..., dataset = "phenotype_rank")` (active sources from
+  `phenotypeRank` metadata).
++ Finemap PIP mapping: `.e_enrich_cs_coords()` fills missing Chr/Pos on
+  credible-set rows from recalc/peakcall blocks when needed.
+
+### Hardening track note
++ without-LLM I/O + scoring hardening on `master` is complete for this pass.
+  Layer B Benchmark runner remains deferred (see
+  `ai_assited_genetics/manuscript/lazygas/nollm_lazygas_benchmark_plan.md`).
+
+---
+
 ## Changes in version 0.10.0 (2026-10-09) — I/O + scoring hardening (master)
 
 ### Multi-trait CS overlap (optional)
