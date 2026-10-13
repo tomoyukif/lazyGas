@@ -19,7 +19,7 @@ test_that("E0 config write/read and mapping_mode errors", {
   expect_error(readLazyGasExploreConfig(wd), "mapping_mode")
 })
 
-test_that("E0 enrich CS coords from peak map", {
+test_that("E0 CS chr/pos minmax uses in_credible_set coords", {
   cred <- data.frame(
     variant_ID = c(1L, 2L),
     PIP = c(0.6, 0.4),
@@ -28,7 +28,6 @@ test_that("E0 enrich CS coords from peak map", {
   )
   expect_null(lazyGas:::.e_cs_chr_minmax(cred))
 
-  # Fake object-less enrichment: manually supply coords then minmax works
   cred2 <- data.frame(
     variant_ID = c(1L, 2L),
     Chr = "chr1",
@@ -42,12 +41,6 @@ test_that("E0 enrich CS coords from peak map", {
   expect_equal(info$start, 100)
   expect_equal(info$end, 100)
   expect_equal(info$n, 1L)
-
-  # CS that already has Chr/Pos must keep a single Pos column (not Pos.x/Pos.y)
-  keep <- lazyGas:::.e_enrich_cs_coords(cred2, object = NULL, pheno_name = NULL, peak_id = NULL)
-  expect_true("Pos" %in% names(keep))
-  expect_false(any(grepl("Pos\\.", names(keep))))
-  expect_equal(keep$Pos, cred2$Pos)
 })
 
 test_that("E0 classifyAnnColumns use_llm=FALSE defaults to free_description", {

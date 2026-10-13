@@ -689,12 +689,8 @@ llm_report <- function(object,
         work_dir = work_dir,
         mapping_mode = e_cfg$mapping_mode,
         simple_candidates = simple,
-        credible_set = .e_enrich_cs_coords(
-          cred,
-          object = object,
-          pheno_name = pheno_name,
-          peak_id = pid
-        ),
+        # calcCredibleSet() always attaches Chr/Pos; no coordinate backfill.
+        credible_set = cred,
         gff = gff,
         ann = ann,
         snpeff = snpeff_peak,

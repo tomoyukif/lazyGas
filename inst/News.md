@@ -5,9 +5,6 @@ the release or documentation update for that version.
 
 ---
 
-<<<<<<< HEAD
-## Changes in version 0.9.2 (2026-10-09) — agentic sync of without-LLM 01/02
-=======
 ## Changes in version 0.10.0 (2026-10-13) — interactive scores + finemap CS coords
 
 ### Interactive summary: phenotype rank scores
@@ -18,8 +15,9 @@ the release or documentation update for that version.
 + Inactive `score_*` channels are forced to **0** when ranking and when
   reading `lazyData(..., dataset = "phenotype_rank")` (active sources from
   `phenotypeRank` metadata).
-+ Finemap PIP mapping: `.e_enrich_cs_coords()` fills missing Chr/Pos on
-  credible-set rows from recalc/peakcall blocks when needed.
++ Finemap PIP mapping: remove `.e_enrich_cs_coords()` (including the agentic
+  E0/llm_report path). Credible-set rows must already carry `Chr`/`Pos` from
+  `calcCredibleSet()`; no peak-block coordinate backfill.
 
 ### Hardening track note
 + without-LLM I/O + scoring hardening on `master` is complete for this pass.
@@ -28,8 +26,7 @@ the release or documentation update for that version.
 
 ---
 
-## Changes in version 0.10.0 (2026-10-09) — I/O + scoring hardening (master)
->>>>>>> 51c36ba (Expose phenotype-rank scores in interactive summaries and zero inactive channels.)
+## Changes in version 0.9.2 (2026-10-09) — agentic sync of without-LLM 01/02
 
 ### I/O + scoring contracts (from master)
 + Companion store **parquet only**; `output_list` removed (wide candidate always).

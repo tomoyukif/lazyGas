@@ -634,69 +634,6 @@ classifyAnnColumns <- function(ann,
   out
 }
 
-#' Attach Chr/Pos to a credible-set table via peak-block variant map
-#'
-#' Compact CS stores may omit coordinates. Peak-call tables from
-#' \code{.get_peakcall()} carry \code{variant_ID} + \code{Chr} + \code{Pos}.
-#'
-#' @keywords internal
-.e_enrich_cs_coords <- function(cred,
-                                object = NULL,
-                                pheno_name = NULL,
-                                peak_id = NULL) {
-  if (is.null(cred) || !nrow(cred)) {
-    return(cred)
-  }
-  has_pos <- "Pos" %in% names(cred) &&
-    any(is.finite(as.numeric(cred$Pos)), na.rm = TRUE)
-  has_chr <- any(c("Chr", "chr") %in% names(cred)) &&
-    any(nzchar(as.character(cred$Chr %||% cred$chr)), na.rm = TRUE)
-  if (has_pos && has_chr) {
-    return(cred)
-  }
-  if (is.null(object) || is.null(pheno_name) || is.null(peak_id)) {
-    return(cred)
-  }
-  if (!"variant_ID" %in% names(cred)) {
-    return(cred)
-  }
-  pk <- tryCatch(
-    .get_peakcall(object = object, pheno_name = pheno_name, recalc = TRUE),
-    error = function(e) NULL
-  )
-  if (is.null(pk) || !nrow(pk)) {
-    pk <- tryCatch(
-      .get_peakcall(object = object, pheno_name = pheno_name, recalc = FALSE),
-      error = function(e) NULL
-    )
-  }
-  if (is.null(pk) || !nrow(pk)) {
-    return(cred)
-  }
-  pk <- pk[as.character(pk$peak_ID) == as.character(peak_id), , drop = FALSE]
-  pos_cols <- intersect(c("variant_ID", "Chr", "Pos"), names(pk))
-  if (!all(c("variant_ID", "Chr", "Pos") %in% pos_cols)) {
-    return(cred)
-  }
-  pos_map <- unique(pk[, pos_cols, drop = FALSE])
-  drop_old <- intersect(c("Chr", "Pos", "chr", "pos"), names(cred))
-  cred2 <- if (length(drop_old)) {
-    cred[, setdiff(names(cred), drop_old), drop = FALSE]
-  } else {
-    cred
-  }
-  out <- merge(cred2, pos_map, by = "variant_ID", all.x = TRUE)
-  if ("PIP" %in% names(out)) {
-    out <- out[order(-as.numeric(out$PIP), out$variant_ID), , drop = FALSE]
-  }
-  rownames(out) <- NULL
-  summ <- attr(cred, "summary")
-  if (!is.null(summ)) {
-    attr(out, "summary") <- summ
-  }
-  out
-}
-
 #' @keywords internal
 .e_cs_chr_minmax <- function(cred) {
   if (is.null(cred) || !nrow(cred)) {
