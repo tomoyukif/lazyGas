@@ -61,7 +61,8 @@ setMethod("lazyData",
               } else if (!grepl("^rank_", kind)) {
                 kind <- paste0("rank_", .store_safe_name(kind))
               }
-              return(.store_read_section_df(object, "phenotype_rank", kind, pheno_name))
+              rank_df <- .store_read_section_df(object, "phenotype_rank", kind, pheno_name)
+              return(.zero_inactive_score_columns(rank_df))
             }
             if (dataset == "qc") {
               k <- if (is.null(kind)) "summary" else kind

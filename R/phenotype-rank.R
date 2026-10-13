@@ -354,7 +354,75 @@ rankPhenotypeCandidates <- function(object,
   out <- merge(candidate, score_df, by = "Gene_ID", all.x = FALSE, sort = FALSE)
   out <- out[order(-out$composite_score, out$Gene_ID), , drop = FALSE]
   rownames(out) <- NULL
+  # Belt-and-suspenders: inactive channels must be 0 even if evidence scored them.
+  attr(out, "phenotypeRank") <- list(sources = sources)
+  out <- .zero_inactive_score_columns(out)
+  attr(out, "phenotypeRank") <- NULL
   out
+}
+
+#' Map evidence source name -> score_* column(s)
+#' @noRd
+.rank_source_score_columns <- function() {
+  list(
+    annotation = "score_annotation",
+    snpeff = "score_snpeff",
+    gwas = "score_gwas",
+    gwas_dist = "score_gwas_dist",
+    gwas_peak = "score_gwas_peak",
+    expression = "score_expression",
+    literature = "score_literature",
+    ortholog = "score_ortholog",
+    finemap = "score_finemap"
+  )
+}
+
+#' Active ranking sources for a phenotype_rank table
+#' @noRd
+.rank_active_sources <- function(df) {
+  meta <- attr(df, "phenotypeRank")
+  if (!is.null(meta) && !is.null(meta$sources) && length(meta$sources)) {
+    return(unique(as.character(meta$sources)))
+  }
+  if (!is.data.frame(df) || !"evidence_json" %in% names(df) || !nrow(df)) {
+    return(character())
+  }
+  keys <- character()
+  n <- min(nrow(df), 50L)
+  for (i in seq_len(n)) {
+    ej <- tryCatch(
+      jsonlite::fromJSON(df$evidence_json[[i]], simplifyVector = FALSE),
+      error = function(e) NULL
+    )
+    if (!is.null(ej) && length(names(ej))) {
+      keys <- union(keys, names(ej))
+    }
+  }
+  as.character(keys)
+}
+
+#' Force inactive channel score_* columns to 0 (keep composite_score)
+#'
+#' Older stores sometimes wrote 1 for channels that were not ranking inputs
+#' (e.g. literature / ortholog). Use phenotypeRank$sources when available,
+#' otherwise infer from evidence_json keys.
+#' @noRd
+.zero_inactive_score_columns <- function(df) {
+  if (is.null(df) || !is.data.frame(df) || !nrow(df)) {
+    return(df)
+  }
+  sources <- .rank_active_sources(df)
+  if (!length(sources)) {
+    return(df)
+  }
+  map <- .rank_source_score_columns()
+  active_cols <- unique(unlist(map[intersect(names(map), sources)], use.names = FALSE))
+  score_cols <- grep("^score_", names(df), value = TRUE)
+  inactive <- setdiff(score_cols, active_cols)
+  for (nm in inactive) {
+    df[[nm]] <- 0
+  }
+  df
 }
 
 #' Save a phenotype-rank table to the companion store

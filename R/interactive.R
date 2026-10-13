@@ -20,6 +20,8 @@
 #'  \item{"preakcall_haplo"}{Draw an interactive haplotype-wise phenotype distribution plot for peaks before the recalculation}
 #'  \item{"recalc_haplo"}{Draw an interactive haplotype-wise phenotype distribution plot for peaks after the recalculation}
 #'  \item{"candidate"}{Draw an interactive candidate list}
+#'  \item{"score"}{Draw phenotype-rank scores (\code{phenotype_rank}). With
+#'    \code{"candidate"}, join score columns onto the candidate list.}
 #'  \item{"qq"}{Draw a QQ plot}
 #'  \item{"qc"}{Draw a GWAS QC summary table}
 #'  \item{"cross_trait"}{Draw cross-trait peak clustering (requires multiple phenotypes)}
@@ -52,8 +54,8 @@ makeInteractiveSummary <- function(object, pheno,
   what <- match.arg(
     arg = what,
     choices = c("scan", "scan_png", "peakcall", "recalc", "groups",
-                "peakcall_haplo", "recalc_haplo", "candidate", "qq", "qc", "cross_trait",
-                "fine_mapping"),
+                "peakcall_haplo", "recalc_haplo", "candidate", "score", "qq", "qc",
+                "cross_trait", "fine_mapping"),
     several.ok = TRUE
   )
 
@@ -279,20 +281,49 @@ makeInteractiveSummary <- function(object, pheno,
     }
   }
 
-  if ("candidate" %in% what) {
-    candidate <- lazyData(object = object, dataset = "candidate", pheno = pheno)
-    if (length(candidate) == 0L) {
-      candidate <- NULL
+  want_candidate <- "candidate" %in% what
+  want_score <- "score" %in% what
+  if (want_candidate || want_score) {
+    candidate <- NULL
+    if (want_candidate) {
+      candidate <- lazyData(object = object, dataset = "candidate", pheno = pheno)
+      if (length(candidate) == 0L) {
+        candidate <- NULL
+      }
     }
-    if (!is.null(candidate)) {
+    score <- NULL
+    if (want_score) {
+      score <- tryCatch(
+        lazyData(object = object, dataset = "phenotype_rank", pheno = pheno),
+        error = function(e) NULL
+      )
+      if (length(score) == 0L) {
+        score <- NULL
+      }
+    }
+
+    table_df <- NULL
+    section_title <- NULL
+    if (want_candidate && want_score && !is.null(candidate) && !is.null(score)) {
+      table_df <- .interactive_join_candidate_score(candidate, score)
+      section_title <- "Candidate list"
+    } else if (want_candidate && !is.null(candidate)) {
+      table_df <- candidate
+      section_title <- "Candidate list"
+    } else if (want_score && !is.null(score)) {
+      table_df <- score
+      section_title <- "Score list"
+    }
+
+    if (!is.null(table_df)) {
       if (requireNamespace("DT", quietly = TRUE)) {
         table_block <- .interactive_candidate_table_dt(
-          candidate = candidate,
+          candidate = table_df,
           candidate_gene_links = candidate_gene_links
         )
       } else {
-        candidate <- .interactive_candidate_display_df(candidate)
-        col_names <- colnames(candidate)
+        display <- .interactive_candidate_display_df(table_df)
+        col_names <- colnames(display)
         col_def <- vector("list", length(col_names))
         names(col_def) <- col_names
         for (i in seq_along(col_names)) {
@@ -319,7 +350,7 @@ makeInteractiveSummary <- function(object, pheno,
         }
         table_block <- div(
           reactable(
-            data = candidate,
+            data = display,
             columns = col_def,
             sortable = TRUE,
             resizable = TRUE,
@@ -341,7 +372,7 @@ makeInteractiveSummary <- function(object, pheno,
       }
       tag_list <- tagList(
         tag_list,
-        div(h1("Candidate list"), style = "text-align:center"),
+        div(h1(section_title), style = "text-align:center"),
         hint,
         table_block
       )
@@ -351,22 +382,76 @@ makeInteractiveSummary <- function(object, pheno,
   tag_list
 }
 
+#' Score / rank column names present in a data.frame
+#' @noRd
+.interactive_score_column_names <- function(df) {
+  nms <- names(df)
+  score_like <- grep("^score_", nms, value = TRUE)
+  prefer_order <- c(
+    "composite_score",
+    "score_annotation",
+    "score_snpeff",
+    "score_gwas",
+    "score_gwas_dist",
+    "score_gwas_peak",
+    "score_expression",
+    "score_literature",
+    "score_ortholog",
+    "score_finemap",
+    score_like
+  )
+  unique(intersect(prefer_order, nms))
+}
+
+#' Join candidate rows with phenotype_rank score columns
+#' @noRd
+.interactive_join_candidate_score <- function(candidate, score) {
+  stopifnot(is.data.frame(candidate), is.data.frame(score))
+  if (!"Gene_ID" %in% names(candidate) || !"Gene_ID" %in% names(score)) {
+    stop("candidate and score must both contain Gene_ID for joining.", call. = FALSE)
+  }
+  key <- "Gene_ID"
+  if ("peak_ID" %in% names(candidate) && "peak_ID" %in% names(score)) {
+    key <- c("Gene_ID", "peak_ID")
+  }
+  score_cols <- .interactive_score_column_names(score)
+  # query_id is run metadata (phenotype_query / meta.json / rank filename), not for HTML.
+  extra <- setdiff(score_cols, names(candidate))
+  if (!length(extra)) {
+    return(candidate)
+  }
+  score_slim <- score[, c(key, extra), drop = FALSE]
+  if ("composite_score" %in% names(score_slim)) {
+    score_slim <- score_slim[order(-score_slim$composite_score), , drop = FALSE]
+  }
+  score_slim <- score_slim[!duplicated(score_slim[, key, drop = FALSE]), , drop = FALSE]
+  out <- merge(candidate, score_slim, by = key, all.x = TRUE, sort = FALSE)
+  if ("composite_score" %in% names(out)) {
+    out <- out[order(-out$composite_score, out$Gene_ID), , drop = FALSE]
+  }
+  rownames(out) <- NULL
+  out
+}
+
 #' Trim/prioritize candidate columns for HTML tables
 #' @noRd
 .interactive_candidate_display_df <- function(candidate, max_text = 120L) {
+  score_cols <- .interactive_score_column_names(candidate)
   prefer <- c(
-    "peak_ID", "Gene_ID", "Gene_chr", "Gene_start", "dist2peak", "negLog10P",
+    "peak_ID", "Gene_ID", score_cols,
+    "Gene_chr", "Gene_start", "dist2peak", "negLog10P",
     "HIGH", "MODERATE", "LOW", "MODIFIER",
     "RAPDB_geneSymbol", "Oryzabase_geneSymbol", "CGSNL_geneSymbol",
     "RAP_Note", "MSU_Note", "EGGNog_Description", "MapMan_DESCRIPTION"
   )
   keep <- unique(c(intersect(prefer, names(candidate)),
                    setdiff(names(candidate), prefer)))
-  # Drop very wide ontology dumps from the default HTML table
+  # Drop very wide ontology dumps / evidence blobs / run metadata from HTML
   drop <- intersect(
     keep,
     c("EGGNog_GOs", "EGGNog_KEGG_Pathway", "InterPro_Description",
-      "Oryzabase_Trait_Ontology", "Oryzabase_Plant_Ontology", "ID", "gene_id")
+      "Oryzabase_Trait_Ontology", "Oryzabase_Plant_Ontology", "ID", "gene_id",
+      "evidence_json", "query_id")
   )
   keep <- setdiff(keep, drop)
   out <- as.data.frame(candidate[, keep, drop = FALSE], stringsAsFactors = FALSE)

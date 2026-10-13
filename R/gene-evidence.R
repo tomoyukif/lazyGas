@@ -897,6 +897,58 @@ collectGeneEvidence <- function(gene_ids,
 
 #' Max PIP per gene: SnpEff assignment first, else GFF window (Phase 2 H1)
 #'
+#' Ensure credible-set rows have Chr/Pos for finemap PIP→gene mapping
+#' @keywords internal
+.e_enrich_cs_coords <- function(cred, object, pheno_name, peak_id) {
+  if (is.null(cred) || !nrow(cred)) {
+    return(cred)
+  }
+  if ("chr" %in% names(cred) && !"Chr" %in% names(cred)) {
+    cred$Chr <- cred$chr
+  }
+  if ("pos" %in% names(cred) && !"Pos" %in% names(cred)) {
+    cred$Pos <- cred$pos
+  }
+  have_chr <- "Chr" %in% names(cred) &&
+    any(nzchar(as.character(cred$Chr)), na.rm = TRUE)
+  have_pos <- "Pos" %in% names(cred) &&
+    any(is.finite(as.numeric(cred$Pos)), na.rm = TRUE)
+  if (have_chr && have_pos) {
+    return(cred)
+  }
+  # Fall back: merge coordinates from peakcall / recalc blocks
+  blk <- NULL
+  for (ds in c("recalc", "peakcall")) {
+    blk <- tryCatch(
+      lazyData(object = object, dataset = ds, pheno = pheno_name),
+      error = function(e) NULL
+    )
+    if (!is.null(blk) && nrow(blk)) {
+      break
+    }
+  }
+  if (is.null(blk) || !nrow(blk) || !"variant_ID" %in% names(blk)) {
+    return(cred)
+  }
+  if (!is.null(peak_id) && "peak_ID" %in% names(blk)) {
+    blk <- blk[as.character(blk$peak_ID) == as.character(peak_id), , drop = FALSE]
+  }
+  coord_cols <- intersect(c("variant_ID", "Chr", "chr", "Pos", "pos"), names(blk))
+  if (!"variant_ID" %in% coord_cols) {
+    return(cred)
+  }
+  coords <- unique(blk[, coord_cols, drop = FALSE])
+  if ("chr" %in% names(coords) && !"Chr" %in% names(coords)) {
+    coords$Chr <- coords$chr
+  }
+  if ("pos" %in% names(coords) && !"Pos" %in% names(coords)) {
+    coords$Pos <- coords$pos
+  }
+  keep <- intersect(c("variant_ID", "Chr", "Pos"), names(coords))
+  coords <- coords[, keep, drop = FALSE]
+  merge(cred, coords, by = "variant_ID", all.x = TRUE, sort = FALSE)
+}
+
 #' For each peak's 95% CS: (1) CS ∩ SnpEff \code{Gene_ID} → \code{max(PIP)};
 #' (2) genes still unassigned (no SnpEff or no hit) get
 #' \code{max(PIP)} of CS variants whose position falls in the gene's GFF window.
